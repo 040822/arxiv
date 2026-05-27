@@ -85,6 +85,19 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_status ON task_logs(status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_started ON task_logs(started_at)")
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_date TEXT UNIQUE NOT NULL,
+            content TEXT NOT NULL,
+            paper_count INTEGER DEFAULT 0,
+            analyzed_count INTEGER DEFAULT 0,
+            avg_rating REAL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(report_date)")
+
     conn.commit()
     conn.close()
 
@@ -164,12 +177,11 @@ def get_paper_by_arxiv_id(arxiv_id):
     return dict(row) if row else None
 
 
-def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, offset=0):
+def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, offset=0, count_total=False):
     conn = get_connection()
     cursor = conn.cursor()
 
-    query = """
-        SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis, a.analyzed_at
+    base_query = """
         FROM papers p
         LEFT JOIN analysis a ON p.id = a.paper_id
         WHERE (p.hidden IS NULL OR p.hidden = 0)
@@ -177,17 +189,24 @@ def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, of
     params = []
 
     if date:
-        query += " AND p.published_date = ?"
+        base_query += " AND p.published_date = ?"
         params.append(date)
 
     if min_rating is not None:
-        query += " AND a.rating >= ?"
+        base_query += " AND a.rating >= ?"
         params.append(min_rating)
 
     if tag:
-        query += " AND a.tags LIKE ?"
+        base_query += " AND a.tags LIKE ?"
         params.append(f"%{tag}%")
 
+    total = 0
+    if count_total:
+        count_sql = "SELECT COUNT(*) " + base_query
+        cursor.execute(count_sql, params)
+        total = cursor.fetchone()[0]
+
+    query = "SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis, a.analyzed_at " + base_query
     query += " ORDER BY p.published_date DESC, a.rating DESC"
     query += " LIMIT ? OFFSET ?"
     params.extend([limit, offset])
@@ -206,6 +225,9 @@ def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, of
         if r.get("tags") and isinstance(r["tags"], str):
             r["tags"] = json.loads(r["tags"])
         results.append(r)
+
+    if count_total:
+        return results, total
     return results
 
 
@@ -507,6 +529,19 @@ def delete_paper(arxiv_id):
     return affected > 0
 
 
+def batch_delete_papers(arxiv_ids):
+    if not arxiv_ids:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    placeholders = ",".join(["?"] * len(arxiv_ids))
+    cursor.execute(f"DELETE FROM papers WHERE arxiv_id IN ({placeholders})", arxiv_ids)
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
+
 def start_task_log(task_name, message=""):
     conn = get_connection()
     cursor = conn.cursor()
@@ -604,3 +639,151 @@ def clear_task_logs(keep_days=30):
     conn.commit()
     conn.close()
     return deleted
+
+
+def save_report(report_date, content, paper_count, analyzed_count, avg_rating):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO reports (report_date, content, paper_count, analyzed_count, avg_rating)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(report_date) DO UPDATE SET
+            content=excluded.content,
+            paper_count=excluded.paper_count,
+            analyzed_count=excluded.analyzed_count,
+            avg_rating=excluded.avg_rating,
+            created_at=CURRENT_TIMESTAMP
+    """, (report_date, content, paper_count, analyzed_count, avg_rating))
+    conn.commit()
+    conn.close()
+
+
+def get_reports(limit=50):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM reports ORDER BY report_date DESC LIMIT ?", (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_report_by_date(report_date):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM reports WHERE report_date = ?", (report_date,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_report_dates():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT report_date, paper_count, analyzed_count, avg_rating FROM reports ORDER BY report_date DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def generate_report_content(date):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT p.*, a.tags, a.summary_cn, a.rating, a.value_comment
+        FROM papers p
+        LEFT JOIN analysis a ON p.id = a.paper_id
+        WHERE p.published_date = ?
+        ORDER BY a.rating DESC, p.arxiv_id
+    """, (date,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        return None, 0, 0, 0
+
+    papers = []
+    for row in rows:
+        r = dict(row)
+        if r.get("authors") and isinstance(r["authors"], str):
+            r["authors"] = json.loads(r["authors"])
+        if r.get("categories") and isinstance(r["categories"], str):
+            r["categories"] = json.loads(r["categories"])
+        if r.get("tags") and isinstance(r["tags"], str):
+            r["tags"] = json.loads(r["tags"])
+        papers.append(r)
+
+    total = len(papers)
+    analyzed = sum(1 for p in papers if p.get("rating") and p["rating"] > 0)
+    ratings = [p["rating"] for p in papers if p.get("rating") and p["rating"] > 0]
+    avg_rating = round(sum(ratings) / len(ratings), 1) if ratings else 0
+
+    tag_counts = {}
+    category_counts = {}
+    for p in papers:
+        if p.get("tags") and isinstance(p["tags"], list):
+            for t in p["tags"]:
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+        if p.get("categories") and isinstance(p["categories"], list):
+            for c in p["categories"]:
+                category_counts[c] = category_counts.get(c, 0) + 1
+
+    top_tags = sorted(tag_counts.items(), key=lambda x: -x[1])[:15]
+    top_categories = sorted(category_counts.items(), key=lambda x: -x[1])[:10]
+    high_rated = [p for p in papers if p.get("rating") and p["rating"] >= 4]
+    high_rated.sort(key=lambda x: -x["rating"])
+
+    html = f'<div class="report-summary">'
+    html += f'<div class="report-stats">'
+    html += f'<div class="report-stat"><span class="report-stat-val">{total}</span><span class="report-stat-label">论文总数</span></div>'
+    html += f'<div class="report-stat"><span class="report-stat-val">{analyzed}</span><span class="report-stat-label">已分析</span></div>'
+    html += f'<div class="report-stat"><span class="report-stat-val">{avg_rating}</span><span class="report-stat-label">平均评级</span></div>'
+    html += f'</div></div>'
+
+    if top_categories:
+        html += '<div class="report-section"><h3>📂 分类分布</h3><div class="report-tags">'
+        for cat, cnt in top_categories:
+            html += f'<span class="tag-badge">{cat} <span class="tag-count">{cnt}</span></span>'
+        html += '</div></div>'
+
+    if top_tags:
+        html += '<div class="report-section"><h3>🏷️ 热门标签</h3><div class="report-tags">'
+        for tag, cnt in top_tags:
+            html += f'<span class="tag-badge">{tag} <span class="tag-count">{cnt}</span></span>'
+        html += '</div></div>'
+
+    if high_rated:
+        html += '<div class="report-section"><h3>⭐ 高分论文 (4★+)</h3><div class="report-papers">'
+        for p in high_rated:
+            stars = '★' * p['rating'] + '☆' * (5 - p['rating'])
+            authors = ', '.join(p['authors'][:3]) if isinstance(p.get('authors'), list) else str(p.get('authors', ''))
+            cats = ' '.join(f'<span class="category-tag">{c}</span>' for c in (p.get('categories') or [])[:3])
+            html += f'''<div class="report-paper">
+                <div class="report-paper-title"><a href="/paper/{p['arxiv_id']}">{p['title']}</a></div>
+                <div class="report-paper-meta"><span class="rating">{stars}</span> {cats}</div>
+                <div class="report-paper-authors">{authors}</div>
+                {f'<div class="report-paper-comment">{p["value_comment"]}</div>' if p.get('value_comment') else ''}
+            </div>'''
+        html += '</div></div>'
+
+    html += '<div class="report-section"><h3>📋 全部论文</h3><div class="report-papers">'
+    for p in papers:
+        stars = ''
+        if p.get('rating') and p['rating'] > 0:
+            stars = f'<span class="rating">{"★" * p["rating"]}{"☆" * (5 - p["rating"])}</span>'
+        cats = ' '.join(f'<span class="category-tag">{c}</span>' for c in (p.get('categories') or [])[:3])
+        authors = ', '.join(p['authors'][:3]) if isinstance(p.get('authors'), list) else str(p.get('authors', ''))
+        tags_html = ''
+        if p.get('tags') and isinstance(p['tags'], list):
+            tags_html = ' '.join(f'<span class="tag-small">{t}</span>' for t in p['tags'][:5])
+        summary = f'<div class="report-paper-summary">{p["summary_cn"]}</div>' if p.get('summary_cn') else ''
+        html += f'''<div class="report-paper">
+            <div class="report-paper-title"><a href="/paper/{p['arxiv_id']}">{p['title']}</a> {stars}</div>
+            <div class="report-paper-meta">{cats}</div>
+            <div class="report-paper-authors">{authors}</div>
+            {'<div class="report-paper-tags">' + tags_html + '</div>' if tags_html else ''}
+            {summary}
+        </div>'''
+    html += '</div></div>'
+
+    return html, total, analyzed, avg_rating

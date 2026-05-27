@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ report.report_date }} 报告 - AI 论文数据库</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div></div>
+                <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+            </div>
+            <h1>🤖 AI 论文数据库</h1>
+        </header>
+
+        <nav class="nav-bar">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/reports" class="nav-link">📊 报告汇总</a>
+            <a href="/reports/{{ report.report_date }}" class="nav-link active">📅 {{ report.report_date }}</a>
+        </nav>
+
+        <div class="report-header">
+            <h2>📊 {{ report.report_date }} 每日报告</h2>
+            <div class="report-meta">
+                <span>📄 {{ report.paper_count }} 篇论文</span>
+                <span>🔍 {{ report.analyzed_count }} 篇已分析</span>
+                <span>⭐ 平均评级 {{ report.avg_rating }}</span>
+            </div>
+        </div>
+
+        <div class="report-content">
+            {{ report.content | safe }}
+        </div>
+
+        <footer>
+            <p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p>
+        </footer>
+    </div>
+</body>
+</html>

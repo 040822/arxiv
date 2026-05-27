@@ -61,6 +61,14 @@
             </div>
 
             <div class="settings-section">
+                <h3>📄 每页显示数</h3>
+                <p class="section-desc">首页每页显示的论文数量，建议 10~50</p>
+                <div class="form-group" style="max-width:200px;"><label>每页论文数</label><input type="number" id="per-page" min="5" max="100" step="5" value="20"></div>
+                <div class="settings-actions"><button class="action-btn btn-primary" onclick="savePerPage()">💾 保存</button></div>
+                <div id="per-page-status" class="action-status"></div>
+            </div>
+
+            <div class="settings-section">
                 <h3>📝 Prompt 设置</h3>
                 <p class="section-desc">自定义 AI 分析的提示词模板。可用变量: <code>{title}</code> <code>{authors}</code> <code>{abstract}</code> <code>{tag_candidates}</code> <code>{rating_criteria}</code></p>
                 <div class="form-group"><label>System Prompt</label><textarea id="system-prompt" rows="4"></textarea></div>
@@ -148,6 +156,7 @@
             renderPresetGrid();
             renderPrompts(promptData);
             if (statsData.concurrency !== undefined) document.getElementById('concurrency').value = statsData.concurrency;
+            if (statsData.per_page !== undefined) document.getElementById('per-page').value = statsData.per_page;
         }
 
         /* ---- Provider Management ---- */
@@ -267,6 +276,14 @@
             const statusEl = document.getElementById('concurrency-status');
             const val = parseInt(document.getElementById('concurrency').value) || 5;
             try { const resp = await fetch('/api/settings/concurrency', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({concurrency: val}) });
+                const result = await resp.json(); statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        async function savePerPage() {
+            const statusEl = document.getElementById('per-page-status');
+            const val = parseInt(document.getElementById('per-page').value) || 20;
+            try { const resp = await fetch('/api/settings/per_page', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({per_page: val}) });
                 const result = await resp.json(); statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
             } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
         }

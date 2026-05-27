@@ -23,24 +23,13 @@
         </header>
 
         <nav class="nav-bar">
-            <a href="/" class="nav-link {% if not tag and not date and not min_rating %}active{% endif %}">全部</a>
-            <a href="/?min_rating=4" class="nav-link {% if min_rating == 4 %}active{% endif %}">⭐⭐⭐⭐+ 高分</a>
-            <a href="/?min_rating=3" class="nav-link {% if min_rating == 3 %}active{% endif %}">⭐⭐⭐+ 推荐</a>
+            <a href="/" class="nav-link {% if not tag and not date and not min_rating and not today %}active{% endif %}">全部</a>
+            <a href="/?today=1" class="nav-link {% if today %}active{% endif %}">📅 今日论文</a>
             <a href="/browse" class="nav-link">📂 分类浏览</a>
             <a href="/search" class="nav-link">🔍 搜索</a>
             <a href="/tasks" class="nav-link">📋 任务管理</a>
+            <a href="/reports" class="nav-link">📊 每日报告</a>
         </nav>
-
-        <div class="action-panel">
-            <h3>⚡ 操作面板</h3>
-            <div class="action-buttons">
-                <button class="action-btn" onclick="runApi('/api/fetch', this)">📥 抓取论文</button>
-                <button class="action-btn" onclick="runApi('/api/analyze', this)">🤖 AI 分析</button>
-                <button class="action-btn" onclick="runApi('/api/generate', this)">📝 生成报告</button>
-                <button class="action-btn btn-primary" onclick="runApi('/api/run', this)">🚀 一键执行全部</button>
-            </div>
-            <div id="action-status" class="action-status"></div>
-        </div>
 
         {% if tags %}
         <div class="tags-section">
@@ -55,9 +44,11 @@
         </div>
         {% endif %}
 
-        {% if tag %}
+        {% if tag or today %}
         <div class="filter-info">
-            当前筛选: 标签 <strong>{{ tag }}</strong>
+            当前筛选:
+            {% if today %}📅 <strong>今日论文</strong>{% endif %}
+            {% if tag %}🏷️ 标签 <strong>{{ tag }}</strong>{% endif %}
             <a href="/" class="clear-filter">清除筛选</a>
         </div>
         {% endif %}
@@ -80,10 +71,18 @@
                             {% endfor %}
                         </span>
                         {% endif %}
-                        {% if paper.primary_category %}
-                        <span class="meta-item">📂 {{ paper.primary_category }}</span>
+                    </div>
+                    {% if paper.categories %}
+                    <div class="paper-categories">
+                        {% if paper.categories is string %}
+                            <span class="category-tag">{{ paper.categories }}</span>
+                        {% else %}
+                            {% for cat in paper.categories %}
+                            <span class="category-tag">{{ cat }}</span>
+                            {% endfor %}
                         {% endif %}
                     </div>
+                    {% endif %}
                 </div>
 
                 {% if paper.authors %}
@@ -111,6 +110,22 @@
                 </div>
                 {% endif %}
 
+                {% if paper.abstract %}
+                <div class="paper-abstract" id="abs-{{ paper.arxiv_id }}">
+                    {% if paper.summary_cn %}
+                        <span class="abstract-text">{{ paper.abstract[:300] }}{% if paper.abstract|length > 300 %}...{% endif %}</span>
+                        {% if paper.abstract|length > 300 %}
+                        <a href="javascript:void(0)" class="abstract-toggle" onclick="toggleAbstract('{{ paper.arxiv_id }}', `{{ paper.abstract | e }}`)">展开</a>
+                        {% endif %}
+                    {% else %}
+                        <span class="abstract-text">{{ paper.abstract }}</span>
+                        {% if paper.abstract|length > 300 %}
+                        <a href="javascript:void(0)" class="abstract-toggle" onclick="toggleAbstract('{{ paper.arxiv_id }}', `{{ paper.abstract | e }}`)">收起</a>
+                        {% endif %}
+                    {% endif %}
+                </div>
+                {% endif %}
+
                 {% if paper.summary_cn %}
                 <div class="paper-summary">
                     <strong>中文摘要:</strong> {{ paper.summary_cn }}
@@ -129,6 +144,7 @@
                     <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
                     {% endif %}
                     <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
+                    <a href="javascript:void(0)" class="link-hide" onclick="hidePaper('{{ paper.arxiv_id }}', this)">😐 不感兴趣</a>
                 </div>
             </div>
             {% else %}
@@ -140,13 +156,23 @@
         </div>
 
         <div class="pagination">
+            {% set q = '' %}
+            {% if tag %}{% set q = q + '&tag=' + tag %}{% endif %}
+            {% if today %}{% set q = q + '&today=1' %}{% endif %}
+            {% if date %}{% set q = q + '&date=' + date %}{% endif %}
+            {% if min_rating is not none %}{% set q = q + '&min_rating=' + min_rating|string %}{% endif %}
+
             {% if page > 1 %}
-            <a href="/?page={{ page - 1 }}{% if tag %}&tag={{ tag }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}" class="page-link">← 上一页</a>
+            <a href="/?page={{ page - 1 }}{{ q }}" class="page-link">← 上一页</a>
             {% endif %}
-            <span class="page-info">第 {{ page }} 页</span>
-            {% if papers|length == 20 %}
-            <a href="/?page={{ page + 1 }}{% if tag %}&tag={{ tag }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}" class="page-link">下一页 →</a>
+            <span class="page-info">第 {{ page }} / {{ total_pages }} 页</span>
+            {% if page < total_pages %}
+            <a href="/?page={{ page + 1 }}{{ q }}" class="page-link">下一页 →</a>
             {% endif %}
+            <span class="page-jump">
+                跳转到 <input type="number" id="page-input" min="1" max="{{ total_pages }}" value="{{ page }}" onkeydown="if(event.key==='Enter')goPage()"> 页
+                <button class="action-btn" onclick="goPage()">Go</button>
+            </span>
         </div>
 
         <footer>
@@ -155,31 +181,43 @@
     </div>
 
     <script>
-        async function runApi(url, btn) {
-            const statusEl = document.getElementById('action-status');
-            const origText = btn.textContent;
-            btn.disabled = true;
-            btn.textContent = '⏳ 执行中...';
-            statusEl.className = 'action-status info';
-            statusEl.textContent = '正在执行，请稍候...';
+        function goPage() {
+            const input = document.getElementById('page-input');
+            const page = parseInt(input.value);
+            if (!page || page < 1) return;
+            const url = new URL(window.location.href);
+            url.searchParams.set('page', page);
+            window.location.href = url.toString();
+        }
 
+        function toggleAbstract(arxivId, fullText) {
+            const el = document.getElementById('abs-' + arxivId);
+            const textEl = el.querySelector('.abstract-text');
+            const toggleEl = el.querySelector('.abstract-toggle');
+            if (toggleEl.textContent === '展开') {
+                textEl.textContent = fullText;
+                toggleEl.textContent = '收起';
+            } else {
+                textEl.textContent = fullText.substring(0, 300) + '...';
+                toggleEl.textContent = '展开';
+            }
+        }
+
+        async function hidePaper(arxivId, el) {
+            const card = el.closest('.paper-card');
             try {
-                const resp = await fetch(url, { method: 'POST' });
+                const resp = await fetch(`/api/paper/${arxivId}/hide`, { method: 'POST' });
                 const data = await resp.json();
                 if (data.status === 'ok') {
-                    statusEl.className = 'action-status success';
-                    statusEl.textContent = '✅ ' + (data.message || '操作成功');
-                    setTimeout(() => location.reload(), 1500);
+                    card.style.transition = 'opacity 0.3s, transform 0.3s';
+                    card.style.opacity = '0';
+                    card.style.transform = 'scale(0.95)';
+                    setTimeout(() => card.remove(), 300);
                 } else {
-                    statusEl.className = 'action-status error';
-                    statusEl.textContent = '❌ ' + (data.message || '操作失败');
+                    alert('操作失败: ' + data.message);
                 }
             } catch (e) {
-                statusEl.className = 'action-status error';
-                statusEl.textContent = '❌ 请求失败: ' + e.message;
-            } finally {
-                btn.disabled = false;
-                btn.textContent = origText;
+                alert('请求失败: ' + e.message);
             }
         }
     </script>

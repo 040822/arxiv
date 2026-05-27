@@ -1,7 +1,10 @@
 import logging
 import os
+import json
+import threading
+import time
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 from apscheduler.schedulers.background import BackgroundScheduler
 from database import (
     init_db, get_papers_with_analysis, get_all_tags,
@@ -11,15 +14,17 @@ from database import (
     get_paper_by_arxiv_id, get_analysis_by_paper_id,
     update_analysis, hide_paper, unhide_paper, delete_paper,
     start_task_log, finish_task_log, get_task_logs, get_task_stats,
-    get_running_tasks, clear_task_logs
+    get_running_tasks, clear_task_logs,
+    save_report, get_reports, get_report_by_date, get_report_dates,
+    generate_report_content
 )
-from fetcher import fetch_latest_papers
-from analyzer import analyze_pending_papers
+from fetcher import fetch_latest_papers, fetch_paper_by_id, parse_arxiv_id
+from analyzer import analyze_pending_papers, analyze_paper_full
 from markdown_gen import generate_all_markdown
 from settings import (
     load_settings, save_settings, get_provider_presets, get_all_providers,
     add_provider, remove_provider, switch_provider, update_provider,
-    get_prompts, save_prompts, get_concurrency,
+    get_prompts, save_prompts, get_concurrency, get_per_page,
     get_admin_password, set_admin_password, verify_admin_password, has_admin_password
 )
 from config import WEB_HOST, WEB_PORT, SCHEDULE_HOUR, SCHEDULE_MINUTE
@@ -32,6 +37,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# 进度存储
+progress_store = {}
+progress_lock = threading.Lock()
+
+
+def update_progress(task_id, data):
+    with progress_lock:
+        progress_store[task_id] = {**data, "timestamp": time.time()}
+
+
+def get_progress(task_id):
+    with progress_lock:
+        return progress_store.get(task_id)
 
 
 @app.context_processor
@@ -66,10 +85,16 @@ def daily_pipeline():
         concurrency = get_concurrency()
         analyzed_count = analyze_pending_papers(limit=100, concurrency=concurrency)
         logger.info(f"Analyzed {analyzed_count} papers.")
-        readme_path, daily_path = generate_all_markdown()
-        logger.info(f"Markdown generated: {readme_path}, {daily_path}")
+
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        content, paper_count, analyzed_count_r, avg_rating = generate_report_content(today)
+        if content:
+            save_report(today, content, paper_count, analyzed_count_r, avg_rating)
+            logger.info(f"Report generated for {today}: {paper_count} papers, avg rating {avg_rating}")
+
         finish_task_log(log_id, "success",
-            f"完成：抓取 {len(new_papers)} 篇，分析 {analyzed_count} 篇",
+            f"完成：抓取 {len(new_papers)} 篇，分析 {analyzed_count} 篇，报告已生成",
             f"new_papers={len(new_papers)}, analyzed={analyzed_count}, concurrency={concurrency}")
     except Exception as e:
         logger.error(f"Daily pipeline error: {e}")
@@ -81,17 +106,24 @@ def index():
     page = request.args.get("page", 1, type=int)
     tag = request.args.get("tag", None)
     date = request.args.get("date", None)
+    today = request.args.get("today", None)
     min_rating = request.args.get("min_rating", None, type=int)
-    per_page = 20
+    per_page = get_per_page()
 
     if min_rating is not None:
         min_rating = max(0, min(5, min_rating))
 
-    papers = get_papers_with_analysis(
+    if today:
+        from datetime import datetime
+        date = datetime.now().strftime("%Y-%m-%d")
+
+    papers, total = get_papers_with_analysis(
         date=date, tag=tag, min_rating=min_rating,
-        limit=per_page, offset=(page - 1) * per_page
+        limit=per_page, offset=(page - 1) * per_page,
+        count_total=True
     )
 
+    total_pages = (total + per_page - 1) // per_page if total > 0 else 1
     total_papers = get_paper_count()
     analyzed_papers = get_analyzed_count()
     tags_with_counts = get_all_tags()
@@ -100,8 +132,11 @@ def index():
         "index.html",
         papers=papers,
         page=page,
+        total_pages=total_pages,
+        per_page=per_page,
         tag=tag,
         date=date,
+        today=today,
         min_rating=min_rating,
         total_papers=total_papers,
         analyzed_papers=analyzed_papers,
@@ -204,6 +239,7 @@ def api_stats():
         "analyzed_papers": get_analyzed_count(),
         "unanalyzed_papers": get_unanalyzed_count(),
         "concurrency": get_concurrency(),
+        "per_page": get_per_page(),
     })
 
 
@@ -222,14 +258,35 @@ def api_save_concurrency():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/api/settings/per_page", methods=["POST"])
+def api_save_per_page():
+    try:
+        data = request.get_json()
+        val = int(data.get("per_page", 20))
+        val = max(5, min(100, val))
+        settings = load_settings()
+        settings["per_page"] = val
+        if save_settings(settings):
+            return jsonify({"status": "ok", "message": f"每页显示数已设置为 {val}"})
+        return jsonify({"status": "error", "message": "保存失败"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/api/fetch", methods=["POST"])
 def api_fetch():
     log_id = start_task_log("fetch", "手动抓取论文")
     try:
-        new_papers = fetch_latest_papers()
+        category = request.args.get("category", "").strip()
+        max_results = request.args.get("max_results", type=int)
+
+        categories = [category] if category else None
+        new_papers = fetch_latest_papers(categories=categories, max_results=max_results)
+
         unanalyzed = get_unanalyzed_count()
-        msg = f"抓取完成：{len(new_papers)} 篇新论文" + (f"，{unanalyzed} 篇待分析" if unanalyzed else "")
-        finish_task_log(log_id, "success", msg, f"new_papers={len(new_papers)}, unanalyzed={unanalyzed}")
+        cat_desc = f"（分类: {category}）" if category else ""
+        msg = f"抓取完成：{len(new_papers)} 篇新论文{cat_desc}" + (f"，{unanalyzed} 篇待分析" if unanalyzed else "")
+        finish_task_log(log_id, "success", msg, f"new_papers={len(new_papers)}, unanalyzed={unanalyzed}, category={category or 'default'}")
         return jsonify({"status": "ok", "count": len(new_papers), "unanalyzed": unanalyzed, "message": msg})
     except Exception as e:
         finish_task_log(log_id, "error", str(e))
@@ -238,11 +295,16 @@ def api_fetch():
 
 @app.route("/api/analyze", methods=["POST"])
 def api_analyze():
+    task_id = request.args.get("task_id", "analyze")
     log_id = start_task_log("analyze", "手动AI分析")
     try:
         limit = request.args.get("limit", 50, type=int)
         concurrency = get_concurrency()
-        count = analyze_pending_papers(limit=limit, concurrency=concurrency)
+
+        def progress_callback(data):
+            update_progress(task_id, data)
+
+        count = analyze_pending_papers(limit=limit, concurrency=concurrency, progress_callback=progress_callback)
         remaining = get_unanalyzed_count()
         msg = f"分析完成：{count} 篇已分析（并发数 {concurrency}）" + (f"，{remaining} 篇剩余" if remaining else "，全部完成！")
         finish_task_log(log_id, "success", msg, f"analyzed={count}, remaining={remaining}, concurrency={concurrency}")
@@ -252,32 +314,73 @@ def api_analyze():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/api/run", methods=["POST"])
+def api_run():
+    task_id = request.args.get("task_id", "run")
+    log_id = start_task_log("run", "一键执行全部")
+    try:
+        update_progress(task_id, {"current": 0, "total": 3, "status": "running", "message": "正在抓取论文..."})
+        new_papers = fetch_latest_papers()
+
+        update_progress(task_id, {"current": 1, "total": 3, "status": "running", "message": f"抓取完成，开始分析 {len(new_papers)} 篇新论文..."})
+        concurrency = get_concurrency()
+
+        def progress_callback(data):
+            update_progress(task_id, {**data, "phase": "analyze"})
+
+        analyzed_count = analyze_pending_papers(limit=100, concurrency=concurrency, progress_callback=progress_callback)
+
+        update_progress(task_id, {"current": 2, "total": 3, "status": "running", "message": "正在生成报告..."})
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        content, paper_count, analyzed_count_r, avg_rating = generate_report_content(today)
+        if content:
+            save_report(today, content, paper_count, analyzed_count_r, avg_rating)
+
+        msg = f"完成！抓取 {len(new_papers)} 篇，分析 {analyzed_count} 篇，报告已生成"
+        finish_task_log(log_id, "success", msg, f"fetched={len(new_papers)}, analyzed={analyzed_count}, concurrency={concurrency}")
+        update_progress(task_id, {"current": 3, "total": 3, "status": "completed", "message": msg})
+        return jsonify({"status": "ok", "fetched": len(new_papers), "analyzed": analyzed_count, "concurrency": concurrency, "message": msg})
+    except Exception as e:
+        finish_task_log(log_id, "error", str(e))
+        update_progress(task_id, {"status": "error", "message": str(e)})
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/progress/<task_id>")
+def api_progress(task_id):
+    def generate():
+        last_data = None
+        while True:
+            data = get_progress(task_id)
+            if data and data != last_data:
+                yield f"data: {json.dumps(data)}\n\n"
+                last_data = data
+                if data.get("status") in ("completed", "error"):
+                    break
+            time.sleep(0.5)
+
+    return Response(generate(), mimetype="text/event-stream")
+
+
 @app.route("/api/generate", methods=["POST"])
 def api_generate():
     log_id = start_task_log("generate", "手动生成报告")
     try:
-        readme_path, daily_path = generate_all_markdown()
-        finish_task_log(log_id, "success", "报告生成成功", f"readme={readme_path}, daily={daily_path}")
-        return jsonify({"status": "ok", "readme": readme_path, "daily": daily_path, "message": "报告生成成功"})
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        content, paper_count, analyzed_count, avg_rating = generate_report_content(today)
+        if content is None:
+            finish_task_log(log_id, "error", "今日无论文数据")
+            return jsonify({"status": "error", "message": "今日无论文数据，请先抓取论文"}), 400
+        save_report(today, content, paper_count, analyzed_count, avg_rating)
+        msg = f"报告生成成功：{paper_count} 篇论文，{analyzed_count} 篇已分析，平均评级 {avg_rating}"
+        finish_task_log(log_id, "success", msg)
+        return jsonify({"status": "ok", "date": today, "message": msg})
     except Exception as e:
         finish_task_log(log_id, "error", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
 
-
-@app.route("/api/run", methods=["POST"])
-def api_run():
-    log_id = start_task_log("run", "一键执行全部")
-    try:
-        new_papers = fetch_latest_papers()
-        concurrency = get_concurrency()
-        analyzed_count = analyze_pending_papers(limit=100, concurrency=concurrency)
-        readme_path, daily_path = generate_all_markdown()
-        msg = f"完成！抓取 {len(new_papers)} 篇，分析 {analyzed_count} 篇（并发数 {concurrency}）"
-        finish_task_log(log_id, "success", msg, f"fetched={len(new_papers)}, analyzed={analyzed_count}, concurrency={concurrency}")
-        return jsonify({"status": "ok", "fetched": len(new_papers), "analyzed": analyzed_count, "concurrency": concurrency, "readme": readme_path, "daily": daily_path, "message": msg})
-    except Exception as e:
-        finish_task_log(log_id, "error", str(e))
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/settings")
@@ -543,10 +646,24 @@ def api_delete_paper(arxiv_id):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/api/papers/batch-delete", methods=["POST"])
+def api_batch_delete_papers():
+    try:
+        from database import batch_delete_papers
+        data = request.get_json()
+        arxiv_ids = data.get("arxiv_ids", [])
+        if not arxiv_ids:
+            return jsonify({"status": "error", "message": "未选择论文"}), 400
+        deleted = batch_delete_papers(arxiv_ids)
+        return jsonify({"status": "ok", "message": f"已删除 {deleted} 篇论文", "deleted": deleted})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/api/paper/<arxiv_id>/reanalyze", methods=["POST"])
 def api_reanalyze_paper(arxiv_id):
     try:
-        from analyzer import analyze_paper
+        from analyzer import analyze_paper_full
         from database import get_paper_by_arxiv_id, update_analysis
         paper = get_paper_by_arxiv_id(arxiv_id)
         if not paper:
@@ -559,18 +676,93 @@ def api_reanalyze_paper(arxiv_id):
         if paper_data.get("categories") and isinstance(paper_data["categories"], str):
             paper_data["categories"] = json.loads(paper_data["categories"])
 
-        result_data, result, error = analyze_paper(paper_data)
+        result_data, result, error = analyze_paper_full(paper_data)
         if result:
             update_analysis(paper["id"], result)
-            return jsonify({"status": "ok", "message": "重新分析完成", "rating": result.get("rating")})
+            return jsonify({"status": "ok", "message": "报告生成完成", "rating": result.get("rating")})
         return jsonify({"status": "error", "message": f"分析失败: {error}"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/paper/add", methods=["POST"])
+def api_add_paper():
+    try:
+        data = request.get_json()
+        input_str = data.get("input", "").strip()
+        if not input_str:
+            return jsonify({"status": "error", "message": "请输入论文编号或链接"}), 400
+
+        arxiv_id = parse_arxiv_id(input_str)
+        if not arxiv_id:
+            return jsonify({"status": "error", "message": "无法识别的格式，请输入 arXiv 论文编号（如 2603.18336）或链接"}), 400
+
+        task_id = data.get("task_id", "add_paper")
+        update_progress(task_id, {"current": 0, "total": 2, "status": "running", "message": f"正在获取论文 {arxiv_id}..."})
+
+        paper_data = fetch_paper_by_id(arxiv_id)
+        if not paper_data:
+            update_progress(task_id, {"status": "error", "message": "论文获取失败"})
+            return jsonify({"status": "error", "message": "论文获取失败，请检查编号是否正确"}), 404
+
+        already_analyzed = get_analysis_by_paper_id(paper_data.get("id"))
+        if already_analyzed:
+            update_progress(task_id, {"current": 2, "total": 2, "status": "completed", "message": "论文已存在且已分析"})
+            return jsonify({
+                "status": "ok",
+                "message": f"论文已存在且已分析: {paper_data['title'][:50]}...",
+                "arxiv_id": paper_data.get("arxiv_id"),
+                "already_exists": True
+            })
+
+        update_progress(task_id, {"current": 1, "total": 2, "status": "running", "message": f"正在分析论文 {arxiv_id}..."})
+
+        if isinstance(paper_data.get("authors"), str):
+            import json as _json
+            paper_data["authors"] = _json.loads(paper_data["authors"])
+        if isinstance(paper_data.get("categories"), str):
+            import json as _json
+            paper_data["categories"] = _json.loads(paper_data["categories"])
+
+        result_data, result, error = analyze_paper_full(paper_data)
+        if result:
+            from database import insert_analysis
+            insert_analysis(paper_data["id"], result)
+            update_progress(task_id, {"current": 2, "total": 2, "status": "completed", "message": "添加并分析完成"})
+            return jsonify({
+                "status": "ok",
+                "message": f"添加成功: {paper_data['title'][:50]}...",
+                "arxiv_id": paper_data.get("arxiv_id"),
+                "rating": result.get("rating", 0),
+                "tags": result.get("tags", [])
+            })
+        else:
+            update_progress(task_id, {"status": "error", "message": f"分析失败: {error}"})
+            return jsonify({"status": "ok", "message": f"论文已添加但分析失败: {error}", "arxiv_id": paper_data.get("arxiv_id")})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/tasks")
 def tasks_page():
-    return render_template("tasks.html")
+    return render_template("tasks.html",
+        schedule_hour=SCHEDULE_HOUR,
+        schedule_minute=SCHEDULE_MINUTE
+    )
+
+
+@app.route("/reports")
+def reports_page():
+    reports = get_reports()
+    return render_template("reports.html", reports=reports)
+
+
+@app.route("/reports/<report_date>")
+def report_detail_page(report_date):
+    report = get_report_by_date(report_date)
+    if not report:
+        return "报告不存在", 404
+    return render_template("report_detail.html", report=report)
 
 
 @app.route("/api/tasks/stats", methods=["GET"])

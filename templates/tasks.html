@@ -21,23 +21,113 @@
             <a href="/browse" class="nav-link">📂 分类浏览</a>
             <a href="/search" class="nav-link">🔍 搜索</a>
             <a href="/tasks" class="nav-link active">📋 任务管理</a>
+            <a href="/reports" class="nav-link">📊 每日报告</a>
         </nav>
 
-        <!-- 手动操作面板 -->
+        <!-- 抓取论文 -->
         <div class="action-panel">
-            <h3>⚡ 操作面板</h3>
-            <div class="action-buttons">
-                <button class="action-btn" onclick="runApi('/api/fetch', this)">📥 抓取论文</button>
-                <button class="action-btn" onclick="runApi('/api/analyze', this)">🤖 AI 分析</button>
-                <button class="action-btn" onclick="runApi('/api/generate', this)">📝 生成报告</button>
-                <button class="action-btn btn-primary" onclick="runApi('/api/run', this)">🚀 一键执行全部</button>
+            <h3>📥 抓取论文</h3>
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label>主分类</label>
+                    <select id="fetch-category">
+                        <option value="">使用默认配置</option>
+                        <option value="cs.AI">cs.AI - Artificial Intelligence</option>
+                        <option value="cs.RO">cs.RO - Robotics</option>
+                        <option value="cs.CV">cs.CV - Computer Vision</option>
+                        <option value="cs.LG">cs.LG - Machine Learning</option>
+                        <option value="cs.CL">cs.CL - NLP</option>
+                        <option value="cs.MA">cs.MA - Multiagent Systems</option>
+                        <option value="cs.SY">cs.SY - Systems and Control</option>
+                        <option value="cs.IR">cs.IR - Information Retrieval</option>
+                    </select>
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label>最大数量（每分类）</label>
+                    <input type="number" id="fetch-max" min="1" max="500" value="50" placeholder="50">
+                </div>
             </div>
-            <div id="action-status" class="action-status"></div>
+            <div class="settings-actions">
+                <button class="action-btn btn-primary" onclick="runFetch(this)">📥 开始抓取</button>
+            </div>
+            <div id="fetch-status" class="action-status"></div>
         </div>
 
-        <!-- 定时任务 -->
+        <!-- AI 分析 -->
+        <div class="action-panel">
+            <h3>🤖 AI 分析</h3>
+            <div class="form-group" style="max-width:200px;">
+                <label>分析数量上限</label>
+                <input type="number" id="analyze-limit" min="1" max="500" value="50">
+            </div>
+            <div class="settings-actions">
+                <button class="action-btn btn-primary" onclick="runAnalyze(this)">🤖 开始分析</button>
+            </div>
+            <div id="analyze-status" class="action-status"></div>
+            <div id="progress-container" style="display:none;margin-top:12px;">
+                <div class="progress-header">
+                    <span id="progress-title">正在执行...</span>
+                    <span id="progress-count">0/0</span>
+                </div>
+                <div class="progress-bar-bg">
+                    <div id="progress-bar" class="progress-bar-fill" style="width: 0%"></div>
+                </div>
+                <div id="progress-detail" class="progress-detail"></div>
+                <div id="progress-stats" class="progress-stats"></div>
+            </div>
+        </div>
+
+        <!-- 生成报告 & 一键执行 -->
+        <div class="action-panel">
+            <div class="action-buttons">
+                <button class="action-btn" onclick="runGenerate(this)">📝 生成报告</button>
+                <button class="action-btn btn-primary" onclick="runAll(this)">🚀 一键执行全部</button>
+            </div>
+            <div id="run-status" class="action-status"></div>
+        </div>
+
+        <!-- 添加指定论文 -->
+        <div class="action-panel">
+            <h3>📄 添加指定论文</h3>
+            <div class="add-paper-row">
+                <input type="text" id="paper-input" class="add-paper-input" placeholder="输入 arXiv 论文编号或链接，如 2603.18336、https://arxiv.org/abs/2603.18336">
+                <button class="action-btn btn-primary" onclick="addPaper()">🔍 添加并分析</button>
+            </div>
+            <div id="add-paper-status" class="action-status"></div>
+            <div id="add-paper-progress" style="display:none;">
+                <div class="progress-bar-bg">
+                    <div id="add-paper-bar" class="progress-bar-fill" style="width: 0%"></div>
+                </div>
+                <div id="add-paper-detail" class="progress-detail"></div>
+            </div>
+        </div>
+
+        <!-- 定时任务设置 -->
         <div class="settings-section">
-            <h3>⏰ 定时任务</h3>
+            <h3>⏰ 定时任务设置</h3>
+            <p class="section-desc">每日自动执行抓取、分析、生成报告的定时任务配置</p>
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label>执行时间</label>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <select id="schedule-hour">
+                            {% for h in range(24) %}
+                            <option value="{{ h }}" {% if h == schedule_hour %}selected{% endif %}>{{ '%02d' % h }}</option>
+                            {% endfor %}
+                        </select>
+                        <span>:</span>
+                        <select id="schedule-minute">
+                            {% for m in range(0, 60, 5) %}
+                            <option value="{{ m }}" {% if m == schedule_minute %}selected{% endif %}>{{ '%02d' % m }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label>状态</label>
+                    <div id="schedule-status-text" style="padding:8px 0;color:#64748b;">加载中...</div>
+                </div>
+            </div>
             <div id="scheduled-tasks" class="task-log-list"></div>
         </div>
 
@@ -89,20 +179,223 @@
         };
 
         let currentPage = 1;
+        let currentEventSource = null;
 
-        async function runApi(url, btn) {
-            const statusEl = document.getElementById('action-status');
+        /* ---- 抓取 ---- */
+        async function runFetch(btn) {
+            const statusEl = document.getElementById('fetch-status');
+            const category = document.getElementById('fetch-category').value;
+            const maxResults = document.getElementById('fetch-max').value;
+            const origText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ 抓取中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在抓取论文...';
+            try {
+                const params = new URLSearchParams();
+                if (category) params.set('category', category);
+                if (maxResults) params.set('max_results', maxResults);
+                const resp = await fetch('/api/fetch?' + params.toString(), { method: 'POST' });
+                const data = await resp.json();
+                statusEl.className = data.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (data.status === 'ok' ? '✅ ' : '❌ ') + (data.message || '操作完成');
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
+                loadStats();
+                loadLogs();
+            }
+        }
+
+        /* ---- 分析 ---- */
+        function updateProgressBar(data) {
+            const container = document.getElementById('progress-container');
+            const bar = document.getElementById('progress-bar');
+            const count = document.getElementById('progress-count');
+            const detail = document.getElementById('progress-detail');
+            const stats = document.getElementById('progress-stats');
+            const title = document.getElementById('progress-title');
+            container.style.display = 'block';
+            const current = data.current || 0;
+            const total = data.total || 1;
+            bar.style.width = Math.round((current / total) * 100) + '%';
+            count.textContent = `${current}/${total}`;
+            detail.textContent = data.message || '';
+            if (data.status === 'completed') {
+                bar.style.background = 'linear-gradient(90deg, #10b981, #059669)';
+                title.textContent = '✅ 执行完成';
+            } else if (data.status === 'error') {
+                bar.style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+                title.textContent = '❌ 执行失败';
+            } else {
+                bar.style.background = 'linear-gradient(90deg, #3b82f6, #2563eb)';
+                title.textContent = '⏳ 正在执行...';
+            }
+            if (data.success !== undefined) {
+                stats.innerHTML = `
+                    <span class="stat-success">✅ 成功: ${data.success}</span>
+                    <span class="stat-skip">⏭️ 跳过: ${data.skip || 0}</span>
+                    <span class="stat-error">❌ 失败: ${data.fail || 0}</span>
+                `;
+            }
+        }
+
+        async function runAnalyze(btn) {
+            const statusEl = document.getElementById('analyze-status');
+            const limit = document.getElementById('analyze-limit').value;
+            const origText = btn.textContent;
+
+            if (currentEventSource) { currentEventSource.close(); currentEventSource = null; }
+
+            btn.disabled = true;
+            btn.textContent = '⏳ 分析中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在分析...';
+
+            const taskId = 'analyze_' + Date.now();
+            const eventSource = new EventSource('/api/progress/' + taskId);
+            currentEventSource = eventSource;
+            eventSource.onmessage = function(e) {
+                try {
+                    const data = JSON.parse(e.data);
+                    updateProgressBar(data);
+                    if (data.status === 'completed' || data.status === 'error') {
+                        eventSource.close();
+                        currentEventSource = null;
+                        setTimeout(() => { document.getElementById('progress-container').style.display = 'none'; }, 3000);
+                    }
+                } catch (err) {}
+            };
+            eventSource.onerror = function() { eventSource.close(); currentEventSource = null; };
+
+            try {
+                const resp = await fetch(`/api/analyze?limit=${limit}&task_id=${taskId}`, { method: 'POST' });
+                const data = await resp.json();
+                statusEl.className = data.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (data.status === 'ok' ? '✅ ' : '❌ ') + (data.message || '操作完成');
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
+                loadStats();
+                loadLogs();
+            }
+        }
+
+        /* ---- 生成报告 ---- */
+        async function runGenerate(btn) {
+            const statusEl = document.getElementById('run-status');
+            const origText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ 生成中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在生成报告...';
+            try {
+                const resp = await fetch('/api/generate', { method: 'POST' });
+                const data = await resp.json();
+                statusEl.className = data.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (data.status === 'ok' ? '✅ ' : '❌ ') + (data.message || '操作完成');
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
+                loadStats();
+                loadLogs();
+            }
+        }
+
+        /* ---- 一键执行 ---- */
+        async function runAll(btn) {
+            const statusEl = document.getElementById('run-status');
             const origText = btn.textContent;
             btn.disabled = true;
             btn.textContent = '⏳ 执行中...';
             statusEl.className = 'action-status info';
-            statusEl.textContent = '正在执行，请稍候...';
+            statusEl.textContent = '正在执行全部任务...';
+
+            const taskId = 'run_' + Date.now();
+            const eventSource = new EventSource('/api/progress/' + taskId);
+            eventSource.onmessage = function(e) {
+                try {
+                    const data = JSON.parse(e.data);
+                    statusEl.textContent = '⏳ ' + (data.message || '执行中...');
+                    if (data.status === 'completed' || data.status === 'error') {
+                        eventSource.close();
+                    }
+                } catch (err) {}
+            };
+            eventSource.onerror = function() { eventSource.close(); };
+
             try {
-                const resp = await fetch(url, { method: 'POST' });
+                const resp = await fetch(`/api/run?task_id=${taskId}`, { method: 'POST' });
+                const data = await resp.json();
+                statusEl.className = data.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (data.status === 'ok' ? '✅ ' : '❌ ') + (data.message || '操作完成');
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
+                loadStats();
+                loadLogs();
+            }
+        }
+
+        /* ---- 添加论文 ---- */
+        async function addPaper() {
+            const input = document.getElementById('paper-input').value.trim();
+            if (!input) { alert('请输入论文编号或链接'); return; }
+            const statusEl = document.getElementById('add-paper-status');
+            const progressEl = document.getElementById('add-paper-progress');
+            const barEl = document.getElementById('add-paper-bar');
+            const detailEl = document.getElementById('add-paper-detail');
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '⏳ 添加中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在获取论文信息...';
+            progressEl.style.display = 'block';
+            barEl.style.width = '10%';
+            detailEl.textContent = '正在解析输入...';
+
+            const taskId = 'add_' + Date.now();
+            const eventSource = new EventSource('/api/progress/' + taskId);
+            eventSource.onmessage = function(e) {
+                try {
+                    const data = JSON.parse(e.data);
+                    barEl.style.width = Math.round((data.current / data.total) * 100) + '%';
+                    detailEl.textContent = data.message || '';
+                    if (data.status === 'completed') barEl.style.background = 'linear-gradient(90deg, #10b981, #059669)';
+                    else if (data.status === 'error') barEl.style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+                    if (data.status === 'completed' || data.status === 'error') {
+                        eventSource.close();
+                        setTimeout(() => { progressEl.style.display = 'none'; }, 3000);
+                    }
+                } catch (err) {}
+            };
+            eventSource.onerror = function() { eventSource.close(); };
+
+            try {
+                const resp = await fetch('/api/paper/add?task_id=' + taskId, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ input: input, task_id: taskId })
+                });
                 const data = await resp.json();
                 if (data.status === 'ok') {
                     statusEl.className = 'action-status success';
                     statusEl.textContent = '✅ ' + data.message;
+                    document.getElementById('paper-input').value = '';
+                    loadStats();
+                    loadLogs();
                 } else {
                     statusEl.className = 'action-status error';
                     statusEl.textContent = '❌ ' + data.message;
@@ -112,18 +405,45 @@
                 statusEl.textContent = '❌ 请求失败: ' + e.message;
             } finally {
                 btn.disabled = false;
-                btn.textContent = origText;
-                loadStats();
-                loadLogs();
+                btn.textContent = '🔍 添加并分析';
             }
         }
 
+        /* ---- 定时任务 ---- */
+        async function loadScheduled() {
+            try {
+                const resp = await fetch('/api/tasks/scheduled');
+                const jobs = await resp.json();
+                const el = document.getElementById('scheduled-tasks');
+                const statusText = document.getElementById('schedule-status-text');
+                if (jobs.length === 0) {
+                    el.innerHTML = '';
+                    statusText.textContent = '未配置';
+                    return;
+                }
+                const j = jobs[0];
+                statusText.innerHTML = `<span style="color:#059669;">✅ 已启用</span> · 下次执行: ${j.next_run}`;
+                el.innerHTML = jobs.map(j => `
+                    <div class="log-item log-running">
+                        <div class="log-main">
+                            <span class="log-status">⏰</span>
+                            <span class="log-task">${j.name || j.id}</span>
+                            <span class="log-msg">触发规则: ${j.trigger}</span>
+                            <span class="log-time">下次执行: ${j.next_run}</span>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                document.getElementById('scheduled-tasks').innerHTML = '';
+                document.getElementById('schedule-status-text').textContent = '加载失败';
+            }
+        }
+
+        /* ---- 统计 & 日志 ---- */
         async function loadStats() {
             try {
                 const resp = await fetch('/api/tasks/stats');
                 const data = await resp.json();
-
-                // Task stats
                 const statsEl = document.getElementById('task-stats');
                 if (data.stats.length === 0) {
                     statsEl.innerHTML = '<div class="empty-state"><p>暂无任务执行记录</p></div>';
@@ -152,8 +472,6 @@
                     }
                     statsEl.innerHTML = html;
                 }
-
-                // Running tasks
                 const runningSection = document.getElementById('running-section');
                 const runningEl = document.getElementById('running-tasks');
                 if (data.running.length > 0) {
@@ -182,13 +500,11 @@
                 const resp = await fetch(url);
                 const data = await resp.json();
                 const logsEl = document.getElementById('task-logs');
-
                 if (data.logs.length === 0) {
                     logsEl.innerHTML = '<div class="empty-state"><p>暂无日志</p></div>';
                     document.getElementById('log-pagination').innerHTML = '';
                     return;
                 }
-
                 logsEl.innerHTML = data.logs.map(r => {
                     const statusIcon = r.status === 'success' ? '✅' : r.status === 'error' ? '❌' : '⏳';
                     const statusClass = r.status === 'success' ? 'log-success' : r.status === 'error' ? 'log-error' : 'log-running';
@@ -206,8 +522,6 @@
                         ${r.detail ? `<div class="log-detail">${r.detail}</div>` : ''}
                     </div>`;
                 }).join('');
-
-                // Pagination
                 const totalPages = Math.ceil(data.total / data.per_page);
                 const pagEl = document.getElementById('log-pagination');
                 if (totalPages > 1) {
@@ -232,39 +546,12 @@
                 alert(data.message);
                 loadStats();
                 loadLogs();
-            } catch (e) {
-                alert('清理失败: ' + e.message);
-            }
-        }
-
-        async function loadScheduled() {
-            try {
-                const resp = await fetch('/api/tasks/scheduled');
-                const jobs = await resp.json();
-                const el = document.getElementById('scheduled-tasks');
-                if (jobs.length === 0) {
-                    el.innerHTML = '<div class="empty-state"><p>暂无定时任务</p></div>';
-                    return;
-                }
-                el.innerHTML = jobs.map(j => `
-                    <div class="log-item log-running">
-                        <div class="log-main">
-                            <span class="log-status">⏰</span>
-                            <span class="log-task">${j.name || j.id}</span>
-                            <span class="log-msg">触发规则: ${j.trigger}</span>
-                            <span class="log-time">下次执行: ${j.next_run}</span>
-                        </div>
-                    </div>
-                `).join('');
-            } catch (e) {
-                document.getElementById('scheduled-tasks').innerHTML = '<div class="empty-state"><p>加载失败</p></div>';
-            }
+            } catch (e) { alert('清理失败: ' + e.message); }
         }
 
         loadScheduled();
         loadStats();
         loadLogs();
-
         setInterval(() => { loadScheduled(); loadStats(); loadLogs(); }, 30000);
     </script>
 </body>

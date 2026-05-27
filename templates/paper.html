@@ -29,14 +29,26 @@
                 {% if paper.published_date %}
                 <span class="meta-item">📅 发布日期: {{ paper.published_date }}</span>
                 {% endif %}
-                {% if paper.primary_category %}
-                <span class="meta-item">📂 分类: {{ paper.primary_category }}</span>
+                <span class="meta-item">🔗 arXiv ID: <a href="{{ paper.url }}" target="_blank" class="meta-link">{{ paper.arxiv_id }}</a></span>
+                {% if paper.pdf_url %}
+                <span class="meta-item">📥 <a href="{{ paper.pdf_url }}" target="_blank" class="meta-link">下载 PDF</a></span>
                 {% endif %}
-                <span class="meta-item">🔗 arXiv ID: {{ paper.arxiv_id }}</span>
                 {% if paper.hidden %}
                 <span class="meta-item" style="color:#dc3545;">🚫 已隐藏</span>
                 {% endif %}
             </div>
+
+            {% if paper.categories %}
+            <div class="detail-categories">
+                {% if paper.categories is string %}
+                    <span class="category-tag">{{ paper.categories }}</span>
+                {% else %}
+                    {% for cat in paper.categories %}
+                    <span class="category-tag {% if cat == paper.primary_category %}primary{% endif %}">{{ cat }}</span>
+                    {% endfor %}
+                {% endif %}
+            </div>
+            {% endif %}
 
             {% if paper.authors %}
             <div class="detail-section">
@@ -87,45 +99,10 @@
                 </div>
             </div>
 
-            <!-- AI 深度阅读 -->
+            <!-- 原始摘要 -->
             <div class="detail-section">
-                <h3>📖 AI 深度阅读
-                    <button class="btn-sm btn-edit" onclick="toggleQaEdit()">编辑</button>
-                    <button class="btn-sm btn-activate" id="reanalyze-btn" onclick="reanalyze()">🔄 重新生成</button>
-                </h3>
-                <div id="reanalyze-status" class="action-status"></div>
-                <div id="qa-view">
-                    {% if analysis and analysis.qa_analysis %}
-                    <div class="qa-content" id="qa-content"></div>
-                    <script>
-                        (function() {
-                            let raw = {{ analysis.qa_analysis | tojson }};
-                            raw = raw.replace(/\\n/g, '\n');
-                            const el = document.getElementById('qa-content');
-                            const parts = raw.split(/(?=### Q\d+:)/).filter(s => s.trim());
-                            let html = '';
-                            for (const part of parts) {
-                                const m = part.match(/^### Q(\d+):\s*([\s\S]*)/);
-                                if (m) {
-                                    const title = m[2].split('\n')[0].trim();
-                                    const body = m[2].split('\n').slice(1).join('\n').trim();
-                                    html += '<div class="qa-item"><div class="qa-question">Q' + m[1] + ': ' + title + '</div><div class="qa-answer">' + body.replace(/\n/g, '<br>') + '</div></div>';
-                                }
-                            }
-                            el.innerHTML = html;
-                        })();
-                    </script>
-                    {% else %}
-                    <p class="no-data">暂无 AI 深度阅读内容</p>
-                    {% endif %}
-                </div>
-                <div id="qa-edit" style="display:none;">
-                    <textarea id="qa-textarea" rows="15" placeholder="输入 AI 深度阅读内容（Markdown 格式）">{{ analysis.qa_analysis if analysis and analysis.qa_analysis else '' }}</textarea>
-                    <div class="edit-actions">
-                        <button class="action-btn btn-primary" onclick="saveQaAnalysis()">💾 保存</button>
-                        <button class="action-btn" onclick="toggleQaEdit()">取消</button>
-                    </div>
-                </div>
+                <h3>📄 原始摘要</h3>
+                <p class="abstract-text">{{ paper.abstract }}</p>
             </div>
 
             <!-- 中文摘要 -->
@@ -147,6 +124,56 @@
                 </div>
             </div>
 
+            <!-- AI 深度阅读 -->
+            <div class="detail-section">
+                <h3>📖 AI 深度阅读
+                    <button class="btn-sm btn-edit" onclick="toggleQaEdit()">编辑</button>
+                    <button class="btn-sm btn-activate" id="reanalyze-btn" onclick="reanalyze()">📝 生成报告</button>
+                </h3>
+                <div id="reanalyze-status" class="action-status"></div>
+                <div id="qa-view">
+                    {% if analysis and analysis.qa_analysis %}
+                    <div class="qa-content" id="qa-content"></div>
+                    <script>
+                        (function() {
+                            let raw = {{ analysis.qa_analysis | tojson }};
+                            raw = raw.replace(/\\n/g, '\n');
+
+                            function renderMd(text) {
+                                text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+                                text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+                                text = text.replace(/`(.+?)`/g, '<code>$1</code>');
+                                text = text.replace(/\n/g, '<br>');
+                                return text;
+                            }
+
+                            const el = document.getElementById('qa-content');
+                            const parts = raw.split(/(?=### Q\d+:)/).filter(s => s.trim());
+                            let html = '';
+                            for (const part of parts) {
+                                const m = part.match(/^### Q(\d+):\s*([\s\S]*)/);
+                                if (m) {
+                                    const title = m[2].split('\n')[0].trim();
+                                    const body = m[2].split('\n').slice(1).join('\n').trim();
+                                    html += '<div class="qa-item"><div class="qa-question">Q' + m[1] + ': ' + renderMd(title) + '</div><div class="qa-answer">' + renderMd(body) + '</div></div>';
+                                }
+                            }
+                            el.innerHTML = html;
+                        })();
+                    </script>
+                    {% else %}
+                    <p class="no-data">暂无 AI 深度阅读内容</p>
+                    {% endif %}
+                </div>
+                <div id="qa-edit" style="display:none;">
+                    <textarea id="qa-textarea" rows="15" placeholder="输入 AI 深度阅读内容（Markdown 格式）">{{ analysis.qa_analysis if analysis and analysis.qa_analysis else '' }}</textarea>
+                    <div class="edit-actions">
+                        <button class="action-btn btn-primary" onclick="saveQaAnalysis()">💾 保存</button>
+                        <button class="action-btn" onclick="toggleQaEdit()">取消</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- 评价 -->
             <div class="detail-section">
                 <h3>💬 评价 <button class="btn-sm btn-edit" onclick="toggleCommentEdit()">编辑</button></h3>
@@ -164,18 +191,6 @@
                         <button class="action-btn" onclick="toggleCommentEdit()">取消</button>
                     </div>
                 </div>
-            </div>
-
-            <div class="detail-section">
-                <h3>📄 原始摘要</h3>
-                <p class="abstract-text">{{ paper.abstract }}</p>
-            </div>
-
-            <div class="detail-links">
-                <a href="{{ paper.url }}" target="_blank" class="btn">📄 arXiv 页面</a>
-                {% if paper.pdf_url %}
-                <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-primary">📥 下载 PDF</a>
-                {% endif %}
             </div>
 
             <!-- 危险操作区 -->
@@ -216,9 +231,9 @@
             const btn = document.getElementById('reanalyze-btn');
             const statusEl = document.getElementById('reanalyze-status');
             btn.disabled = true;
-            btn.textContent = '⏳ 分析中...';
+            btn.textContent = '⏳ 生成中...';
             statusEl.className = 'action-status info';
-            statusEl.textContent = '正在调用 AI 重新分析，请稍候...';
+            statusEl.textContent = '正在下载 PDF 并进行 AI 深度阅读，请稍候...';
             try {
                 const resp = await fetch(`/api/paper/${ARXIV_ID}/reanalyze`, {method: 'POST'});
                 const result = await resp.json();
@@ -235,7 +250,7 @@
                 statusEl.textContent = '❌ ' + e.message;
             } finally {
                 btn.disabled = false;
-                btn.textContent = '🔄 重新生成';
+                btn.textContent = '📝 生成报告';
             }
         }
 

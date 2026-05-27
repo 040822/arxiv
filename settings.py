@@ -149,6 +149,11 @@ def get_concurrency():
     return settings.get("concurrency", 5)
 
 
+def get_per_page():
+    settings = load_settings()
+    return settings.get("per_page", 20)
+
+
 def get_all_providers():
     return load_settings().get("providers", {})
 

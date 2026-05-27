@@ -1,13 +1,43 @@
 import os
 import re
+import time
+import threading
 import logging
 import requests
 import fitz  # PyMuPDF
-from config import DB_DIR
+from config import DB_DIR, PDF_DOWNLOAD_RATE, PDF_DOWNLOAD_CAPACITY
 
 logger = logging.getLogger(__name__)
 
 PDF_CACHE_DIR = os.path.join(DB_DIR, "pdf_cache")
+
+
+class TokenBucket:
+    def __init__(self, rate=1.0, capacity=2):
+        self.rate = rate
+        self.capacity = capacity
+        self.tokens = capacity
+        self.last_time = time.monotonic()
+        self.lock = threading.Lock()
+
+    def acquire(self, tokens=1):
+        with self.lock:
+            now = time.monotonic()
+            elapsed = now - self.last_time
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+            self.last_time = now
+
+            if self.tokens >= tokens:
+                self.tokens -= tokens
+                return 0
+            else:
+                wait_time = (tokens - self.tokens) / self.rate
+                self.tokens = 0
+                self.last_time += wait_time
+                return wait_time
+
+
+_pdf_bucket = TokenBucket(rate=PDF_DOWNLOAD_RATE, capacity=PDF_DOWNLOAD_CAPACITY)
 
 
 def _ensure_cache_dir():
@@ -20,6 +50,11 @@ def download_pdf(pdf_url, arxiv_id):
 
     if os.path.exists(cache_path):
         return cache_path
+
+    wait = _pdf_bucket.acquire()
+    if wait > 0:
+        logger.debug(f"Rate limited, waiting {wait:.1f}s for {arxiv_id}")
+        time.sleep(wait)
 
     try:
         headers = {"User-Agent": "Mozilla/5.0 (compatible; ArxivPaperDB/1.0)"}
@@ -56,7 +91,7 @@ def extract_text_from_pdf(pdf_path):
         return None
 
 
-def get_paper_full_text(pdf_url, arxiv_id, max_chars=60000):
+def get_paper_full_text(pdf_url, arxiv_id, max_chars=6000000):
     pdf_path = download_pdf(pdf_url, arxiv_id)
     if not pdf_path:
         return None

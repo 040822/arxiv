@@ -107,75 +107,99 @@
                     {% endif %}
                 </div>
 
+                <!-- 批量操作栏 -->
+                <div class="batch-actions">
+                    <label class="select-all-label">
+                        <input type="checkbox" id="select-all-checkbox" onchange="toggleAll(this)"> 全选
+                    </label>
+                    <button class="action-btn" onclick="selectAll()">☑️ 全选</button>
+                    <button class="action-btn" onclick="deselectAll()">❎ 取消</button>
+                    <button class="action-btn btn-danger" onclick="batchDelete()">🗑️ 批量删除 (<span id="selected-count">0</span>)</button>
+                    <div id="batch-status" class="action-status" style="display:inline-block;margin:0;padding:4px 10px;font-size:0.85em;"></div>
+                </div>
+
                 <div class="papers-list">
                     {% for paper in papers %}
                     <div class="paper-card">
-                        <div class="paper-header">
-                            <h3 class="paper-title">
-                                <a href="/paper/{{ paper.arxiv_id }}">{{ paper.title }}</a>
-                            </h3>
-                            <div class="paper-meta">
-                                {% if paper.published_date %}
-                                <span class="meta-item">📅 {{ paper.published_date }}</span>
-                                {% endif %}
-                                {% if paper.rating is not none %}
-                                <span class="meta-item rating">
-                                    {% for i in range(5) %}
-                                        {% if i < paper.rating %}★{% else %}☆{% endif %}
-                                    {% endfor %}
-                                </span>
-                                {% else %}
-                                <span class="meta-item" style="color:#ccc">未分析</span>
-                                {% endif %}
-                                {% if paper.primary_category %}
-                                <span class="meta-item">📂 {{ paper.primary_category }}</span>
+                        <div class="paper-select">
+                            <input type="checkbox" class="paper-checkbox" value="{{ paper.arxiv_id }}" onchange="updateSelectedCount()">
+                        </div>
+                        <div class="paper-content">
+                            <div class="paper-header">
+                                <h3 class="paper-title">
+                                    <a href="/paper/{{ paper.arxiv_id }}">{{ paper.title }}</a>
+                                </h3>
+                                <div class="paper-meta">
+                                    {% if paper.published_date %}
+                                    <span class="meta-item">📅 {{ paper.published_date }}</span>
+                                    {% endif %}
+                                    {% if paper.rating is not none %}
+                                    <span class="meta-item rating">
+                                        {% for i in range(5) %}
+                                            {% if i < paper.rating %}★{% else %}☆{% endif %}
+                                        {% endfor %}
+                                    </span>
+                                    {% else %}
+                                    <span class="meta-item" style="color:#ccc">未分析</span>
+                                    {% endif %}
+                                </div>
+                                {% if paper.categories %}
+                                <div class="paper-categories">
+                                    {% if paper.categories is string %}
+                                        <span class="category-tag">{{ paper.categories }}</span>
+                                    {% else %}
+                                        {% for cat in paper.categories %}
+                                        <span class="category-tag">{{ cat }}</span>
+                                        {% endfor %}
+                                    {% endif %}
+                                </div>
                                 {% endif %}
                             </div>
-                        </div>
 
-                        {% if paper.authors %}
-                        <div class="paper-authors">
-                            {% if paper.authors is string %}
-                                {{ paper.authors }}
-                            {% else %}
-                                {{ paper.authors[:3] | join(", ") }}
-                                {% if paper.authors|length > 3 %} et al. ({{ paper.authors|length }}){% endif %}
+                            {% if paper.authors %}
+                            <div class="paper-authors">
+                                {% if paper.authors is string %}
+                                    {{ paper.authors }}
+                                {% else %}
+                                    {{ paper.authors[:3] | join(", ") }}
+                                    {% if paper.authors|length > 3 %} et al. ({{ paper.authors|length }}){% endif %}
+                                {% endif %}
+                            </div>
                             {% endif %}
-                        </div>
-                        {% endif %}
 
-                        {% if paper.tags %}
-                        <div class="paper-tags">
-                            {% if paper.tags is string %}
-                                {% for t in paper.tags.split(",") %}
-                                <span class="tag-small">{{ t.strip() }}</span>
-                                {% endfor %}
-                            {% else %}
-                                {% for t in paper.tags %}
-                                <span class="tag-small">{{ t }}</span>
-                                {% endfor %}
+                            {% if paper.tags %}
+                            <div class="paper-tags">
+                                {% if paper.tags is string %}
+                                    {% for t in paper.tags.split(",") %}
+                                    <span class="tag-small">{{ t.strip() }}</span>
+                                    {% endfor %}
+                                {% else %}
+                                    {% for t in paper.tags %}
+                                    <span class="tag-small">{{ t }}</span>
+                                    {% endfor %}
+                                {% endif %}
+                            </div>
                             {% endif %}
-                        </div>
-                        {% endif %}
 
-                        {% if paper.summary_cn %}
-                        <div class="paper-summary">
-                            <strong>中文摘要:</strong> {{ paper.summary_cn }}
-                        </div>
-                        {% endif %}
-
-                        {% if paper.value_comment %}
-                        <div class="paper-comment">
-                            <strong>评价:</strong> {{ paper.value_comment }}
-                        </div>
-                        {% endif %}
-
-                        <div class="paper-links">
-                            <a href="{{ paper.url }}" target="_blank">📄 arXiv</a>
-                            {% if paper.pdf_url %}
-                            <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
+                            {% if paper.summary_cn %}
+                            <div class="paper-summary">
+                                <strong>中文摘要:</strong> {{ paper.summary_cn }}
+                            </div>
                             {% endif %}
-                            <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
+
+                            {% if paper.value_comment %}
+                            <div class="paper-comment">
+                                <strong>评价:</strong> {{ paper.value_comment }}
+                            </div>
+                            {% endif %}
+
+                            <div class="paper-links">
+                                <a href="{{ paper.url }}" target="_blank">📄 arXiv</a>
+                                {% if paper.pdf_url %}
+                                <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
+                                {% endif %}
+                                <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
+                            </div>
                         </div>
                     </div>
                     {% else %}
@@ -204,5 +228,67 @@
             <p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p>
         </footer>
     </div>
+
+    <script>
+        function getSelectedIds() {
+            return Array.from(document.querySelectorAll('.paper-checkbox:checked')).map(cb => cb.value);
+        }
+
+        function updateSelectedCount() {
+            document.getElementById('selected-count').textContent = getSelectedIds().length;
+        }
+
+        function toggleAll(master) {
+            document.querySelectorAll('.paper-checkbox').forEach(cb => { cb.checked = master.checked; });
+            updateSelectedCount();
+        }
+
+        function selectAll() {
+            document.querySelectorAll('.paper-checkbox').forEach(cb => { cb.checked = true; });
+            document.getElementById('select-all-checkbox').checked = true;
+            updateSelectedCount();
+        }
+
+        function deselectAll() {
+            document.querySelectorAll('.paper-checkbox').forEach(cb => { cb.checked = false; });
+            document.getElementById('select-all-checkbox').checked = false;
+            updateSelectedCount();
+        }
+
+        async function batchDelete() {
+            const ids = getSelectedIds();
+            if (ids.length === 0) {
+                alert('请先选择要删除的论文');
+                return;
+            }
+            if (!confirm(`确定删除选中的 ${ids.length} 篇论文？此操作不可恢复！`)) return;
+            if (!confirm('再次确认：真的要删除吗？')) return;
+
+            const statusEl = document.getElementById('batch-status');
+            statusEl.className = 'action-status info';
+            statusEl.style.display = 'inline-block';
+            statusEl.textContent = '正在删除...';
+
+            try {
+                const resp = await fetch('/api/papers/batch-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ arxiv_ids: ids })
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    statusEl.className = 'action-status success';
+                    statusEl.textContent = '✅ ' + data.message;
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    statusEl.className = 'action-status error';
+                    statusEl.textContent = '❌ ' + data.message;
+                }
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ 删除失败: ' + e.message;
+            }
+        }
+    </script>
 </body>
 </html>

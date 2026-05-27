@@ -5,3 +5,4 @@ data/papers.db
 *.egg-info/
 dist/
 build/
+data/pdf_cache/*
