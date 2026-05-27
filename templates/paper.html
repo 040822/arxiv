@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ paper.title }} - AI 论文数据库</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div></div>
+                <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+            </div>
+            <h1>🤖 AI 论文数据库</h1>
+        </header>
+
+        <nav class="nav-bar">
+            <a href="/" class="nav-link">← 返回首页</a>
+            <a href="/browse" class="nav-link">📂 分类浏览</a>
+            <a href="/search" class="nav-link">🔍 搜索</a>
+        </nav>
+
+        <article class="paper-detail">
+            <h1>{{ paper.title }}</h1>
+
+            <div class="detail-meta">
+                {% if paper.published_date %}
+                <span class="meta-item">📅 发布日期: {{ paper.published_date }}</span>
+                {% endif %}
+                {% if paper.primary_category %}
+                <span class="meta-item">📂 分类: {{ paper.primary_category }}</span>
+                {% endif %}
+                <span class="meta-item">🔗 arXiv ID: {{ paper.arxiv_id }}</span>
+                {% if paper.hidden %}
+                <span class="meta-item" style="color:#dc3545;">🚫 已隐藏</span>
+                {% endif %}
+            </div>
+
+            {% if paper.authors %}
+            <div class="detail-section">
+                <h3>👤 作者</h3>
+                <p>
+                    {% if paper.authors is string %}
+                        {{ paper.authors }}
+                    {% else %}
+                        {{ paper.authors | join(", ") }}
+                    {% endif %}
+                </p>
+            </div>
+            {% endif %}
+
+            <!-- 评级 -->
+            <div class="detail-section">
+                <h3>⭐ 评级</h3>
+                <div class="edit-rating" id="rating-display">
+                    {% set r = analysis.rating if analysis and analysis.rating is not none else 0 %}
+                    {% for i in range(5) %}
+                    <span class="star-btn {% if i < r %}active{% endif %}" data-val="{{ i+1 }}" onclick="setRating({{ i+1 }})">{% if i < r %}★{% else %}☆{% endif %}</span>
+                    {% endfor %}
+                    <span class="rating-text" id="rating-text">({{ r }}/5)</span>
+                </div>
+            </div>
+
+            <!-- 标签 -->
+            <div class="detail-section">
+                <h3>🏷️ 标签</h3>
+                <div class="edit-tags">
+                    <div id="tags-list" class="paper-tags">
+                        {% if analysis and analysis.tags %}
+                            {% if analysis.tags is string %}
+                                {% for t in analysis.tags.split(",") %}
+                                <span class="tag-small">{{ t.strip() }} <a onclick="removeTag('{{ t.strip() }}')" class="tag-remove">✕</a></span>
+                                {% endfor %}
+                            {% else %}
+                                {% for t in analysis.tags %}
+                                <span class="tag-small">{{ t }} <a onclick="removeTag('{{ t }}')" class="tag-remove">✕</a></span>
+                                {% endfor %}
+                            {% endif %}
+                        {% endif %}
+                    </div>
+                    <div class="tag-add-row">
+                        <input type="text" id="new-tag-input" placeholder="添加标签" onkeydown="if(event.key==='Enter')addTag()">
+                        <button class="btn-sm btn-activate" onclick="addTag()">+</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI 深度阅读 -->
+            <div class="detail-section">
+                <h3>📖 AI 深度阅读
+                    <button class="btn-sm btn-edit" onclick="toggleQaEdit()">编辑</button>
+                    <button class="btn-sm btn-activate" id="reanalyze-btn" onclick="reanalyze()">🔄 重新生成</button>
+                </h3>
+                <div id="reanalyze-status" class="action-status"></div>
+                <div id="qa-view">
+                    {% if analysis and analysis.qa_analysis %}
+                    <div class="qa-content" id="qa-content"></div>
+                    <script>
+                        (function() {
+                            let raw = {{ analysis.qa_analysis | tojson }};
+                            raw = raw.replace(/\\n/g, '\n');
+                            const el = document.getElementById('qa-content');
+                            const parts = raw.split(/(?=### Q\d+:)/).filter(s => s.trim());
+                            let html = '';
+                            for (const part of parts) {
+                                const m = part.match(/^### Q(\d+):\s*([\s\S]*)/);
+                                if (m) {
+                                    const title = m[2].split('\n')[0].trim();
+                                    const body = m[2].split('\n').slice(1).join('\n').trim();
+                                    html += '<div class="qa-item"><div class="qa-question">Q' + m[1] + ': ' + title + '</div><div class="qa-answer">' + body.replace(/\n/g, '<br>') + '</div></div>';
+                                }
+                            }
+                            el.innerHTML = html;
+                        })();
+                    </script>
+                    {% else %}
+                    <p class="no-data">暂无 AI 深度阅读内容</p>
+                    {% endif %}
+                </div>
+                <div id="qa-edit" style="display:none;">
+                    <textarea id="qa-textarea" rows="15" placeholder="输入 AI 深度阅读内容（Markdown 格式）">{{ analysis.qa_analysis if analysis and analysis.qa_analysis else '' }}</textarea>
+                    <div class="edit-actions">
+                        <button class="action-btn btn-primary" onclick="saveQaAnalysis()">💾 保存</button>
+                        <button class="action-btn" onclick="toggleQaEdit()">取消</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 中文摘要 -->
+            <div class="detail-section">
+                <h3>📝 中文摘要 <button class="btn-sm btn-edit" onclick="toggleSummaryEdit()">编辑</button></h3>
+                <div id="summary-view">
+                    {% if analysis and analysis.summary_cn %}
+                    <p>{{ analysis.summary_cn }}</p>
+                    {% else %}
+                    <p class="no-data">暂无中文摘要</p>
+                    {% endif %}
+                </div>
+                <div id="summary-edit" style="display:none;">
+                    <textarea id="summary-textarea" rows="4" placeholder="输入中文摘要">{{ analysis.summary_cn if analysis and analysis.summary_cn else '' }}</textarea>
+                    <div class="edit-actions">
+                        <button class="action-btn btn-primary" onclick="saveSummary()">💾 保存</button>
+                        <button class="action-btn" onclick="toggleSummaryEdit()">取消</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 评价 -->
+            <div class="detail-section">
+                <h3>💬 评价 <button class="btn-sm btn-edit" onclick="toggleCommentEdit()">编辑</button></h3>
+                <div id="comment-view">
+                    {% if analysis and analysis.value_comment %}
+                    <p class="value-comment">{{ analysis.value_comment }}</p>
+                    {% else %}
+                    <p class="no-data">暂无评价</p>
+                    {% endif %}
+                </div>
+                <div id="comment-edit" style="display:none;">
+                    <textarea id="comment-textarea" rows="3" placeholder="输入评价">{{ analysis.value_comment if analysis and analysis.value_comment else '' }}</textarea>
+                    <div class="edit-actions">
+                        <button class="action-btn btn-primary" onclick="saveComment()">💾 保存</button>
+                        <button class="action-btn" onclick="toggleCommentEdit()">取消</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="detail-section">
+                <h3>📄 原始摘要</h3>
+                <p class="abstract-text">{{ paper.abstract }}</p>
+            </div>
+
+            <div class="detail-links">
+                <a href="{{ paper.url }}" target="_blank" class="btn">📄 arXiv 页面</a>
+                {% if paper.pdf_url %}
+                <a href="{{ paper.pdf_url }}" target="_blank" class="btn btn-primary">📥 下载 PDF</a>
+                {% endif %}
+            </div>
+
+            <!-- 危险操作区 -->
+            <div class="danger-zone">
+                <h3 class="danger-toggle" onclick="toggleDanger()">⚠️ 危险操作 <span id="danger-arrow">▸</span></h3>
+                <div id="danger-content" style="display:none;">
+                    <div class="danger-actions">
+                        {% if paper.hidden %}
+                        <button class="btn btn-warn" onclick="unhidePaper()">👁️ 取消隐藏</button>
+                        {% else %}
+                        <button class="btn btn-warn" onclick="hidePaper()">🚫 隐藏论文</button>
+                        {% endif %}
+                        <button class="btn btn-danger" onclick="deletePaper()">🗑️ 删除论文</button>
+                    </div>
+                    <p class="danger-hint">隐藏后论文不会出现在列表中但保留在数据库；删除后不可恢复。</p>
+                    <div id="danger-status" class="action-status"></div>
+                </div>
+            </div>
+        </article>
+
+        <footer>
+            <p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p>
+        </footer>
+    </div>
+
+    <script>
+        const ARXIV_ID = '{{ paper.arxiv_id }}';
+
+        function toggleDanger() {
+            const content = document.getElementById('danger-content');
+            const arrow = document.getElementById('danger-arrow');
+            const show = content.style.display === 'none';
+            content.style.display = show ? 'block' : 'none';
+            arrow.textContent = show ? '▾' : '▸';
+        }
+
+        async function reanalyze() {
+            const btn = document.getElementById('reanalyze-btn');
+            const statusEl = document.getElementById('reanalyze-status');
+            btn.disabled = true;
+            btn.textContent = '⏳ 分析中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在调用 AI 重新分析，请稍候...';
+            try {
+                const resp = await fetch(`/api/paper/${ARXIV_ID}/reanalyze`, {method: 'POST'});
+                const result = await resp.json();
+                if (result.status === 'ok') {
+                    statusEl.className = 'action-status success';
+                    statusEl.textContent = '✅ ' + result.message;
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    statusEl.className = 'action-status error';
+                    statusEl.textContent = '❌ ' + result.message;
+                }
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔄 重新生成';
+            }
+        }
+
+        function getTagsFromUI() {
+            return Array.from(document.querySelectorAll('#tags-list .tag-small')).map(el => el.childNodes[0].textContent.trim());
+        }
+
+        async function saveField(data) {
+            const resp = await fetch(`/api/paper/${ARXIV_ID}/analysis`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            return await resp.json();
+        }
+
+        // Rating
+        async function setRating(val) {
+            const result = await saveField({rating: val});
+            if (result.status === 'ok') {
+                document.querySelectorAll('.star-btn').forEach((el, i) => {
+                    el.classList.toggle('active', i < val);
+                    el.textContent = i < val ? '★' : '☆';
+                });
+                document.getElementById('rating-text').textContent = `(${val}/5)`;
+            }
+        }
+
+        // Tags
+        function renderTags(tags) {
+            const list = document.getElementById('tags-list');
+            list.innerHTML = tags.map(t => `<span class="tag-small">${t} <a onclick="removeTag('${t}')" class="tag-remove">✕</a></span>`).join('');
+        }
+
+        async function addTag() {
+            const input = document.getElementById('new-tag-input');
+            const tag = input.value.trim();
+            if (!tag) return;
+            const tags = getTagsFromUI();
+            if (tags.includes(tag)) { input.value = ''; return; }
+            tags.push(tag);
+            const result = await saveField({tags: tags});
+            if (result.status === 'ok') { renderTags(tags); input.value = ''; }
+        }
+
+        async function removeTag(tag) {
+            const tags = getTagsFromUI().filter(t => t !== tag);
+            const result = await saveField({tags: tags});
+            if (result.status === 'ok') renderTags(tags);
+        }
+
+        // QA Analysis
+        function toggleQaEdit() {
+            const view = document.getElementById('qa-view');
+            const edit = document.getElementById('qa-edit');
+            edit.style.display = edit.style.display === 'none' ? 'block' : 'none';
+            view.style.display = edit.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function saveQaAnalysis() {
+            const val = document.getElementById('qa-textarea').value;
+            const result = await saveField({qa_analysis: val});
+            if (result.status === 'ok') { toggleQaEdit(); location.reload(); }
+        }
+
+        // Summary
+        function toggleSummaryEdit() {
+            const view = document.getElementById('summary-view');
+            const edit = document.getElementById('summary-edit');
+            edit.style.display = edit.style.display === 'none' ? 'block' : 'none';
+            view.style.display = edit.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function saveSummary() {
+            const val = document.getElementById('summary-textarea').value;
+            const result = await saveField({summary_cn: val});
+            if (result.status === 'ok') {
+                toggleSummaryEdit();
+                document.getElementById('summary-view').innerHTML = val ? `<p>${val}</p>` : '<p class="no-data">暂无中文摘要</p>';
+            }
+        }
+
+        // Comment
+        function toggleCommentEdit() {
+            const view = document.getElementById('comment-view');
+            const edit = document.getElementById('comment-edit');
+            edit.style.display = edit.style.display === 'none' ? 'block' : 'none';
+            view.style.display = edit.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function saveComment() {
+            const val = document.getElementById('comment-textarea').value;
+            const result = await saveField({value_comment: val});
+            if (result.status === 'ok') {
+                toggleCommentEdit();
+                document.getElementById('comment-view').innerHTML = val ? `<p class="value-comment">${val}</p>` : '<p class="no-data">暂无评价</p>';
+            }
+        }
+
+        // Hide / Delete
+        async function hidePaper() {
+            if (!confirm('确定隐藏此论文？隐藏后不会出现在列表中。')) return;
+            const statusEl = document.getElementById('danger-status');
+            try {
+                const resp = await fetch(`/api/paper/${ARXIV_ID}/hide`, {method: 'POST'});
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+                if (result.status === 'ok') setTimeout(() => location.reload(), 1000);
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        async function unhidePaper() {
+            const statusEl = document.getElementById('danger-status');
+            try {
+                const resp = await fetch(`/api/paper/${ARXIV_ID}/unhide`, {method: 'POST'});
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+                if (result.status === 'ok') setTimeout(() => location.reload(), 1000);
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        async function deletePaper() {
+            if (!confirm('确定删除此论文？此操作不可恢复！')) return;
+            if (!confirm('再次确认：真的要删除吗？')) return;
+            const statusEl = document.getElementById('danger-status');
+            try {
+                const resp = await fetch(`/api/paper/${ARXIV_ID}`, {method: 'DELETE'});
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+                if (result.status === 'ok') setTimeout(() => window.location.href = '/', 1500);
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>分类浏览 - AI 论文数据库</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div></div>
+                <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+            </div>
+            <h1>🤖 AI 论文数据库</h1>
+            <p class="subtitle">具身智能 & 人工智能 · 自动抓取 · AI 快速阅读</p>
+        </header>
+
+        <nav class="nav-bar">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/browse" class="nav-link active">📂 分类浏览</a>
+            <a href="/search" class="nav-link">🔍 搜索</a>
+        </nav>
+
+        <div class="browse-layout">
+            <aside class="filter-panel">
+                <h3>🔎 筛选条件</h3>
+                <form id="filter-form" method="GET" action="/browse">
+
+                    <div class="filter-group">
+                        <label>📅 日期</label>
+                        <select name="date" onchange="this.form.submit()">
+                            <option value="">全部日期</option>
+                            {% for d, cnt in dates %}
+                            <option value="{{ d }}" {% if date == d %}selected{% endif %}>{{ d }} ({{ cnt }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label>📂 分类</label>
+                        <select name="category" onchange="this.form.submit()">
+                            <option value="">全部分类</option>
+                            {% for cat, cnt in categories %}
+                            <option value="{{ cat }}" {% if category == cat %}selected{% endif %}>{{ cat }} ({{ cnt }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label>⭐ 评级</label>
+                        <div class="rating-filter">
+                            <select name="min_rating" onchange="this.form.submit()">
+                                <option value="">最低</option>
+                                {% for i in range(6) %}
+                                <option value="{{ i }}" {% if min_rating is not none and min_rating == i %}selected{% endif %}>{{ i }}★</option>
+                                {% endfor %}
+                            </select>
+                            <span>~</span>
+                            <select name="max_rating" onchange="this.form.submit()">
+                                <option value="">最高</option>
+                                {% for i in range(6) %}
+                                <option value="{{ i }}" {% if max_rating is not none and max_rating == i %}selected{% endif %}>{{ i }}★</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="filter-group">
+                        <label>🤖 AI 报告</label>
+                        <select name="has_analysis" onchange="this.form.submit()">
+                            <option value="">全部</option>
+                            <option value="yes" {% if has_analysis == 'yes' %}selected{% endif %}>已有报告</option>
+                            <option value="no" {% if has_analysis == 'no' %}selected{% endif %}>未分析</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label>🏷️ 标签</label>
+                        <select name="tag" onchange="this.form.submit()">
+                            <option value="">全部标签</option>
+                            {% for t, cnt in tags %}
+                            <option value="{{ t }}" {% if tag == t %}selected{% endif %}>{{ t }} ({{ cnt }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <noscript><button type="submit" class="action-btn btn-primary" style="width:100%">应用筛选</button></noscript>
+                </form>
+
+                <a href="/browse" class="clear-filter-btn">清除全部筛选</a>
+            </aside>
+
+            <main class="browse-main">
+                <div class="browse-header">
+                    <span>共 <strong>{{ total }}</strong> 篇论文</span>
+                    {% if date or category or tag or min_rating is not none or max_rating is not none or has_analysis %}
+                    <div class="active-filters">
+                        {% if date %}<span class="filter-tag">日期: {{ date }} <a href="/browse?{{ _remove_param('date') }}">✕</a></span>{% endif %}
+                        {% if category %}<span class="filter-tag">分类: {{ category }} <a href="/browse?{{ _remove_param('category') }}">✕</a></span>{% endif %}
+                        {% if tag %}<span class="filter-tag">标签: {{ tag }} <a href="/browse?{{ _remove_param('tag') }}">✕</a></span>{% endif %}
+                        {% if min_rating is not none %}<span class="filter-tag">最低: {{ min_rating }}★ <a href="/browse?{{ _remove_param('min_rating') }}">✕</a></span>{% endif %}
+                        {% if max_rating is not none %}<span class="filter-tag">最高: {{ max_rating }}★ <a href="/browse?{{ _remove_param('max_rating') }}">✕</a></span>{% endif %}
+                        {% if has_analysis %}<span class="filter-tag">报告: {% if has_analysis == 'yes' %}已有{% else %}未分析{% endif %} <a href="/browse?{{ _remove_param('has_analysis') }}">✕</a></span>{% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="papers-list">
+                    {% for paper in papers %}
+                    <div class="paper-card">
+                        <div class="paper-header">
+                            <h3 class="paper-title">
+                                <a href="/paper/{{ paper.arxiv_id }}">{{ paper.title }}</a>
+                            </h3>
+                            <div class="paper-meta">
+                                {% if paper.published_date %}
+                                <span class="meta-item">📅 {{ paper.published_date }}</span>
+                                {% endif %}
+                                {% if paper.rating is not none %}
+                                <span class="meta-item rating">
+                                    {% for i in range(5) %}
+                                        {% if i < paper.rating %}★{% else %}☆{% endif %}
+                                    {% endfor %}
+                                </span>
+                                {% else %}
+                                <span class="meta-item" style="color:#ccc">未分析</span>
+                                {% endif %}
+                                {% if paper.primary_category %}
+                                <span class="meta-item">📂 {{ paper.primary_category }}</span>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        {% if paper.authors %}
+                        <div class="paper-authors">
+                            {% if paper.authors is string %}
+                                {{ paper.authors }}
+                            {% else %}
+                                {{ paper.authors[:3] | join(", ") }}
+                                {% if paper.authors|length > 3 %} et al. ({{ paper.authors|length }}){% endif %}
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        {% if paper.tags %}
+                        <div class="paper-tags">
+                            {% if paper.tags is string %}
+                                {% for t in paper.tags.split(",") %}
+                                <span class="tag-small">{{ t.strip() }}</span>
+                                {% endfor %}
+                            {% else %}
+                                {% for t in paper.tags %}
+                                <span class="tag-small">{{ t }}</span>
+                                {% endfor %}
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        {% if paper.summary_cn %}
+                        <div class="paper-summary">
+                            <strong>中文摘要:</strong> {{ paper.summary_cn }}
+                        </div>
+                        {% endif %}
+
+                        {% if paper.value_comment %}
+                        <div class="paper-comment">
+                            <strong>评价:</strong> {{ paper.value_comment }}
+                        </div>
+                        {% endif %}
+
+                        <div class="paper-links">
+                            <a href="{{ paper.url }}" target="_blank">📄 arXiv</a>
+                            {% if paper.pdf_url %}
+                            <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
+                            {% endif %}
+                            <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <p>没有匹配的论文</p>
+                        <p>尝试调整筛选条件</p>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                {% if total_pages > 1 %}
+                <div class="pagination">
+                    {% if page > 1 %}
+                    <a href="/browse?page={{ page - 1 }}&{{ _build_query() }}" class="page-link">← 上一页</a>
+                    {% endif %}
+                    <span class="page-info">第 {{ page }} / {{ total_pages }} 页</span>
+                    {% if page < total_pages %}
+                    <a href="/browse?page={{ page + 1 }}&{{ _build_query() }}" class="page-link">下一页 →</a>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </main>
+        </div>
+
+        <footer>
+            <p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p>
+        </footer>
+    </div>
+</body>
+</html>

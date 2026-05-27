@@ -1,0 +1,72 @@
+import os
+import re
+import logging
+import requests
+import fitz  # PyMuPDF
+from config import DB_DIR
+
+logger = logging.getLogger(__name__)
+
+PDF_CACHE_DIR = os.path.join(DB_DIR, "pdf_cache")
+
+
+def _ensure_cache_dir():
+    os.makedirs(PDF_CACHE_DIR, exist_ok=True)
+
+
+def download_pdf(pdf_url, arxiv_id):
+    _ensure_cache_dir()
+    cache_path = os.path.join(PDF_CACHE_DIR, f"{arxiv_id.replace('/', '_')}.pdf")
+
+    if os.path.exists(cache_path):
+        return cache_path
+
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; ArxivPaperDB/1.0)"}
+        resp = requests.get(pdf_url, headers=headers, timeout=60)
+        resp.raise_for_status()
+        with open(cache_path, "wb") as f:
+            f.write(resp.content)
+        logger.info(f"Downloaded PDF: {arxiv_id} ({len(resp.content) / 1024:.0f} KB)")
+        return cache_path
+    except Exception as e:
+        logger.error(f"Failed to download PDF for {arxiv_id}: {e}")
+        return None
+
+
+def extract_text_from_pdf(pdf_path):
+    try:
+        doc = fitz.open(pdf_path)
+        pages = []
+        for i, page in enumerate(doc):
+            text = page.get_text("text")
+            if text.strip():
+                pages.append(text)
+        doc.close()
+
+        full_text = "\n\n".join(pages)
+
+        full_text = re.sub(r'\n{3,}', '\n\n', full_text)
+        full_text = re.sub(r' {2,}', ' ', full_text)
+        full_text = full_text.strip()
+
+        return full_text
+    except Exception as e:
+        logger.error(f"Failed to extract text from {pdf_path}: {e}")
+        return None
+
+
+def get_paper_full_text(pdf_url, arxiv_id, max_chars=60000):
+    pdf_path = download_pdf(pdf_url, arxiv_id)
+    if not pdf_path:
+        return None
+
+    text = extract_text_from_pdf(pdf_path)
+    if not text:
+        return None
+
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n\n[... 文本已截断，以上为论文前部分内容 ...]"
+        logger.info(f"Truncated paper text for {arxiv_id} to {max_chars} chars")
+
+    return text

@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>任务管理 - AI 论文数据库</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div></div>
+                <a href="/settings" class="settings-btn">⚙️ 设置</a>
+            </div>
+            <h1>🤖 AI 论文数据库</h1>
+        </header>
+
+        <nav class="nav-bar">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/browse" class="nav-link">📂 分类浏览</a>
+            <a href="/search" class="nav-link">🔍 搜索</a>
+            <a href="/tasks" class="nav-link active">📋 任务管理</a>
+        </nav>
+
+        <!-- 手动操作面板 -->
+        <div class="action-panel">
+            <h3>⚡ 操作面板</h3>
+            <div class="action-buttons">
+                <button class="action-btn" onclick="runApi('/api/fetch', this)">📥 抓取论文</button>
+                <button class="action-btn" onclick="runApi('/api/analyze', this)">🤖 AI 分析</button>
+                <button class="action-btn" onclick="runApi('/api/generate', this)">📝 生成报告</button>
+                <button class="action-btn btn-primary" onclick="runApi('/api/run', this)">🚀 一键执行全部</button>
+            </div>
+            <div id="action-status" class="action-status"></div>
+        </div>
+
+        <!-- 定时任务 -->
+        <div class="settings-section">
+            <h3>⏰ 定时任务</h3>
+            <div id="scheduled-tasks" class="task-log-list"></div>
+        </div>
+
+        <!-- 任务统计 -->
+        <div class="settings-section">
+            <h3>📊 任务统计</h3>
+            <div id="task-stats" class="task-stats-grid"></div>
+        </div>
+
+        <!-- 运行中任务 -->
+        <div class="settings-section" id="running-section" style="display:none;">
+            <h3>⏳ 运行中的任务</h3>
+            <div id="running-tasks" class="task-log-list"></div>
+        </div>
+
+        <!-- 执行日志 -->
+        <div class="settings-section">
+            <div class="log-header">
+                <h3>📜 执行日志</h3>
+                <div class="log-controls">
+                    <select id="log-filter" onchange="loadLogs()">
+                        <option value="">全部任务</option>
+                        <option value="daily_pipeline">定时任务</option>
+                        <option value="fetch">抓取论文</option>
+                        <option value="analyze">AI 分析</option>
+                        <option value="generate">生成报告</option>
+                        <option value="run">一键执行</option>
+                    </select>
+                    <button class="action-btn" onclick="loadLogs()">🔄 刷新</button>
+                    <button class="action-btn" onclick="clearLogs()">🗑️ 清理旧日志</button>
+                </div>
+            </div>
+            <div id="task-logs" class="task-log-list"></div>
+            <div id="log-pagination" class="pagination"></div>
+        </div>
+
+        <footer>
+            <p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p>
+        </footer>
+    </div>
+
+    <script>
+        const TASK_NAMES = {
+            'daily_pipeline': '⏰ 定时任务',
+            'fetch': '📥 抓取论文',
+            'analyze': '🤖 AI 分析',
+            'generate': '📝 生成报告',
+            'run': '🚀 一键执行'
+        };
+
+        let currentPage = 1;
+
+        async function runApi(url, btn) {
+            const statusEl = document.getElementById('action-status');
+            const origText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ 执行中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在执行，请稍候...';
+            try {
+                const resp = await fetch(url, { method: 'POST' });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    statusEl.className = 'action-status success';
+                    statusEl.textContent = '✅ ' + data.message;
+                } else {
+                    statusEl.className = 'action-status error';
+                    statusEl.textContent = '❌ ' + data.message;
+                }
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ 请求失败: ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
+                loadStats();
+                loadLogs();
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const resp = await fetch('/api/tasks/stats');
+                const data = await resp.json();
+
+                // Task stats
+                const statsEl = document.getElementById('task-stats');
+                if (data.stats.length === 0) {
+                    statsEl.innerHTML = '<div class="empty-state"><p>暂无任务执行记录</p></div>';
+                } else {
+                    let html = '';
+                    for (const s of data.stats) {
+                        const name = TASK_NAMES[s.task_name] || s.task_name;
+                        const successRate = s.total_runs > 0 ? Math.round(s.success_runs / s.total_runs * 100) : 0;
+                        const lastRun = s.last_run ? s.last_run.substring(5, 16) : 'N/A';
+                        const avgDur = s.avg_duration ? s.avg_duration.toFixed(1) + 's' : 'N/A';
+                        html += `
+                        <div class="task-stat-card">
+                            <div class="task-stat-name">${name}</div>
+                            <div class="task-stat-row">
+                                <span>总执行: <strong>${s.total_runs}</strong></span>
+                                <span>成功率: <strong>${successRate}%</strong></span>
+                                <span>平均耗时: <strong>${avgDur}</strong></span>
+                            </div>
+                            <div class="task-stat-row">
+                                <span class="stat-success">✅ ${s.success_runs}</span>
+                                <span class="stat-error">❌ ${s.error_runs}</span>
+                                <span class="stat-running">⏳ ${s.running}</span>
+                                <span>最后: ${lastRun}</span>
+                            </div>
+                        </div>`;
+                    }
+                    statsEl.innerHTML = html;
+                }
+
+                // Running tasks
+                const runningSection = document.getElementById('running-section');
+                const runningEl = document.getElementById('running-tasks');
+                if (data.running.length > 0) {
+                    runningSection.style.display = 'block';
+                    runningEl.innerHTML = data.running.map(r => `
+                        <div class="log-item log-running">
+                            <span class="log-status">⏳</span>
+                            <span class="log-task">${TASK_NAMES[r.task_name] || r.task_name}</span>
+                            <span class="log-time">${r.started_at}</span>
+                            <span class="log-msg">${r.message || ''}</span>
+                        </div>
+                    `).join('');
+                } else {
+                    runningSection.style.display = 'none';
+                }
+            } catch (e) {
+                document.getElementById('task-stats').innerHTML = '<div class="empty-state"><p>加载失败</p></div>';
+            }
+        }
+
+        async function loadLogs(page) {
+            if (page) currentPage = page;
+            const filter = document.getElementById('log-filter').value;
+            const url = `/api/tasks/logs?task=${filter}&page=${currentPage}`;
+            try {
+                const resp = await fetch(url);
+                const data = await resp.json();
+                const logsEl = document.getElementById('task-logs');
+
+                if (data.logs.length === 0) {
+                    logsEl.innerHTML = '<div class="empty-state"><p>暂无日志</p></div>';
+                    document.getElementById('log-pagination').innerHTML = '';
+                    return;
+                }
+
+                logsEl.innerHTML = data.logs.map(r => {
+                    const statusIcon = r.status === 'success' ? '✅' : r.status === 'error' ? '❌' : '⏳';
+                    const statusClass = r.status === 'success' ? 'log-success' : r.status === 'error' ? 'log-error' : 'log-running';
+                    const dur = r.duration_sec ? `${r.duration_sec}s` : '';
+                    const name = TASK_NAMES[r.task_name] || r.task_name;
+                    return `
+                    <div class="log-item ${statusClass}">
+                        <div class="log-main">
+                            <span class="log-status">${statusIcon}</span>
+                            <span class="log-task">${name}</span>
+                            <span class="log-msg">${r.message || ''}</span>
+                            <span class="log-dur">${dur}</span>
+                            <span class="log-time">${r.started_at}</span>
+                        </div>
+                        ${r.detail ? `<div class="log-detail">${r.detail}</div>` : ''}
+                    </div>`;
+                }).join('');
+
+                // Pagination
+                const totalPages = Math.ceil(data.total / data.per_page);
+                const pagEl = document.getElementById('log-pagination');
+                if (totalPages > 1) {
+                    let pagHtml = '';
+                    if (currentPage > 1) pagHtml += `<a href="#" onclick="loadLogs(${currentPage - 1});return false;" class="page-link">← 上一页</a>`;
+                    pagHtml += `<span class="page-info">第 ${currentPage} / ${totalPages} 页</span>`;
+                    if (currentPage < totalPages) pagHtml += `<a href="#" onclick="loadLogs(${currentPage + 1});return false;" class="page-link">下一页 →</a>`;
+                    pagEl.innerHTML = pagHtml;
+                } else {
+                    pagEl.innerHTML = '';
+                }
+            } catch (e) {
+                document.getElementById('task-logs').innerHTML = '<div class="empty-state"><p>加载失败</p></div>';
+            }
+        }
+
+        async function clearLogs() {
+            if (!confirm('确定清理30天前的日志？')) return;
+            try {
+                const resp = await fetch('/api/tasks/clear', { method: 'POST' });
+                const data = await resp.json();
+                alert(data.message);
+                loadStats();
+                loadLogs();
+            } catch (e) {
+                alert('清理失败: ' + e.message);
+            }
+        }
+
+        async function loadScheduled() {
+            try {
+                const resp = await fetch('/api/tasks/scheduled');
+                const jobs = await resp.json();
+                const el = document.getElementById('scheduled-tasks');
+                if (jobs.length === 0) {
+                    el.innerHTML = '<div class="empty-state"><p>暂无定时任务</p></div>';
+                    return;
+                }
+                el.innerHTML = jobs.map(j => `
+                    <div class="log-item log-running">
+                        <div class="log-main">
+                            <span class="log-status">⏰</span>
+                            <span class="log-task">${j.name || j.id}</span>
+                            <span class="log-msg">触发规则: ${j.trigger}</span>
+                            <span class="log-time">下次执行: ${j.next_run}</span>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                document.getElementById('scheduled-tasks').innerHTML = '<div class="empty-state"><p>加载失败</p></div>';
+            }
+        }
+
+        loadScheduled();
+        loadStats();
+        loadLogs();
+
+        setInterval(() => { loadScheduled(); loadStats(); loadLogs(); }, 30000);
+    </script>
+</body>
+</html>

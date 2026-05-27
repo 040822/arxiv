@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 论文数据库 - 具身智能 & 人工智能</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div></div>
+                <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+            </div>
+            <h1>🤖 AI 论文数据库</h1>
+            <p class="subtitle">具身智能 & 人工智能 · 自动抓取 · AI 快速阅读</p>
+            <div class="stats">
+                <span>📊 论文总数: <strong>{{ total_papers }}</strong></span>
+                <span>🔍 已分析: <strong>{{ analyzed_papers }}</strong></span>
+                <span>🕐 最后更新: <strong>{{ now }}</strong></span>
+            </div>
+        </header>
+
+        <nav class="nav-bar">
+            <a href="/" class="nav-link {% if not tag and not date and not min_rating %}active{% endif %}">全部</a>
+            <a href="/?min_rating=4" class="nav-link {% if min_rating == 4 %}active{% endif %}">⭐⭐⭐⭐+ 高分</a>
+            <a href="/?min_rating=3" class="nav-link {% if min_rating == 3 %}active{% endif %}">⭐⭐⭐+ 推荐</a>
+            <a href="/browse" class="nav-link">📂 分类浏览</a>
+            <a href="/search" class="nav-link">🔍 搜索</a>
+            <a href="/tasks" class="nav-link">📋 任务管理</a>
+        </nav>
+
+        <div class="action-panel">
+            <h3>⚡ 操作面板</h3>
+            <div class="action-buttons">
+                <button class="action-btn" onclick="runApi('/api/fetch', this)">📥 抓取论文</button>
+                <button class="action-btn" onclick="runApi('/api/analyze', this)">🤖 AI 分析</button>
+                <button class="action-btn" onclick="runApi('/api/generate', this)">📝 生成报告</button>
+                <button class="action-btn btn-primary" onclick="runApi('/api/run', this)">🚀 一键执行全部</button>
+            </div>
+            <div id="action-status" class="action-status"></div>
+        </div>
+
+        {% if tags %}
+        <div class="tags-section">
+            <h3>🏷️ 热门标签</h3>
+            <div class="tags-cloud">
+                {% for tag_name, count in tags[:20] %}
+                <a href="/?tag={{ tag_name }}" class="tag-badge {% if tag == tag_name %}active{% endif %}">
+                    {{ tag_name }} <span class="tag-count">{{ count }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if tag %}
+        <div class="filter-info">
+            当前筛选: 标签 <strong>{{ tag }}</strong>
+            <a href="/" class="clear-filter">清除筛选</a>
+        </div>
+        {% endif %}
+
+        <div class="papers-list">
+            {% for paper in papers %}
+            <div class="paper-card">
+                <div class="paper-header">
+                    <h3 class="paper-title">
+                        <a href="/paper/{{ paper.arxiv_id }}">{{ paper.title }}</a>
+                    </h3>
+                    <div class="paper-meta">
+                        {% if paper.published_date %}
+                        <span class="meta-item">📅 {{ paper.published_date }}</span>
+                        {% endif %}
+                        {% if paper.rating is not none %}
+                        <span class="meta-item rating">
+                            {% for i in range(5) %}
+                                {% if i < paper.rating %}★{% else %}☆{% endif %}
+                            {% endfor %}
+                        </span>
+                        {% endif %}
+                        {% if paper.primary_category %}
+                        <span class="meta-item">📂 {{ paper.primary_category }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                {% if paper.authors %}
+                <div class="paper-authors">
+                    {% if paper.authors is string %}
+                        {{ paper.authors }}
+                    {% else %}
+                        {{ paper.authors[:3] | join(", ") }}
+                        {% if paper.authors|length > 3 %} et al. ({{ paper.authors|length }} authors){% endif %}
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% if paper.tags %}
+                <div class="paper-tags">
+                    {% if paper.tags is string %}
+                        {% for t in paper.tags.split(",") %}
+                        <span class="tag-small">{{ t.strip() }}</span>
+                        {% endfor %}
+                    {% else %}
+                        {% for t in paper.tags %}
+                        <span class="tag-small">{{ t }}</span>
+                        {% endfor %}
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% if paper.summary_cn %}
+                <div class="paper-summary">
+                    <strong>中文摘要:</strong> {{ paper.summary_cn }}
+                </div>
+                {% endif %}
+
+                {% if paper.value_comment %}
+                <div class="paper-comment">
+                    <strong>评价:</strong> {{ paper.value_comment }}
+                </div>
+                {% endif %}
+
+                <div class="paper-links">
+                    <a href="{{ paper.url }}" target="_blank">📄 arXiv</a>
+                    {% if paper.pdf_url %}
+                    <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
+                    {% endif %}
+                    <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
+                </div>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p>暂无论文数据</p>
+                <p>请先运行 <code>python main.py</code> 抓取论文</p>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="pagination">
+            {% if page > 1 %}
+            <a href="/?page={{ page - 1 }}{% if tag %}&tag={{ tag }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}" class="page-link">← 上一页</a>
+            {% endif %}
+            <span class="page-info">第 {{ page }} 页</span>
+            {% if papers|length == 20 %}
+            <a href="/?page={{ page + 1 }}{% if tag %}&tag={{ tag }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}" class="page-link">下一页 →</a>
+            {% endif %}
+        </div>
+
+        <footer>
+            <p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p>
+        </footer>
+    </div>
+
+    <script>
+        async function runApi(url, btn) {
+            const statusEl = document.getElementById('action-status');
+            const origText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ 执行中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在执行，请稍候...';
+
+            try {
+                const resp = await fetch(url, { method: 'POST' });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    statusEl.className = 'action-status success';
+                    statusEl.textContent = '✅ ' + (data.message || '操作成功');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    statusEl.className = 'action-status error';
+                    statusEl.textContent = '❌ ' + (data.message || '操作失败');
+                }
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ 请求失败: ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
+            }
+        }
+    </script>
+</body>
+</html>

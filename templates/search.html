@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>搜索 - AI 论文数据库</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div></div>
+                <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+            </div>
+            <h1>🤖 AI 论文数据库</h1>
+            <p class="subtitle">具身智能 & 人工智能 · 自动抓取 · AI 快速阅读</p>
+        </header>
+
+        <nav class="nav-bar">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/browse" class="nav-link">📂 分类浏览</a>
+            <a href="/search" class="nav-link active">🔍 搜索</a>
+        </nav>
+
+        <div class="search-section">
+            <form action="/search" method="GET" class="search-form">
+                <input type="text" name="q" value="{{ keyword }}" placeholder="搜索论文标题、摘要、标签..." class="search-input">
+                <button type="submit" class="search-btn">搜索</button>
+            </form>
+        </div>
+
+        {% if keyword %}
+        <div class="search-results">
+            <h3>搜索结果: "{{ keyword }}" ({{ papers|length }} 篇)</h3>
+        </div>
+        {% endif %}
+
+        <div class="papers-list">
+            {% for paper in papers %}
+            <div class="paper-card">
+                <div class="paper-header">
+                    <h3 class="paper-title">
+                        <a href="/paper/{{ paper.arxiv_id }}">{{ paper.title }}</a>
+                    </h3>
+                    <div class="paper-meta">
+                        {% if paper.published_date %}
+                        <span class="meta-item">📅 {{ paper.published_date }}</span>
+                        {% endif %}
+                        {% if paper.rating is not none %}
+                        <span class="meta-item rating">
+                            {% for i in range(5) %}
+                                {% if i < paper.rating %}★{% else %}☆{% endif %}
+                            {% endfor %}
+                        </span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                {% if paper.summary_cn %}
+                <div class="paper-summary">
+                    <strong>中文摘要:</strong> {{ paper.summary_cn }}
+                </div>
+                {% endif %}
+
+                <div class="paper-links">
+                    <a href="{{ paper.url }}" target="_blank">📄 arXiv</a>
+                    {% if paper.pdf_url %}
+                    <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
+                    {% endif %}
+                    <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
+                </div>
+            </div>
+            {% else %}
+            {% if keyword %}
+            <div class="empty-state">
+                <p>未找到匹配的论文</p>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+
+        <footer>
+            <p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p>
+        </footer>
+    </div>
+</body>
+</html>

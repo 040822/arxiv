@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+data/papers.db
+.env
+*.egg-info/
+dist/
+build/

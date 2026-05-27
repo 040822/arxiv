@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设置 - AI 论文数据库</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div></div>
+                <a href="/" class="settings-btn">← 返回首页</a>
+            </div>
+            <h1>⚙️ 设置</h1>
+        </header>
+
+        <div class="settings-tabs">
+            <button class="tab-btn active" onclick="switchTab('ai')">🤖 AI 设置</button>
+            <button class="tab-btn" onclick="switchTab('db')">💾 数据库</button>
+            <button class="tab-btn" onclick="switchTab('admin')">🔒 管理</button>
+        </div>
+
+        <!-- ============ Tab 1: AI 设置 ============ -->
+        <div id="tab-ai" class="tab-panel active">
+            <div class="settings-section">
+                <h3>📋 已配置的供应商</h3>
+                <p class="section-desc">点击「激活」切换当前使用的供应商，AI 分析将使用激活的供应商</p>
+                <div id="provider-list" class="provider-list"></div>
+            </div>
+
+            <div class="settings-section">
+                <h3>➕ 添加新供应商</h3>
+                <p class="section-desc">从预设供应商快速添加，或添加自定义 OpenAI 兼容接口</p>
+                <div class="provider-grid" id="preset-grid"></div>
+                <div id="add-form" class="add-form" style="display:none;">
+                    <h4 id="add-form-title">配置供应商</h4>
+                    <div class="form-group"><label>供应商ID</label><input type="text" id="add-key" placeholder="例如: deepseek"></div>
+                    <div class="form-group"><label>显示名称</label><input type="text" id="add-name" placeholder="例如: DeepSeek"></div>
+                    <div class="form-group"><label>API Key</label><div class="input-group"><input type="password" id="add-api-key" placeholder="输入 API Key"><button class="btn-small" onclick="togglePwd('add-api-key')">👁</button></div></div>
+                    <div class="form-group"><label>Base URL</label><input type="text" id="add-base-url" placeholder="https://api.deepseek.com"></div>
+                    <div class="form-group"><label>模型</label><div class="input-group"><select id="add-model-select" onchange="document.getElementById('add-model').value=this.value"><option value="">-- 从预设列表选择 --</option></select><input type="text" id="add-model" placeholder="或手动输入模型名称"></div></div>
+                    <div class="form-row"><div class="form-group"><label>Temperature</label><input type="number" id="add-temperature" min="0" max="2" step="0.1" value="0.3"></div><div class="form-group"><label>Max Tokens</label><input type="number" id="add-max-tokens" min="100" max="128000" step="100" value="1000"></div></div>
+                    <div class="settings-actions"><button class="action-btn btn-primary" onclick="submitAdd()">💾 保存供应商</button><button class="action-btn" onclick="cancelAdd()">取消</button></div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h3>🔗 测试当前连接</h3>
+                <div class="settings-actions"><button class="action-btn btn-primary" onclick="testConnection()">🔗 测试连接</button></div>
+                <div id="test-status" class="action-status"></div>
+            </div>
+
+            <div class="settings-section">
+                <h3>⚡ 并发设置</h3>
+                <p class="section-desc">AI 分析时的并发线程数，建议 3~10</p>
+                <div class="form-group" style="max-width:200px;"><label>并发数</label><input type="number" id="concurrency" min="1" max="20" step="1" value="5"></div>
+                <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveConcurrency()">💾 保存</button></div>
+                <div id="concurrency-status" class="action-status"></div>
+            </div>
+
+            <div class="settings-section">
+                <h3>📝 Prompt 设置</h3>
+                <p class="section-desc">自定义 AI 分析的提示词模板。可用变量: <code>{title}</code> <code>{authors}</code> <code>{abstract}</code> <code>{tag_candidates}</code> <code>{rating_criteria}</code></p>
+                <div class="form-group"><label>System Prompt</label><textarea id="system-prompt" rows="4"></textarea></div>
+                <div class="form-group"><label>User Prompt</label><textarea id="user-prompt" rows="16"></textarea></div>
+                <div class="settings-actions"><button class="action-btn btn-primary" onclick="savePrompts()">💾 保存</button><button class="action-btn" onclick="resetPrompts()">🔄 恢复默认</button></div>
+                <div id="prompt-status" class="action-status"></div>
+            </div>
+
+            <div class="settings-section">
+                <h3>❓ Q&A 问题管理</h3>
+                <p class="section-desc">管理 AI 深度阅读的问题列表，修改后点击「应用到 Prompt」同步</p>
+                <div id="qa-questions-list" class="qa-questions-list"></div>
+                <div class="qa-add-row"><input type="text" id="qa-new-question" placeholder="输入新问题"><button class="action-btn" onclick="addQuestion()">➕</button></div>
+                <div class="settings-actions" style="margin-top:12px;"><button class="action-btn btn-primary" onclick="applyQuestionsToPrompt()">📝 应用到 Prompt</button><button class="action-btn" onclick="resetQuestions()">🔄 恢复默认</button></div>
+                <div id="qa-status" class="action-status"></div>
+            </div>
+        </div>
+
+        <!-- ============ Tab 2: 数据库 ============ -->
+        <div id="tab-db" class="tab-panel">
+            <div class="settings-section">
+                <h3>💾 数据库信息</h3>
+                <div id="db-info" class="db-info-grid"></div>
+            </div>
+            <div class="settings-section">
+                <h3>📂 存储路径</h3>
+                <div id="db-paths" class="db-info-grid"></div>
+            </div>
+        </div>
+
+        <!-- ============ Tab 3: 管理 ============ -->
+        <div id="tab-admin" class="tab-panel">
+            <div class="settings-section">
+                <h3>🔒 管理密码</h3>
+                <p class="section-desc">设置管理页面密码，保护设置不被未授权修改</p>
+                <div class="form-group" style="max-width:360px;">
+                    <label>当前密码</label>
+                    <div class="input-group"><input type="password" id="admin-current-pwd" placeholder="当前密码（首次设置可留空）"><button class="btn-small" onclick="togglePwd('admin-current-pwd')">👁</button></div>
+                </div>
+                <div class="form-group" style="max-width:360px;">
+                    <label>新密码</label>
+                    <div class="input-group"><input type="password" id="admin-new-pwd" placeholder="新密码"><button class="btn-small" onclick="togglePwd('admin-new-pwd')">👁</button></div>
+                </div>
+                <div class="form-group" style="max-width:360px;">
+                    <label>确认新密码</label>
+                    <div class="input-group"><input type="password" id="admin-confirm-pwd" placeholder="再次输入新密码"><button class="btn-small" onclick="togglePwd('admin-confirm-pwd')">👁</button></div>
+                </div>
+                <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveAdminPassword()">💾 保存密码</button><button class="action-btn" onclick="clearAdminPassword()">🗑️ 清除密码</button></div>
+                <div id="admin-status" class="action-status"></div>
+            </div>
+            <div class="settings-section">
+                <h3>📊 系统状态</h3>
+                <div id="system-status" class="db-info-grid"></div>
+            </div>
+        </div>
+
+        <footer><p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p></footer>
+    </div>
+
+{% raw %}
+    <script>
+        let presets = {};
+        let providerData = {};
+
+        function switchTab(name) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            document.getElementById('tab-' + name).classList.add('active');
+            event.target.classList.add('active');
+            if (name === 'db') loadDbInfo();
+            if (name === 'admin') loadSystemStatus();
+        }
+
+        async function init() {
+            const [provResp, presetResp, promptResp, statsResp] = await Promise.all([
+                fetch('/api/providers'), fetch('/api/providers/presets'),
+                fetch('/api/prompts'), fetch('/api/stats')
+            ]);
+            providerData = await provResp.json();
+            presets = await presetResp.json();
+            const promptData = await promptResp.json();
+            const statsData = await statsResp.json();
+
+            renderProviderList();
+            renderPresetGrid();
+            renderPrompts(promptData);
+            if (statsData.concurrency !== undefined) document.getElementById('concurrency').value = statsData.concurrency;
+        }
+
+        /* ---- Provider Management ---- */
+        function renderProviderList() {
+            const list = document.getElementById('provider-list');
+            const providers = providerData.providers || {};
+            const active = providerData.active_provider || '';
+            if (Object.keys(providers).length === 0) { list.innerHTML = '<div class="empty-state"><p>尚未配置，请在下方添加</p></div>'; return; }
+            let html = '';
+            for (const [key, prov] of Object.entries(providers)) {
+                const isActive = key === active;
+                html += `<div class="provider-item ${isActive ? 'active' : ''}">
+                    <div class="provider-item-header">
+                        <div class="provider-item-info"><span class="provider-item-name">${prov.name}</span>${isActive ? '<span class="active-badge">✅ 当前使用</span>' : ''}</div>
+                        <div class="provider-item-actions">
+                            ${isActive ? '<span class="status-text">已激活</span>' : `<button class="btn-sm btn-activate" onclick="activateProvider('${key}')">激活</button>`}
+                            <button class="btn-sm btn-edit" onclick="editProvider('${key}')">编辑</button>
+                            ${!isActive ? `<button class="btn-sm btn-delete" onclick="deleteProvider('${key}')">删除</button>` : ''}
+                        </div>
+                    </div>
+                    <div class="provider-item-detail"><span>Base URL: ${prov.base_url}</span><span>模型: ${prov.model}</span><span>API Key: ${prov.api_key_masked || '未设置'}</span></div>
+                </div>`;
+            }
+            list.innerHTML = html;
+        }
+
+        function renderPresetGrid() {
+            const grid = document.getElementById('preset-grid');
+            let html = '';
+            for (const [key, preset] of Object.entries(presets)) {
+                const exists = providerData.providers && providerData.providers[key];
+                html += `<div class="preset-card ${exists ? 'exists' : ''}" onclick="${exists ? '' : `showAddForm('${key}')`}"><div class="preset-name">${preset.name}</div>${exists ? '<div class="preset-exists">已添加</div>' : ''}</div>`;
+            }
+            grid.innerHTML = html;
+        }
+
+        function showAddForm(presetKey) {
+            const preset = presets[presetKey] || {};
+            document.getElementById('add-key').value = presetKey;
+            document.getElementById('add-key').readOnly = !!presetKey;
+            document.getElementById('add-name').value = preset.name || presetKey;
+            document.getElementById('add-api-key').value = '';
+            document.getElementById('add-api-key').placeholder = '输入 API Key';
+            document.getElementById('add-base-url').value = preset.base_url || '';
+            document.getElementById('add-model').value = (preset.models && preset.models[0]) || '';
+            document.getElementById('add-temperature').value = 0.3;
+            document.getElementById('add-max-tokens').value = 1000;
+            const modelSelect = document.getElementById('add-model-select');
+            modelSelect.innerHTML = '<option value="">-- 从预设列表选择 --</option>';
+            if (preset.models) for (const m of preset.models) modelSelect.innerHTML += `<option value="${m}">${m}</option>`;
+            document.getElementById('add-form-title').textContent = `添加供应商: ${preset.name || presetKey}`;
+            document.getElementById('add-form').style.display = 'block';
+            document.getElementById('add-form').scrollIntoView({behavior: 'smooth'});
+        }
+
+        function cancelAdd() { document.getElementById('add-form').style.display = 'none'; }
+
+        async function submitAdd() {
+            const statusEl = document.getElementById('test-status');
+            const isEdit = document.getElementById('add-key').readOnly;
+            const data = { key: document.getElementById('add-key').value.trim(), name: document.getElementById('add-name').value.trim(), api_key: document.getElementById('add-api-key').value.trim(), base_url: document.getElementById('add-base-url').value.trim(), model: document.getElementById('add-model').value.trim(), temperature: parseFloat(document.getElementById('add-temperature').value) || 0.3, max_tokens: parseInt(document.getElementById('add-max-tokens').value) || 1000 };
+            if (!data.key) { alert('供应商ID不能为空'); return; }
+            if (!data.base_url) { alert('Base URL 不能为空'); return; }
+            if (!data.model) { alert('模型名称不能为空'); return; }
+            if (!isEdit && !data.api_key) { alert('API Key 不能为空'); return; }
+            try {
+                const resp = await fetch(isEdit ? `/api/providers/${data.key}` : '/api/providers', { method: isEdit ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+                const result = await resp.json();
+                if (result.status === 'ok') { statusEl.className = 'action-status success'; statusEl.textContent = '✅ ' + result.message; cancelAdd(); await init(); }
+                else { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + result.message; }
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        async function activateProvider(key) {
+            const statusEl = document.getElementById('test-status');
+            try { const resp = await fetch(`/api/providers/${key}/activate`, {method: 'POST'}); const result = await resp.json();
+                if (result.status === 'ok') { statusEl.className = 'action-status success'; statusEl.textContent = '✅ ' + result.message; await init(); }
+                else { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + result.message; }
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        function editProvider(key) {
+            const prov = providerData.providers[key]; if (!prov) return;
+            const preset = presets[key] || {};
+            document.getElementById('add-key').value = key; document.getElementById('add-key').readOnly = true;
+            document.getElementById('add-name').value = prov.name || key;
+            document.getElementById('add-api-key').value = ''; document.getElementById('add-api-key').placeholder = '留空则保持原值不变';
+            document.getElementById('add-base-url').value = prov.base_url || '';
+            document.getElementById('add-model').value = prov.model || '';
+            document.getElementById('add-temperature').value = prov.temperature ?? 0.3;
+            document.getElementById('add-max-tokens').value = prov.max_tokens ?? 1000;
+            const modelSelect = document.getElementById('add-model-select'); modelSelect.innerHTML = '<option value="">-- 从预设列表选择 --</option>';
+            for (const m of (preset.models || [])) modelSelect.innerHTML += `<option value="${m}">${m}</option>`;
+            document.getElementById('add-form-title').textContent = `编辑供应商: ${prov.name || key}`;
+            document.getElementById('add-form').style.display = 'block'; document.getElementById('add-form').scrollIntoView({behavior: 'smooth'});
+        }
+
+        async function deleteProvider(key) {
+            if (!confirm(`确定删除供应商「${key}」？`)) return;
+            const statusEl = document.getElementById('test-status');
+            try { const resp = await fetch(`/api/providers/${key}`, {method: 'DELETE'}); const result = await resp.json();
+                if (result.status === 'ok') { statusEl.className = 'action-status success'; statusEl.textContent = '✅ ' + result.message; await init(); }
+                else { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + result.message; }
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        function togglePwd(id) { const el = document.getElementById(id); el.type = el.type === 'password' ? 'text' : 'password'; }
+
+        async function testConnection() {
+            const statusEl = document.getElementById('test-status'); statusEl.className = 'action-status info'; statusEl.textContent = '⏳ 正在测试...';
+            try { const resp = await fetch('/api/test_connection', {method: 'POST'}); const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        async function saveConcurrency() {
+            const statusEl = document.getElementById('concurrency-status');
+            const val = parseInt(document.getElementById('concurrency').value) || 5;
+            try { const resp = await fetch('/api/settings/concurrency', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({concurrency: val}) });
+                const result = await resp.json(); statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        /* ---- Prompt Management ---- */
+        function renderPrompts(data) { document.getElementById('system-prompt').value = data.system_prompt || ''; document.getElementById('user-prompt').value = data.user_prompt || ''; parseQuestionsFromPrompt(data.user_prompt || ''); }
+
+        const DEFAULT_QUESTIONS = ['这篇论文试图解决什么问题？','有哪些相关研究？','论文如何解决这个问题？','论文做了哪些实验？','有什么可以进一步探索的点？','总结一下论文的主要内容'];
+
+        function parseQuestionsFromPrompt(prompt) { const questions = []; const regex = /### Q\d+:\s*(.*?)(?:\\n|\n)/g; let m; while ((m = regex.exec(prompt)) !== null) questions.push(m[1].trim()); renderQuestions(questions.length === 0 ? DEFAULT_QUESTIONS : questions); }
+
+        function renderQuestions(questions) { const list = document.getElementById('qa-questions-list'); let html = ''; questions.forEach((q, i) => { html += `<div class="qa-q-item"><span class="qa-q-label">Q${i+1}</span><input type="text" class="qa-q-input" value="${q.replace(/"/g, '&quot;')}" data-index="${i}"><button class="btn-sm btn-delete" onclick="removeQuestion(${i})">✕</button></div>`; }); list.innerHTML = html; }
+        function getQuestionsFromUI() { return Array.from(document.querySelectorAll('.qa-q-input')).map(el => el.value.trim()).filter(v => v); }
+        function addQuestion() { const input = document.getElementById('qa-new-question'); const q = input.value.trim(); if (!q) return; const questions = getQuestionsFromUI(); questions.push(q); renderQuestions(questions); input.value = ''; }
+        function removeQuestion(index) { const questions = getQuestionsFromUI(); questions.splice(index, 1); renderQuestions(questions); }
+        function resetQuestions() { renderQuestions(DEFAULT_QUESTIONS); }
+
+        function buildPromptWithQuestions(questions) {
+            let qaBlock = questions.map((q, i) => `### Q${i+1}: ${q}\\n\\n（请详细回答 Q${i+1}，至少3-5个完整段落）`).join('\\n\\n');
+            return `请对以下论文进行深度阅读分析，按Q&A格式详细回答每个问题，然后给出标签和评级。\n\n论文标题: {title}\n论文作者: {authors}\n论文摘要: {abstract}\n\n请严格按以下JSON格式返回（不要返回其他内容）:\n\n{{\n    "qa_analysis": "${qaBlock}",\n    "tags": ["标签1", "标签2"],\n    "rating": 3,\n    "summary_cn": "将论文摘要完整翻译为中文，要求忠实原文、语句通顺、术语准确，不得遗漏或概括任何信息，必须是逐句的完整翻译。",\n    "value_comment": "对论文价值的简短评价（2-3句话）"\n}}\n\n标签选择指南:\n请从以下标签中选择最相关的2-5个标签，也可以自行创建新标签:\n{tag_candidates}\n\n标签精度要求（重要）:\n- 避免过于宽泛的标签，例如: "Robot Learning"、"Embodied AI"（领域太大）、"Transformer"（架构太通用）、"LLM"（太泛）、"Agent"（太泛）、"Multimodal"（太泛）\n- 优先使用具体的技术方法、特定任务、具体架构名称\n- 好的标签示例: "VLA"、"Diffusion Policy"、"Sim-to-Real Transfer"、"Dexterous Manipulation"、"World Model"、"Preference Optimization"\n\n{rating_criteria}\n\n重要要求:\n1. qa_analysis 中每个Q&A用 Markdown 标题格式（### Qn: 问题），每个回答应当详尽充分，至少3-5个完整段落\n2. summary_cn 必须是论文摘要的完整中文翻译，逐句对应，不得省略概括\n3. tags必须是数组格式\n4. rating必须是0-5的整数\n5. 请确保返回合法的JSON格式，qa_analysis中的换行用\\\\n转义`;
+        }
+
+        async function applyQuestionsToPrompt() {
+            const statusEl = document.getElementById('qa-status'); const questions = getQuestionsFromUI();
+            if (questions.length === 0) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ 至少需要一个问题'; return; }
+            const newPrompt = buildPromptWithQuestions(questions); document.getElementById('user-prompt').value = newPrompt;
+            try { const resp = await fetch('/api/prompts', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({system_prompt: document.getElementById('system-prompt').value, user_prompt: newPrompt}) });
+                const result = await resp.json(); statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = result.status === 'ok' ? `✅ 已应用 ${questions.length} 个问题并保存` : '❌ ' + result.message;
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        async function savePrompts() {
+            const statusEl = document.getElementById('prompt-status');
+            try { const resp = await fetch('/api/prompts', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({system_prompt: document.getElementById('system-prompt').value, user_prompt: document.getElementById('user-prompt').value}) });
+                const result = await resp.json(); statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        async function resetPrompts() {
+            if (!confirm('确定恢复默认 Prompt？')) return;
+            const statusEl = document.getElementById('prompt-status');
+            try { const resp = await fetch('/api/prompts'); const data = await resp.json(); document.getElementById('system-prompt').value = data.system_prompt || ''; document.getElementById('user-prompt').value = data.user_prompt || ''; statusEl.className = 'action-status info'; statusEl.textContent = '已恢复为当前保存的 Prompt';
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        /* ---- Database Info ---- */
+        async function loadDbInfo() {
+            try {
+                const resp = await fetch('/api/db/info'); const data = await resp.json();
+                const info = document.getElementById('db-info');
+                info.innerHTML = `
+                    <div class="db-stat"><div class="db-stat-value">${data.total_papers}</div><div class="db-stat-label">论文总数</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${data.analyzed_papers}</div><div class="db-stat-label">已分析</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${data.unanalyzed_papers}</div><div class="db-stat-label">待分析</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${data.total_tags}</div><div class="db-stat-label">标签种类</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${data.total_categories}</div><div class="db-stat-label">分类数</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${data.db_size}</div><div class="db-stat-label">数据库大小</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${data.avg_rating || 'N/A'}</div><div class="db-stat-label">平均评级</div></div>
+                    <div class="db-stat db-stat-wide"><div class="db-stat-label">日期范围</div><div class="db-stat-value">${data.date_range || 'N/A'}</div></div>
+                `;
+                const paths = document.getElementById('db-paths');
+                paths.innerHTML = `
+                    <div class="db-path-item"><strong>数据库文件:</strong> <code>${data.db_path}</code></div>
+                    <div class="db-path-item"><strong>输出目录:</strong> <code>${data.output_dir}</code></div>
+                    <div class="db-path-item"><strong>日报目录:</strong> <code>${data.daily_dir}</code></div>
+                `;
+            } catch (e) { document.getElementById('db-info').innerHTML = '<p>加载失败</p>'; }
+        }
+
+        /* ---- Admin ---- */
+        async function saveAdminPassword() {
+            const statusEl = document.getElementById('admin-status');
+            const current = document.getElementById('admin-current-pwd').value;
+            const newPwd = document.getElementById('admin-new-pwd').value;
+            const confirm = document.getElementById('admin-confirm-pwd').value;
+            if (!newPwd) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ 新密码不能为空'; return; }
+            if (newPwd !== confirm) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ 两次输入的密码不一致'; return; }
+            try {
+                const resp = await fetch('/api/admin/password', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({current_password: current, new_password: newPwd}) });
+                const result = await resp.json();
+                if (result.status === 'ok') { statusEl.className = 'action-status success'; statusEl.textContent = '✅ ' + result.message; document.getElementById('admin-current-pwd').value = ''; document.getElementById('admin-new-pwd').value = ''; document.getElementById('admin-confirm-pwd').value = ''; }
+                else { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + result.message; }
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        async function clearAdminPassword() {
+            if (!confirm('确定清除管理密码？')) return;
+            const statusEl = document.getElementById('admin-status');
+            try {
+                const resp = await fetch('/api/admin/password', { method: 'DELETE' });
+                const result = await resp.json(); statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        async function loadSystemStatus() {
+            try {
+                const resp = await fetch('/api/stats'); const data = await resp.json();
+                document.getElementById('system-status').innerHTML = `
+                    <div class="db-stat"><div class="db-stat-value">${data.total_papers}</div><div class="db-stat-label">论文总数</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${data.analyzed_papers}</div><div class="db-stat-label">已分析</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${data.unanalyzed_papers}</div><div class="db-stat-label">待分析</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${data.concurrency}</div><div class="db-stat-label">并发数</div></div>
+                `;
+            } catch (e) {}
+        }
+
+        init();
+    </script>
+{% endraw %}
+</body>
+</html>
