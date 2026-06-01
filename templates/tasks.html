@@ -22,6 +22,7 @@
             <a href="/search" class="nav-link">🔍 搜索</a>
             <a href="/tasks" class="nav-link active">📋 任务管理</a>
             <a href="/reports" class="nav-link">📊 每日报告</a>
+            <a href="/reading-list" class="nav-link">📌 阅读清单</a>
         </nav>
 
         <!-- 抓取论文 -->
@@ -33,7 +34,7 @@
                     <select id="fetch-category">
                         <option value="">使用默认配置</option>
                         <option value="cs.AI">cs.AI - Artificial Intelligence</option>
-                        <option value="cs.RO">cs.RO - Robotics</option>
+                        <option value="cs.RO" selected>cs.RO - Robotics</option>
                         <option value="cs.CV">cs.CV - Computer Vision</option>
                         <option value="cs.LG">cs.LG - Machine Learning</option>
                         <option value="cs.CL">cs.CL - NLP</option>
@@ -47,6 +48,23 @@
                     <input type="number" id="fetch-max" min="1" max="500" value="50" placeholder="50">
                 </div>
             </div>
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label>抓取天数（留空则按数量抓取）</label>
+                    <input type="number" id="fetch-days" min="1" max="3650" placeholder="例如: 30 表示最近30天（最大10年）">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label>指定日期（精确抓取某一天）</label>
+                    <input type="date" id="fetch-date">
+                </div>
+            </div>
+            <p class="section-desc" style="margin-bottom:10px;">
+                <strong>优先级：</strong>指定日期 > 抓取天数 > 最大数量（每分类）。三项都留空则按默认数量抓取最新论文。<br>
+                <strong>抓取天数：</strong>抓取最近 N 天的全部论文，已抓取过的日期会自动跳过，不会重复抓取。<br>
+                <strong>指定日期：</strong>精确抓取某一天的全部论文，适合补抓遗漏。<br>
+                <strong>最大数量：</strong>仅在天数和日期都留空时生效，按数量限制抓取。<br>
+                <strong>分批配置：</strong>请求间隔、每批天数、批次间隔请在「⚙️ 设置 → 📥 抓取配置」中调整。
+            </p>
             <div class="settings-actions">
                 <button class="action-btn btn-primary" onclick="runFetch(this)">📥 开始抓取</button>
             </div>
@@ -58,7 +76,7 @@
             <h3>🤖 AI 分析</h3>
             <div class="form-group" style="max-width:200px;">
                 <label>分析数量上限</label>
-                <input type="number" id="analyze-limit" min="1" max="500" value="50">
+                <input type="number" id="analyze-limit" min="1" max="10000" value="50">
             </div>
             <div class="settings-actions">
                 <button class="action-btn btn-primary" onclick="runAnalyze(this)">🤖 开始分析</button>
@@ -79,6 +97,13 @@
 
         <!-- 生成报告 & 一键执行 -->
         <div class="action-panel">
+            <h3>📝 生成报告</h3>
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label>指定日期（留空则生成最新日期的报告）</label>
+                    <input type="date" id="report-date">
+                </div>
+            </div>
             <div class="action-buttons">
                 <button class="action-btn" onclick="runGenerate(this)">📝 生成报告</button>
                 <button class="action-btn btn-primary" onclick="runAll(this)">🚀 一键执行全部</button>
@@ -186,15 +211,34 @@
             const statusEl = document.getElementById('fetch-status');
             const category = document.getElementById('fetch-category').value;
             const maxResults = document.getElementById('fetch-max').value;
+            const days = document.getElementById('fetch-days').value;
+            const date = document.getElementById('fetch-date').value;
             const origText = btn.textContent;
             btn.disabled = true;
             btn.textContent = '⏳ 抓取中...';
             statusEl.className = 'action-status info';
             statusEl.textContent = '正在抓取论文...';
+
+            const taskId = 'fetch_' + Date.now();
+            const eventSource = new EventSource('/api/progress/' + taskId);
+            eventSource.onmessage = function(e) {
+                try {
+                    const data = JSON.parse(e.data);
+                    statusEl.textContent = '⏳ ' + (data.message || '抓取中...');
+                    if (data.status === 'completed' || data.status === 'error') {
+                        eventSource.close();
+                    }
+                } catch (err) {}
+            };
+            eventSource.onerror = function() { eventSource.close(); };
+
             try {
                 const params = new URLSearchParams();
+                params.set('task_id', taskId);
                 if (category) params.set('category', category);
-                if (maxResults) params.set('max_results', maxResults);
+                if (maxResults && !days && !date) params.set('max_results', maxResults);
+                if (days && !date) params.set('days', days);
+                if (date) params.set('date', date);
                 const resp = await fetch('/api/fetch?' + params.toString(), { method: 'POST' });
                 const data = await resp.json();
                 statusEl.className = data.status === 'ok' ? 'action-status success' : 'action-status error';
@@ -291,12 +335,15 @@
         async function runGenerate(btn) {
             const statusEl = document.getElementById('run-status');
             const origText = btn.textContent;
+            const date = document.getElementById('report-date').value;
             btn.disabled = true;
             btn.textContent = '⏳ 生成中...';
             statusEl.className = 'action-status info';
             statusEl.textContent = '正在生成报告...';
             try {
-                const resp = await fetch('/api/generate', { method: 'POST' });
+                const params = new URLSearchParams();
+                if (date) params.set('date', date);
+                const resp = await fetch('/api/generate?' + params.toString(), { method: 'POST' });
                 const data = await resp.json();
                 statusEl.className = data.status === 'ok' ? 'action-status success' : 'action-status error';
                 statusEl.textContent = (data.status === 'ok' ? '✅ ' : '❌ ') + (data.message || '操作完成');
