@@ -151,18 +151,35 @@ header h1 {
 }
 
 .filter-info {
-    background: #fff3cd;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
     padding: 10px 15px;
     border-radius: 8px;
     margin-bottom: 15px;
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.filter-date-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.filter-info input[type="date"] {
+    padding: 5px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 0.9em;
+    color: #374151;
 }
 
 .clear-filter {
     color: #856404;
     text-decoration: underline;
+    font-size: 0.85em;
 }
 
 .browse-layout {
@@ -496,6 +513,45 @@ header h1 {
     color: #ef4444;
 }
 
+.paper-links .link-todo {
+    color: #f59e0b;
+}
+
+.paper-links .link-todo:hover {
+    color: #d97706;
+}
+
+.paper-links .link-todo.todo-added {
+    color: #94a3b8;
+}
+
+.paper-links .link-todo.todo-added:hover {
+    color: #64748b;
+}
+
+.todo-read {
+    opacity: 0.6;
+}
+
+.todo-read .paper-title a {
+    text-decoration: line-through;
+    color: #94a3b8;
+}
+
+.todo-time {
+    font-size: 0.8em;
+    color: #94a3b8;
+}
+
+.todo-count-badge {
+    font-size: 0.75em;
+    background: #ef4444;
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 8px;
+}
+
 .empty-state {
     text-align: center;
     padding: 60px 20px;
@@ -553,6 +609,16 @@ header h1 {
 .page-jump .action-btn {
     padding: 6px 12px;
     font-size: 0.85em;
+}
+
+.page-per-page select {
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.85em;
+    background: #fff;
+    color: #555;
+    cursor: pointer;
 }
 
 .search-section {
@@ -1485,6 +1551,12 @@ footer {
 .active-badge {
     font-size: 0.8em;
     color: #1a73e8;
+    font-weight: 600;
+}
+
+.thinking-badge {
+    font-size: 0.8em;
+    color: #7c3aed;
     font-weight: 600;
 }
 
