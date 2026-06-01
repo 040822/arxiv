@@ -6,3 +6,4 @@ data/papers.db
 dist/
 build/
 data/pdf_cache/*
+.envrc
