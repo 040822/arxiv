@@ -1,3 +1,26 @@
+"""
+database.py - SQLite 数据库操作模块
+
+本模块负责所有数据库相关的操作，包括：
+- 数据库初始化和表结构管理（5 张表）
+- 论文的增删改查（CRUD）
+- 分析结果的存储和查询
+- 任务日志的记录和查询
+- 报告的生成和存储
+- 阅读清单的管理
+
+数据库结构（5 张表）：
+- papers: 论文基本信息
+- analysis: AI 分析结果（与 papers 1:1 关联）
+- task_logs: 定时任务和手动操作的日志
+- reports: 每日 Web 报告
+- reading_list: 用户阅读清单
+
+依赖：
+- config.py: 数据库路径配置
+- sqlite3: Python 内置 SQLite 模块
+"""
+
 import sqlite3
 import json
 import os
@@ -9,61 +32,94 @@ logger = logging.getLogger(__name__)
 
 
 def get_connection():
+    """获取数据库连接。
+    
+    配置：
+    - WAL 模式：支持读写并发，提升 Web 服务性能
+    - 外键约束：启用级联删除，保证数据完整性
+    - Row 工厂：返回字典风格的行对象
+    
+    返回：
+        sqlite3.Connection: 配置好的数据库连接
+    """
     os.makedirs(DB_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA journal_mode=WAL")  # 写前日志模式，提升并发性能
+    conn.execute("PRAGMA foreign_keys=ON")    # 启用外键约束
     return conn
 
 
 def init_db():
+    """初始化数据库，创建所有表和索引。
+    
+    功能：
+    1. 创建 5 张表（如果不存在）
+    2. 创建索引优化查询性能
+    3. 执行数据库迁移（添加新字段）
+    
+    注意：此函数在应用启动时调用，可重复调用不会破坏已有数据。
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
+    # ==================== papers 表：论文基本信息 ====================
+    # 存储从 arXiv 抓取的论文元数据
+    # authors 和 categories 使用 JSON 数组格式存储
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS papers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            arxiv_id TEXT UNIQUE NOT NULL,
-            title TEXT NOT NULL,
-            authors TEXT NOT NULL,
-            abstract TEXT NOT NULL,
-            categories TEXT NOT NULL,
-            primary_category TEXT,
-            url TEXT,
-            pdf_url TEXT,
-            published_date TEXT,
-            updated_date TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            arxiv_id TEXT UNIQUE NOT NULL,    -- arXiv 论文编号，如 "2401.12345"
+            title TEXT NOT NULL,               -- 论文标题
+            authors TEXT NOT NULL,             -- 作者列表（JSON 数组）
+            abstract TEXT NOT NULL,            -- 论文摘要
+            categories TEXT NOT NULL,          -- 分类列表（JSON 数组，如 ["cs.RO", "cs.AI"]）
+            primary_category TEXT,             -- 主分类，如 "cs.RO"
+            url TEXT,                          -- arXiv 页面链接
+            pdf_url TEXT,                      -- PDF 下载链接
+            published_date TEXT,               -- 发布日期（YYYY-MM-DD）
+            updated_date TEXT,                 -- 更新日期
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP  -- 记录创建时间
         )
     """)
 
+    # ==================== analysis 表：AI 分析结果 ====================
+    # 存储 AI 对论文的分析结果，与 papers 表 1:1 关联
+    # 使用 CASCADE DELETE，删除论文时自动删除分析结果
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS analysis (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            paper_id INTEGER NOT NULL,
-            tags TEXT,
-            summary_cn TEXT,
-            summary_en TEXT,
-            rating INTEGER DEFAULT 0,
-            value_comment TEXT,
-            qa_analysis TEXT,
-            analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            paper_id INTEGER NOT NULL,         -- 关联的论文 ID
+            tags TEXT,                         -- 标签（JSON 数组，如 ["VLA", "World Model"]）
+            summary_cn TEXT,                   -- 摘要中文翻译
+            summary_en TEXT,                   -- 英文摘要（当前未使用）
+            rating INTEGER DEFAULT 0,          -- 评级（0-5 星）
+            value_comment TEXT,                -- 价值评价（2-3 句话）
+            qa_analysis TEXT,                  -- Q&A 深度阅读（Markdown 格式）
+            analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP,  -- 分析时间
             FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE
         )
     """)
 
+    # ==================== 创建索引 ====================
+    # 索引优化常见查询场景
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_papers_arxiv_id ON papers(arxiv_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_papers_published ON papers(published_date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_papers_category ON papers(primary_category)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_paper_id ON analysis(paper_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_rating ON analysis(rating)")
 
+    # ==================== 数据库迁移 ====================
+    # 使用 PRAGMA table_info 检查列是否存在，实现安全的字段添加
+    # 这是项目的迁移模式，新字段都通过这种方式添加
+
+    # 迁移：添加 qa_analysis 字段（Q&A 深度阅读）
     cursor.execute("PRAGMA table_info(analysis)")
     columns = [row["name"] for row in cursor.fetchall()]
     if "qa_analysis" not in columns:
         cursor.execute("ALTER TABLE analysis ADD COLUMN qa_analysis TEXT")
 
+    # 迁移：添加 hidden 字段（论文隐藏标记）
     cursor.execute("PRAGMA table_info(papers)")
     paper_columns = [row["name"] for row in cursor.fetchall()]
     if "hidden" not in paper_columns:
@@ -96,13 +152,71 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # ==================== task_logs 表：任务执行日志 ====================
+    # 记录定时任务和手动操作的执行情况
+    # 用于任务统计、问题排查和执行历史查看
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS task_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_name TEXT NOT NULL,           -- 任务名称：daily_pipeline/fetch/analyze/generate/run
+            status TEXT NOT NULL DEFAULT 'running',  -- 状态：running/success/error
+            message TEXT,                      -- 人类可读的消息
+            detail TEXT,                       -- 技术细节
+            started_at TEXT DEFAULT CURRENT_TIMESTAMP,  -- 开始时间
+            finished_at TEXT,                  -- 结束时间
+            duration_sec REAL                  -- 执行时长（秒）
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_name ON task_logs(task_name)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_status ON task_logs(status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_started ON task_logs(started_at)")
+
+    # ==================== reports 表：每日 Web 报告 ====================
+    # 存储生成的 HTML 格式报告，按日期唯一
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_date TEXT UNIQUE NOT NULL,  -- 报告日期（YYYY-MM-DD），唯一
+            content TEXT NOT NULL,             -- HTML 格式的报告内容
+            paper_count INTEGER DEFAULT 0,     -- 论文总数
+            analyzed_count INTEGER DEFAULT 0,  -- 已分析数
+            avg_rating REAL DEFAULT 0,         -- 平均评级
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(report_date)")
+
+    # ==================== reading_list 表：用户阅读清单 ====================
+    # 用户收藏的待读论文，支持已读/未读状态管理
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reading_list (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paper_id INTEGER NOT NULL,         -- 关联的论文 ID
+            status TEXT DEFAULT 'unread',      -- 状态：unread/read
+            added_at TEXT DEFAULT CURRENT_TIMESTAMP,  -- 添加时间
+            completed_at TEXT,                 -- 标记已读的时间
+            FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_list_paper ON reading_list(paper_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_list_status ON reading_list(status)")
 
     conn.commit()
     conn.close()
 
 
+# ==================== 论文基本操作 ====================
+
+
 def paper_exists(arxiv_id):
+    """检查指定 arXiv ID 的论文是否已存在于数据库中。
+    
+    参数：
+        arxiv_id (str): arXiv 论文编号，如 "2401.12345"
+        
+    返回：
+        bool: 论文存在返回 True，否则返回 False
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT 1 FROM papers WHERE arxiv_id = ?", (arxiv_id,))
@@ -112,6 +226,24 @@ def paper_exists(arxiv_id):
 
 
 def insert_paper(paper_data):
+    """插入新论文到数据库。
+    
+    参数：
+        paper_data (dict): 论文数据字典，包含以下字段：
+            - arxiv_id: arXiv 论文编号
+            - title: 论文标题
+            - authors: 作者列表（Python 列表，会自动转为 JSON）
+            - abstract: 摘要
+            - categories: 分类列表（Python 列表，会自动转为 JSON）
+            - primary_category: 主分类
+            - url: arXiv 页面链接
+            - pdf_url: PDF 下载链接
+            - published_date: 发布日期
+            - updated_date: 更新日期
+            
+    返回：
+        int or None: 成功返回论文 ID，失败返回 None
+    """
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -141,9 +273,30 @@ def insert_paper(paper_data):
 
 
 def insert_analysis(paper_id, analysis_data):
+    """插入 AI 分析结果到数据库。
+    
+    功能：
+    1. 检查该论文是否已有分析结果（防重复）
+    2. 将分析数据插入 analysis 表
+    3. tags 字段自动从 Python 列表转为 JSON 字符串
+    
+    参数：
+        paper_id (int): 关联的论文 ID
+        analysis_data (dict): 分析数据字典，包含：
+            - tags: 标签列表（如 ["VLA", "World Model"]）
+            - summary_cn: 中文摘要
+            - summary_en: 英文摘要
+            - rating: 评级（0-5）
+            - value_comment: 价值评价
+            - qa_analysis: Q&A 深度阅读（可选，默认为空字符串）
+            
+    返回：
+        int or None: 成功返回分析 ID，已存在则返回 None
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
+    # 检查是否已存在分析结果，避免重复插入
     cursor.execute("SELECT id FROM analysis WHERE paper_id = ?", (paper_id,))
     if cursor.fetchone():
         conn.close()
@@ -169,6 +322,14 @@ def insert_analysis(paper_id, analysis_data):
 
 
 def get_paper_by_arxiv_id(arxiv_id):
+    """根据 arXiv ID 获取单篇论文的完整信息。
+    
+    参数：
+        arxiv_id (str): arXiv 论文编号，如 "2401.12345"
+        
+    返回：
+        dict or None: 论文数据字典，不存在则返回 None
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM papers WHERE arxiv_id = ?", (arxiv_id,))
@@ -178,9 +339,32 @@ def get_paper_by_arxiv_id(arxiv_id):
 
 
 def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, offset=0, count_total=False):
+    """获取论文列表及其分析结果，支持多条件筛选和分页。
+    
+    功能：
+    1. LEFT JOIN 关联 analysis 表，获取分析结果
+    2. 自动过滤隐藏论文（hidden=1）
+    3. 支持按日期、标签、最低评级筛选
+    4. 支持分页和总数统计
+    5. 自动解析 JSON 字段（authors, categories, tags）
+    
+    参数：
+        date (str, optional): 按发布日期筛选（YYYY-MM-DD）
+        tag (str, optional): 按标签筛选（模糊匹配）
+        min_rating (int, optional): 最低评级筛选
+        limit (int): 每页数量，默认 100
+        offset (int): 偏移量，默认 0
+        count_total (bool): 是否返回总数，默认 False
+        
+    返回：
+        list or tuple: 
+            - count_total=False 时返回论文列表
+            - count_total=True 时返回 (论文列表, 总数) 元组
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
+    # 构建基础查询：JOIN analysis 表，过滤隐藏论文
     base_query = """
         FROM papers p
         LEFT JOIN analysis a ON p.id = a.paper_id
@@ -188,24 +372,29 @@ def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, of
     """
     params = []
 
+    # 按日期筛选
     if date:
         base_query += " AND p.published_date = ?"
         params.append(date)
 
+    # 按最低评级筛选
     if min_rating is not None:
         base_query += " AND a.rating >= ?"
         params.append(min_rating)
 
+    # 按标签筛选（JSON 字段模糊匹配）
     if tag:
         base_query += " AND a.tags LIKE ?"
         params.append(f"%{tag}%")
 
+    # 可选：统计满足条件的总数（用于分页）
     total = 0
     if count_total:
         count_sql = "SELECT COUNT(*) " + base_query
         cursor.execute(count_sql, params)
         total = cursor.fetchone()[0]
 
+    # 构建完整查询：选择字段、排序、分页
     query = "SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis, a.analyzed_at " + base_query
     query += " ORDER BY p.published_date DESC, a.rating DESC"
     query += " LIMIT ? OFFSET ?"
@@ -215,6 +404,7 @@ def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, of
     rows = cursor.fetchall()
     conn.close()
 
+    # 解析 JSON 字段：将数据库中的 JSON 字符串转为 Python 对象
     results = []
     for row in rows:
         r = dict(row)
@@ -232,25 +422,59 @@ def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, of
 
 
 def browse_papers(date=None, tag=None, min_rating=None, max_rating=None,
-                  category=None, has_analysis=None, limit=20, offset=0):
+                  category=None, has_analysis=None, has_deep_analysis=None, hidden=None, limit=20, offset=0):
+    """高级论文浏览接口，支持多维度筛选和分页。
+    
+    与 get_papers_with_analysis 相比，本函数提供更多筛选维度：
+    - 按分类筛选
+    - 按评级范围筛选（最低/最高）
+    - 按是否有分析结果筛选
+    - 按是否有深度分析（Q&A）筛选
+    - 显示/隐藏论文切换
+    
+    参数：
+        date (str, optional): 按发布日期筛选
+        tag (str, optional): 按标签筛选（模糊匹配）
+        min_rating (int, optional): 最低评级
+        max_rating (int, optional): 最高评级
+        category (str, optional): 按主分类筛选（如 "cs.RO"）
+        has_analysis (str, optional): "yes" 仅已分析，"no" 仅未分析
+        has_deep_analysis (str, optional): "yes" 仅有 Q&A，"no" 仅无 Q&A
+        hidden (str, optional): "yes" 仅显示隐藏论文
+        limit (int): 每页数量，默认 20
+        offset (int): 偏移量，默认 0
+        
+    返回：
+        tuple: (论文列表, 总数) 元组
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
+    # 构建基础查询
     base_query = """
         FROM papers p
         LEFT JOIN analysis a ON p.id = a.paper_id
-        WHERE (p.hidden IS NULL OR p.hidden = 0)
+        WHERE 1=1
     """
     params = []
 
+    # 隐藏论文筛选逻辑
+    if hidden == "yes":
+        base_query += " AND p.hidden = 1"
+    else:
+        base_query += " AND (p.hidden IS NULL OR p.hidden = 0)"
+
+    # 按日期筛选
     if date:
         base_query += " AND p.published_date = ?"
         params.append(date)
 
+    # 按分类筛选
     if category:
         base_query += " AND p.primary_category = ?"
         params.append(category)
 
+    # 按评级范围筛选
     if min_rating is not None:
         base_query += " AND a.rating >= ?"
         params.append(min_rating)
@@ -259,19 +483,29 @@ def browse_papers(date=None, tag=None, min_rating=None, max_rating=None,
         base_query += " AND a.rating <= ?"
         params.append(max_rating)
 
+    # 按标签筛选（JSON 字段模糊匹配）
     if tag:
         base_query += " AND a.tags LIKE ?"
         params.append(f"%{tag}%")
 
+    # 按是否有分析结果筛选
     if has_analysis == "yes":
         base_query += " AND a.id IS NOT NULL"
     elif has_analysis == "no":
         base_query += " AND a.id IS NULL"
 
+    # 按是否有深度分析（Q&A）筛选
+    if has_deep_analysis == "yes":
+        base_query += " AND a.qa_analysis IS NOT NULL AND a.qa_analysis != ''"
+    elif has_deep_analysis == "no":
+        base_query += " AND (a.qa_analysis IS NULL OR a.qa_analysis = '')"
+
+    # 统计满足条件的总数
     count_query = "SELECT COUNT(*) as cnt " + base_query
     cursor.execute(count_query, params)
     total = cursor.fetchone()["cnt"]
 
+    # 查询数据：选择字段、排序、分页
     data_query = """
         SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis, a.analyzed_at
     """ + base_query + " ORDER BY p.published_date DESC, a.rating DESC LIMIT ? OFFSET ?"
@@ -281,6 +515,7 @@ def browse_papers(date=None, tag=None, min_rating=None, max_rating=None,
     rows = cursor.fetchall()
     conn.close()
 
+    # 解析 JSON 字段
     results = []
     for row in rows:
         r = dict(row)
@@ -296,6 +531,13 @@ def browse_papers(date=None, tag=None, min_rating=None, max_rating=None,
 
 
 def get_all_categories():
+    """获取所有论文分类及其数量统计。
+    
+    用于分类浏览页面的侧边栏筛选器。
+    
+    返回：
+        list: 元组列表 [(分类名, 数量), ...]，按数量降序排列
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -310,6 +552,13 @@ def get_all_categories():
 
 
 def get_all_dates():
+    """获取所有发布日期及其论文数量。
+    
+    用于日期筛选器和统计图表。
+    
+    返回：
+        list: 元组列表 [(日期, 数量), ...]，按日期降序排列
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -323,13 +572,72 @@ def get_all_dates():
     return [(row["published_date"], row["cnt"]) for row in rows]
 
 
+def get_earliest_date(category=None):
+    """获取数据库中最早的论文发布日期。
+    
+    参数：
+        category (str, optional): 指定分类，None 表示所有分类
+        
+    返回：
+        str or None: 最早日期（YYYY-MM-DD），无数据返回 None
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    if category:
+        cursor.execute("""
+            SELECT MIN(published_date) as earliest
+            FROM papers
+            WHERE primary_category = ?
+        """, (category,))
+    else:
+        cursor.execute("SELECT MIN(published_date) as earliest FROM papers")
+    row = cursor.fetchone()
+    conn.close()
+    return row["earliest"] if row else None
+
+
+def get_date_range_for_category(category):
+    """获取指定分类的日期范围和论文数量。
+    
+    用于分类浏览页面显示时间跨度信息。
+    
+    参数：
+        category (str): arXiv 分类，如 "cs.RO"
+        
+    返回：
+        dict or None: 包含 earliest（最早日期）、latest（最新日期）、count（论文数），
+                      无数据返回 None
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT MIN(published_date) as earliest, MAX(published_date) as latest, COUNT(*) as cnt
+        FROM papers
+        WHERE primary_category = ?
+    """, (category,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and row["earliest"]:
+        return {"earliest": row["earliest"], "latest": row["latest"], "count": row["cnt"]}
+    return None
+
+
 def get_all_tags():
+    """获取所有标签及其出现次数。
+    
+    遍历 analysis 表中的 tags JSON 字段，统计每个标签的出现次数。
+    用于标签云和筛选器。
+    
+    返回：
+        list: 元组列表 [(标签名, 次数), ...]，按次数降序排列
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT DISTINCT tags FROM analysis WHERE tags IS NOT NULL")
     rows = cursor.fetchall()
     conn.close()
 
+    # 遍历所有标签 JSON，统计每个标签的出现次数
     tag_counts = {}
     for row in rows:
         tags = json.loads(row["tags"])
@@ -339,6 +647,11 @@ def get_all_tags():
 
 
 def get_paper_count():
+    """获取数据库中的论文总数。
+    
+    返回：
+        int: 论文总数
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) as cnt FROM papers")
@@ -348,6 +661,11 @@ def get_paper_count():
 
 
 def get_analyzed_count():
+    """获取已分析的论文数量。
+    
+    返回：
+        int: 已分析论文数（analysis 表中的记录数）
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) as cnt FROM analysis")
@@ -357,6 +675,13 @@ def get_analyzed_count():
 
 
 def get_unanalyzed_count():
+    """获取未分析的论文数量。
+    
+    通过 LEFT JOIN 找出没有对应 analysis 记录的论文。
+    
+    返回：
+        int: 未分析论文数
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -370,6 +695,16 @@ def get_unanalyzed_count():
 
 
 def get_unanalyzed_papers(limit=100):
+    """获取未分析的论文列表。
+    
+    用于批量分析任务，按发布日期降序获取待分析论文。
+    
+    参数：
+        limit (int): 最大返回数量，默认 100
+        
+    返回：
+        list: 论文数据字典列表
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -382,6 +717,7 @@ def get_unanalyzed_papers(limit=100):
     rows = cursor.fetchall()
     conn.close()
 
+    # 解析 JSON 字段
     results = []
     for row in rows:
         r = dict(row)
@@ -394,20 +730,52 @@ def get_unanalyzed_papers(limit=100):
 
 
 def search_papers(keyword, limit=50):
+    """搜索论文，支持关键词和 arXiv ID。
+    
+    搜索逻辑：
+    1. 如果关键词匹配 arXiv ID 格式（如 2401.12345），则精确查找
+    2. 否则在标题、摘要、中文摘要、标签、Q&A 中进行模糊搜索
+    
+    参数：
+        keyword (str): 搜索关键词或 arXiv ID
+        limit (int): 最大返回数量，默认 50
+        
+    返回：
+        list: 匹配的论文列表
+    """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis
-        FROM papers p
-        LEFT JOIN analysis a ON p.id = a.paper_id
-        WHERE (p.hidden IS NULL OR p.hidden = 0)
-        AND (p.title LIKE ? OR p.abstract LIKE ? OR a.summary_cn LIKE ? OR a.tags LIKE ? OR a.qa_analysis LIKE ?)
-        ORDER BY a.rating DESC, p.published_date DESC
-        LIMIT ?
-    """, (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", limit))
+
+    # 检查关键词是否为 arXiv ID 格式
+    import re
+    arxiv_match = re.search(r'(\d{4}\.\d{4,5})(v\d+)?', keyword.strip())
+    arxiv_id = arxiv_match.group(1) if arxiv_match else None
+
+    if arxiv_id:
+        # 精确匹配 arXiv ID
+        cursor.execute("""
+            SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis
+            FROM papers p
+            LEFT JOIN analysis a ON p.id = a.paper_id
+            WHERE p.arxiv_id = ?
+            LIMIT ?
+        """, (arxiv_id, limit))
+    else:
+        # 多字段模糊搜索：标题、摘要、中文摘要、标签、Q&A
+        cursor.execute("""
+            SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis
+            FROM papers p
+            LEFT JOIN analysis a ON p.id = a.paper_id
+            WHERE (p.hidden IS NULL OR p.hidden = 0)
+            AND (p.title LIKE ? OR p.abstract LIKE ? OR a.summary_cn LIKE ? OR a.tags LIKE ? OR a.qa_analysis LIKE ?)
+            ORDER BY a.rating DESC, p.published_date DESC
+            LIMIT ?
+        """, (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", limit))
+
     rows = cursor.fetchall()
     conn.close()
 
+    # 解析 JSON 字段
     results = []
     for row in rows:
         r = dict(row)
@@ -422,6 +790,15 @@ def search_papers(keyword, limit=50):
 
 
 def get_daily_stats(date):
+    """获取指定日期的论文统计信息。
+    
+    参数：
+        date (str): 日期（YYYY-MM-DD）
+        
+    返回：
+        dict or None: 包含 total（总数）、analyzed（已分析数）、avg_rating（平均评级），
+                      无数据返回 None
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -437,7 +814,18 @@ def get_daily_stats(date):
     return dict(row) if row else None
 
 
+# ==================== 分析结果操作 ====================
+
+
 def get_analysis_by_paper_id(paper_id):
+    """根据论文 ID 获取分析结果。
+    
+    参数：
+        paper_id (int): 论文 ID
+        
+    返回：
+        dict or None: 分析数据字典（tags 已解析为列表），不存在返回 None
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM analysis WHERE paper_id = ?", (paper_id,))
@@ -452,13 +840,33 @@ def get_analysis_by_paper_id(paper_id):
 
 
 def update_analysis(paper_id, data):
+    """更新或插入论文的分析结果。
+    
+    逻辑：
+    1. 如果该论文已有分析记录，则更新指定字段（部分更新）
+    2. 如果没有记录，则插入新记录
+    
+    参数：
+        paper_id (int): 论文 ID
+        data (dict): 要更新的数据，可包含以下字段：
+            - rating: 评级（0-5）
+            - tags: 标签列表
+            - summary_cn: 中文摘要
+            - value_comment: 价值评价
+            - qa_analysis: Q&A 深度阅读
+            
+    返回：
+        bool: 始终返回 True
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
+    # 检查是否已有分析记录
     cursor.execute("SELECT id FROM analysis WHERE paper_id = ?", (paper_id,))
     exists = cursor.fetchone()
 
     if exists:
+        # 更新现有记录：动态构建 SET 子句，仅更新传入的字段
         sets = []
         params = []
         if "rating" in data:
@@ -481,6 +889,7 @@ def update_analysis(paper_id, data):
             params.append(paper_id)
             cursor.execute(f"UPDATE analysis SET {', '.join(sets)} WHERE paper_id = ?", params)
     else:
+        # 插入新记录：使用 get 提供默认值
         cursor.execute("""
             INSERT INTO analysis (paper_id, tags, summary_cn, summary_en, rating, value_comment, qa_analysis)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -499,7 +908,18 @@ def update_analysis(paper_id, data):
     return True
 
 
+# ==================== 论文管理操作 ====================
+
+
 def hide_paper(arxiv_id):
+    """隐藏论文，使其在默认列表中不显示。
+    
+    参数：
+        arxiv_id (str): arXiv 论文编号
+        
+    返回：
+        bool: 操作成功返回 True，论文不存在返回 False
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE papers SET hidden = 1 WHERE arxiv_id = ?", (arxiv_id,))
@@ -510,6 +930,14 @@ def hide_paper(arxiv_id):
 
 
 def unhide_paper(arxiv_id):
+    """取消论文隐藏，恢复其在列表中的显示。
+    
+    参数：
+        arxiv_id (str): arXiv 论文编号
+        
+    返回：
+        bool: 操作成功返回 True，论文不存在返回 False
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE papers SET hidden = 0 WHERE arxiv_id = ?", (arxiv_id,))
@@ -520,6 +948,16 @@ def unhide_paper(arxiv_id):
 
 
 def delete_paper(arxiv_id):
+    """永久删除论文及其关联的分析结果。
+    
+    由于外键 CASCADE DELETE，删除 papers 记录会自动删除关联的 analysis 记录。
+    
+    参数：
+        arxiv_id (str): arXiv 论文编号
+        
+    返回：
+        bool: 操作成功返回 True，论文不存在返回 False
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM papers WHERE arxiv_id = ?", (arxiv_id,))
@@ -530,10 +968,19 @@ def delete_paper(arxiv_id):
 
 
 def batch_delete_papers(arxiv_ids):
+    """批量删除多篇论文及其关联的分析结果。
+    
+    参数：
+        arxiv_ids (list): arXiv 论文编号列表
+        
+    返回：
+        int: 实际删除的论文数量
+    """
     if not arxiv_ids:
         return 0
     conn = get_connection()
     cursor = conn.cursor()
+    # 使用参数化 IN 子句批量删除
     placeholders = ",".join(["?"] * len(arxiv_ids))
     cursor.execute(f"DELETE FROM papers WHERE arxiv_id IN ({placeholders})", arxiv_ids)
     affected = cursor.rowcount
@@ -542,7 +989,79 @@ def batch_delete_papers(arxiv_ids):
     return affected
 
 
+def batch_hide_papers(arxiv_ids):
+    """批量隐藏多篇论文。
+    
+    参数：
+        arxiv_ids (list): arXiv 论文编号列表
+        
+    返回：
+        int: 实际隐藏的论文数量
+    """
+    if not arxiv_ids:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    # 使用参数化 IN 子句批量更新
+    placeholders = ",".join(["?"] * len(arxiv_ids))
+    cursor.execute(f"UPDATE papers SET hidden = 1 WHERE arxiv_id IN ({placeholders})", arxiv_ids)
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected
+
+
+def get_unanalyzed_papers_by_ids(arxiv_ids):
+    """获取指定 arXiv ID 列表中未分析的论文。
+    
+    用于批量分析时，筛选出需要分析的论文（排除已有分析结果的）。
+    
+    参数：
+        arxiv_ids (list): arXiv 论文编号列表
+        
+    返回：
+        list: 未分析的论文数据字典列表
+    """
+    if not arxiv_ids:
+        return []
+    conn = get_connection()
+    cursor = conn.cursor()
+    # 使用 IN 子句筛选，LEFT JOIN 找出无分析记录的论文
+    placeholders = ",".join(["?"] * len(arxiv_ids))
+    cursor.execute(f"""
+        SELECT p.* FROM papers p
+        LEFT JOIN analysis a ON p.id = a.paper_id
+        WHERE p.arxiv_id IN ({placeholders}) AND a.id IS NULL
+    """, arxiv_ids)
+    rows = cursor.fetchall()
+    conn.close()
+    # 解析 JSON 字段
+    results = []
+    for row in rows:
+        r = dict(row)
+        if r.get("authors") and isinstance(r["authors"], str):
+            r["authors"] = json.loads(r["authors"])
+        if r.get("categories") and isinstance(r["categories"], str):
+            r["categories"] = json.loads(r["categories"])
+        results.append(r)
+    return results
+
+
+# ==================== 任务日志操作 ====================
+
+
 def start_task_log(task_name, message=""):
+    """记录任务开始执行的日志。
+    
+    在任务开始时调用，返回日志 ID，后续用于 finish_task_log 更新状态。
+    
+    参数：
+        task_name (str): 任务名称，如 "daily_pipeline", "fetch", "analyze"
+        message (str): 任务描述信息
+        
+    返回：
+        int: 日志记录 ID
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -556,8 +1075,19 @@ def start_task_log(task_name, message=""):
 
 
 def finish_task_log(log_id, status, message="", detail=""):
+    """更新任务日志，记录任务完成状态。
+    
+    在任务结束时调用，自动计算执行时长。
+    
+    参数：
+        log_id (int): 日志记录 ID（由 start_task_log 返回）
+        status (str): 最终状态，"success" 或 "error"
+        message (str): 结果描述信息
+        detail (str): 技术细节（如错误堆栈）
+    """
     conn = get_connection()
     cursor = conn.cursor()
+    # 计算执行时长：当前时间 - 开始时间
     cursor.execute("SELECT started_at FROM task_logs WHERE id = ?", (log_id,))
     row = cursor.fetchone()
     duration = 0
@@ -574,9 +1104,20 @@ def finish_task_log(log_id, status, message="", detail=""):
 
 
 def get_task_logs(task_name=None, limit=50, offset=0):
+    """获取任务日志列表，支持按任务名筛选和分页。
+    
+    参数：
+        task_name (str, optional): 按任务名筛选
+        limit (int): 每页数量，默认 50
+        offset (int): 偏移量，默认 0
+        
+    返回：
+        tuple: (日志列表, 总数) 元组
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
+    # 构建查询：可选按任务名筛选
     query = "SELECT * FROM task_logs WHERE 1=1"
     params = []
 
@@ -584,10 +1125,12 @@ def get_task_logs(task_name=None, limit=50, offset=0):
         query += " AND task_name = ?"
         params.append(task_name)
 
+    # 统计总数（用于分页）
     count_query = query.replace("SELECT *", "SELECT COUNT(*) as cnt")
     cursor.execute(count_query, params)
     total = cursor.fetchone()["cnt"]
 
+    # 分页查询：按开始时间降序
     query += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
@@ -599,6 +1142,14 @@ def get_task_logs(task_name=None, limit=50, offset=0):
 
 
 def get_task_stats():
+    """获取各任务的执行统计信息。
+    
+    统计每个任务的：总运行次数、成功次数、错误次数、运行中次数、
+    最后运行时间、平均执行时长。
+    
+    返回：
+        list: 统计数据字典列表
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -620,6 +1171,13 @@ def get_task_stats():
 
 
 def get_running_tasks():
+    """获取当前正在运行的任务列表。
+    
+    用于检测是否有任务卡住或正在执行。
+    
+    返回：
+        list: 状态为 "running" 的日志记录列表
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM task_logs WHERE status = 'running' ORDER BY started_at DESC")
@@ -629,6 +1187,16 @@ def get_running_tasks():
 
 
 def clear_task_logs(keep_days=30):
+    """清理指定天数之前的旧任务日志。
+    
+    用于定期清理，防止日志表无限增长。
+    
+    参数：
+        keep_days (int): 保留最近多少天的日志，默认 30 天
+        
+    返回：
+        int: 实际删除的日志条数
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -641,7 +1209,21 @@ def clear_task_logs(keep_days=30):
     return deleted
 
 
+# ==================== 报告操作 ====================
+
+
 def save_report(report_date, content, paper_count, analyzed_count, avg_rating):
+    """保存或更新每日报告。
+    
+    使用 UPSERT 逻辑：如果该日期已有报告则更新，否则插入新记录。
+    
+    参数：
+        report_date (str): 报告日期（YYYY-MM-DD）
+        content (str): HTML 格式的报告内容
+        paper_count (int): 论文总数
+        analyzed_count (int): 已分析数
+        avg_rating (float): 平均评级
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -659,6 +1241,14 @@ def save_report(report_date, content, paper_count, analyzed_count, avg_rating):
 
 
 def get_reports(limit=50):
+    """获取报告列表，按日期降序。
+    
+    参数：
+        limit (int): 最大返回数量，默认 50
+        
+    返回：
+        list: 报告数据字典列表
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM reports ORDER BY report_date DESC LIMIT ?", (limit,))
@@ -668,6 +1258,14 @@ def get_reports(limit=50):
 
 
 def get_report_by_date(report_date):
+    """根据日期获取单份报告。
+    
+    参数：
+        report_date (str): 报告日期（YYYY-MM-DD）
+        
+    返回：
+        dict or None: 报告数据字典，不存在返回 None
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM reports WHERE report_date = ?", (report_date,))
@@ -677,6 +1275,13 @@ def get_report_by_date(report_date):
 
 
 def get_report_dates():
+    """获取所有报告日期及统计信息。
+    
+    用于报告列表页面显示日期和概览数据。
+    
+    返回：
+        list: 包含 report_date, paper_count, analyzed_count, avg_rating 的字典列表
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT report_date, paper_count, analyzed_count, avg_rating FROM reports ORDER BY report_date DESC")
@@ -686,9 +1291,29 @@ def get_report_dates():
 
 
 def generate_report_content(date):
+    """生成指定日期的 HTML 报告内容。
+    
+    报告包含：
+    1. 统计摘要（论文总数、已分析数、平均评级）
+    2. 分类分布
+    3. 热门标签（Top 15）
+    4. 高分论文（4 星以上）
+    5. 全部论文列表
+    
+    参数：
+        date (str): 报告日期（YYYY-MM-DD）
+        
+    返回：
+        tuple: (html_content, total, analyzed, avg_rating)
+            - html_content: HTML 字符串，无数据返回 None
+            - total: 论文总数
+            - analyzed: 已分析数
+            - avg_rating: 平均评级
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
+    # 查询指定日期的所有论文及其分析结果
     cursor.execute("""
         SELECT p.*, a.tags, a.summary_cn, a.rating, a.value_comment
         FROM papers p
@@ -702,6 +1327,7 @@ def generate_report_content(date):
     if not rows:
         return None, 0, 0, 0
 
+    # 解析 JSON 字段
     papers = []
     for row in rows:
         r = dict(row)
@@ -713,11 +1339,13 @@ def generate_report_content(date):
             r["tags"] = json.loads(r["tags"])
         papers.append(r)
 
+    # 计算统计数据
     total = len(papers)
     analyzed = sum(1 for p in papers if p.get("rating") and p["rating"] > 0)
     ratings = [p["rating"] for p in papers if p.get("rating") and p["rating"] > 0]
     avg_rating = round(sum(ratings) / len(ratings), 1) if ratings else 0
 
+    # 统计标签和分类分布
     tag_counts = {}
     category_counts = {}
     for p in papers:
@@ -728,11 +1356,16 @@ def generate_report_content(date):
             for c in p["categories"]:
                 category_counts[c] = category_counts.get(c, 0) + 1
 
+    # 获取 Top 15 标签和 Top 10 分类
     top_tags = sorted(tag_counts.items(), key=lambda x: -x[1])[:15]
     top_categories = sorted(category_counts.items(), key=lambda x: -x[1])[:10]
+    # 筛选高分论文（4 星以上）并按评级降序排列
     high_rated = [p for p in papers if p.get("rating") and p["rating"] >= 4]
     high_rated.sort(key=lambda x: -x["rating"])
 
+    # ==================== 生成 HTML 报告 ====================
+    
+    # 统计摘要卡片
     html = f'<div class="report-summary">'
     html += f'<div class="report-stats">'
     html += f'<div class="report-stat"><span class="report-stat-val">{total}</span><span class="report-stat-label">论文总数</span></div>'
@@ -740,18 +1373,21 @@ def generate_report_content(date):
     html += f'<div class="report-stat"><span class="report-stat-val">{avg_rating}</span><span class="report-stat-label">平均评级</span></div>'
     html += f'</div></div>'
 
+    # 分类分布区块
     if top_categories:
         html += '<div class="report-section"><h3>📂 分类分布</h3><div class="report-tags">'
         for cat, cnt in top_categories:
             html += f'<span class="tag-badge">{cat} <span class="tag-count">{cnt}</span></span>'
         html += '</div></div>'
 
+    # 热门标签区块
     if top_tags:
         html += '<div class="report-section"><h3>🏷️ 热门标签</h3><div class="report-tags">'
         for tag, cnt in top_tags:
             html += f'<span class="tag-badge">{tag} <span class="tag-count">{cnt}</span></span>'
         html += '</div></div>'
 
+    # 高分论文区块（4 星以上）
     if high_rated:
         html += '<div class="report-section"><h3>⭐ 高分论文 (4★+)</h3><div class="report-papers">'
         for p in high_rated:
@@ -766,6 +1402,7 @@ def generate_report_content(date):
             </div>'''
         html += '</div></div>'
 
+    # 全部论文列表区块
     html += '<div class="report-section"><h3>📋 全部论文</h3><div class="report-papers">'
     for p in papers:
         stars = ''
@@ -787,3 +1424,181 @@ def generate_report_content(date):
     html += '</div></div>'
 
     return html, total, analyzed, avg_rating
+
+
+# ==================== 阅读清单操作 ====================
+
+
+def add_to_reading_list(paper_id):
+    """将论文添加到阅读清单。
+    
+    参数：
+        paper_id (int): 论文 ID
+        
+    返回：
+        bool: 添加成功返回 True，已存在或其他错误返回 False
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO reading_list (paper_id) VALUES (?)", (paper_id,))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def remove_from_reading_list(paper_id):
+    """从阅读清单中移除论文。
+    
+    参数：
+        paper_id (int): 论文 ID
+        
+    返回：
+        bool: 移除成功返回 True，论文不在清单中返回 False
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM reading_list WHERE paper_id = ?", (paper_id,))
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected > 0
+
+
+def is_in_reading_list(paper_id):
+    """检查论文是否在阅读清单中。
+    
+    参数：
+        paper_id (int): 论文 ID
+        
+    返回：
+        bool: 在清单中返回 True，否则返回 False
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM reading_list WHERE paper_id = ?", (paper_id,))
+    exists = cursor.fetchone() is not None
+    conn.close()
+    return exists
+
+
+def mark_as_read(paper_id):
+    """将阅读清单中的论文标记为已读。
+    
+    同时记录完成时间。
+    
+    参数：
+        paper_id (int): 论文 ID
+        
+    返回：
+        bool: 操作成功返回 True，论文不在清单中返回 False
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE reading_list SET status = 'read', completed_at = ? WHERE paper_id = ?",
+        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), paper_id)
+    )
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected > 0
+
+
+def mark_as_unread(paper_id):
+    """将阅读清单中的论文标记为未读。
+    
+    清除完成时间，重置为未读状态。
+    
+    参数：
+        paper_id (int): 论文 ID
+        
+    返回：
+        bool: 操作成功返回 True，论文不在清单中返回 False
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE reading_list SET status = 'unread', completed_at = NULL WHERE paper_id = ?",
+        (paper_id,)
+    )
+    affected = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return affected > 0
+
+
+def get_reading_list(status=None):
+    """获取阅读清单，支持按状态筛选。
+    
+    关联 papers 和 analysis 表，返回完整的论文信息。
+    默认按状态排序（未读优先），同状态按添加时间降序。
+    
+    参数：
+        status (str, optional): 按状态筛选，"unread" 或 "read"，None 返回全部
+        
+    返回：
+        list: 论文数据字典列表，额外包含 todo_status, added_at, completed_at 字段
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    if status:
+        # 按指定状态筛选
+        cursor.execute("""
+            SELECT p.*, a.tags, a.summary_cn, a.rating, a.value_comment,
+                   rl.status as todo_status, rl.added_at, rl.completed_at
+            FROM reading_list rl
+            JOIN papers p ON rl.paper_id = p.id
+            LEFT JOIN analysis a ON p.id = a.paper_id
+            WHERE rl.status = ?
+            ORDER BY rl.added_at DESC
+        """, (status,))
+    else:
+        # 返回全部：未读优先，同状态按添加时间降序
+        cursor.execute("""
+            SELECT p.*, a.tags, a.summary_cn, a.rating, a.value_comment,
+                   rl.status as todo_status, rl.added_at, rl.completed_at
+            FROM reading_list rl
+            JOIN papers p ON rl.paper_id = p.id
+            LEFT JOIN analysis a ON p.id = a.paper_id
+            ORDER BY
+                CASE WHEN rl.status = 'unread' THEN 0 ELSE 1 END,
+                rl.added_at DESC
+        """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    # 解析 JSON 字段
+    results = []
+    for row in rows:
+        r = dict(row)
+        if r.get("authors") and isinstance(r["authors"], str):
+            r["authors"] = json.loads(r["authors"])
+        if r.get("categories") and isinstance(r["categories"], str):
+            r["categories"] = json.loads(r["categories"])
+        if r.get("tags") and isinstance(r["tags"], str):
+            r["tags"] = json.loads(r["tags"])
+        results.append(r)
+    return results
+
+
+def get_reading_list_count():
+    """获取阅读清单的统计数据。
+    
+    返回：
+        dict: 包含 total（总数）和 unread（未读数）
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'unread' THEN 1 ELSE 0 END) as unread
+        FROM reading_list
+    """)
+    row = cursor.fetchone()
+    conn.close()
+    return {"total": row["total"] or 0, "unread": row["unread"] or 0}

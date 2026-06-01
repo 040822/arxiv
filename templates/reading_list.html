@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>阅读清单 - AI 论文数据库</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div></div>
+                <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+            </div>
+            <h1>🤖 AI 论文数据库</h1>
+        </header>
+
+        <nav class="nav-bar">
+            <a href="/" class="nav-link">📅 每日论文</a>
+            <a href="/browse" class="nav-link">📂 分类浏览</a>
+            <a href="/search" class="nav-link">🔍 搜索</a>
+            <a href="/tasks" class="nav-link">📋 任务管理</a>
+            <a href="/reports" class="nav-link">📊 每日报告</a>
+            <a href="/reading-list" class="nav-link active">📌 阅读清单</a>
+        </nav>
+
+        <div class="action-panel">
+            <h3>📌 阅读清单 <span class="todo-count-badge">未读 {{ counts.unread }}</span></h3>
+            <div class="action-buttons">
+                <a href="/reading-list" class="action-btn {% if not current_status %}btn-primary{% endif %}">全部 ({{ counts.total }})</a>
+                <a href="/reading-list?status=unread" class="action-btn {% if current_status == 'unread' %}btn-primary{% endif %}">未读 ({{ counts.unread }})</a>
+                <a href="/reading-list?status=read" class="action-btn {% if current_status == 'read' %}btn-primary{% endif %}">已读 ({{ counts.total - counts.unread }})</a>
+            </div>
+        </div>
+
+        <div class="papers-list">
+            {% for paper in papers %}
+            <div class="paper-card {% if paper.todo_status == 'read' %}todo-read{% endif %}">
+                <div class="paper-header">
+                    <h3 class="paper-title">
+                        <a href="/paper/{{ paper.arxiv_id }}">{{ paper.title }}</a>
+                    </h3>
+                    <div class="paper-meta">
+                        {% if paper.published_date %}
+                        <span class="meta-item">📅 {{ paper.published_date }}</span>
+                        {% endif %}
+                        {% if paper.rating is not none %}
+                        <span class="meta-item rating">
+                            {% for i in range(5) %}
+                                {% if i < paper.rating %}★{% else %}☆{% endif %}
+                            {% endfor %}
+                        </span>
+                        {% endif %}
+                        <span class="meta-item todo-time">
+                            📌 {{ paper.added_at[:16] }}
+                        </span>
+                        {% if paper.todo_status == 'read' and paper.completed_at %}
+                        <span class="meta-item todo-time">
+                            ✅ {{ paper.completed_at[:16] }}
+                        </span>
+                        {% endif %}
+                    </div>
+                    {% if paper.categories %}
+                    <div class="paper-categories">
+                        {% if paper.categories is string %}
+                            <span class="category-tag">{{ paper.categories }}</span>
+                        {% else %}
+                            {% for cat in paper.categories %}
+                            <span class="category-tag">{{ cat }}</span>
+                            {% endfor %}
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+
+                {% if paper.authors %}
+                <div class="paper-authors">
+                    {% if paper.authors is string %}
+                        {{ paper.authors }}
+                    {% else %}
+                        {{ paper.authors[:3] | join(", ") }}
+                        {% if paper.authors|length > 3 %} et al. ({{ paper.authors|length }} authors){% endif %}
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% if paper.tags %}
+                <div class="paper-tags">
+                    {% if paper.tags is string %}
+                        {% for t in paper.tags.split(",") %}
+                        <span class="tag-small">{{ t.strip() }}</span>
+                        {% endfor %}
+                    {% else %}
+                        {% for t in paper.tags %}
+                        <span class="tag-small">{{ t }}</span>
+                        {% endfor %}
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                {% if paper.value_comment %}
+                <div class="paper-comment">
+                    <strong>评价:</strong> {{ paper.value_comment }}
+                </div>
+                {% endif %}
+
+                <div class="paper-links">
+                    <a href="{{ paper.url }}" target="_blank">📄 arXiv</a>
+                    {% if paper.pdf_url %}
+                    <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
+                    {% endif %}
+                    <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
+                    {% if paper.todo_status == 'unread' %}
+                    <a href="javascript:void(0)" class="link-todo" onclick="markRead('{{ paper.arxiv_id }}', this)">📖 标记已读</a>
+                    {% else %}
+                    <a href="javascript:void(0)" class="link-todo" onclick="markUnread('{{ paper.arxiv_id }}', this)">📖 标记未读</a>
+                    {% endif %}
+                    <a href="javascript:void(0)" class="link-hide" onclick="removeFromList('{{ paper.arxiv_id }}', this)">❌ 移除</a>
+                </div>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p>📌 阅读清单为空</p>
+                <p>在论文列表中点击「📌 加入清单」添加论文</p>
+            </div>
+            {% endfor %}
+        </div>
+
+        <footer>
+            <p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p>
+        </footer>
+    </div>
+
+    <script>
+        async function markRead(arxivId, el) {
+            try {
+                const resp = await fetch(`/api/paper/${arxivId}/todo/read`, { method: 'POST' });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    const card = el.closest('.paper-card');
+                    card.classList.add('todo-read');
+                    el.textContent = '📖 标记未读';
+                    el.onclick = function() { markUnread(arxivId, this); };
+                } else {
+                    alert('操作失败: ' + data.message);
+                }
+            } catch (e) { alert('请求失败: ' + e.message); }
+        }
+
+        async function markUnread(arxivId, el) {
+            try {
+                const resp = await fetch(`/api/paper/${arxivId}/todo/unread`, { method: 'POST' });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    const card = el.closest('.paper-card');
+                    card.classList.remove('todo-read');
+                    el.textContent = '📖 标记已读';
+                    el.onclick = function() { markRead(arxivId, this); };
+                } else {
+                    alert('操作失败: ' + data.message);
+                }
+            } catch (e) { alert('请求失败: ' + e.message); }
+        }
+
+        async function removeFromList(arxivId, el) {
+            if (!confirm('确定从阅读清单移除？')) return;
+            try {
+                const resp = await fetch(`/api/paper/${arxivId}/todo`, { method: 'DELETE' });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    const card = el.closest('.paper-card');
+                    card.style.transition = 'opacity 0.3s, transform 0.3s';
+                    card.style.opacity = '0';
+                    card.style.transform = 'scale(0.95)';
+                    setTimeout(() => card.remove(), 300);
+                } else {
+                    alert('操作失败: ' + data.message);
+                }
+            } catch (e) { alert('请求失败: ' + e.message); }
+        }
+    </script>
+</body>
+</html>
