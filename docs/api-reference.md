@@ -1,0 +1,422 @@
+# API 接口文档
+
+## 目录
+
+- [页面路由](#页面路由)
+- [任务 API](#任务-api)
+- [论文 API](#论文-api)
+- [阅读清单 API](#阅读清单-api)
+- [设置 API](#设置-api)
+- [任务日志 API](#任务日志-api)
+
+---
+
+## 页面路由
+
+所有页面路由返回 HTML，使用 Jinja2 模板渲染。
+
+| 路由 | 方法 | 模板 | 说明 |
+|------|------|------|------|
+| `GET /` | GET | index.html | 首页，论文列表 |
+| `GET /paper/<arxiv_id>` | GET | paper.html | 论文详情 |
+| `GET /search?q=` | GET | search.html | 搜索 |
+| `GET /browse` | GET | browse.html | 分类浏览 |
+| `GET /settings` | GET | settings.html | 设置 |
+| `GET /tasks` | GET | tasks.html | 任务管理 |
+| `GET /reports` | GET | reports.html | 报告列表 |
+| `GET /reports/<date>` | GET | report_detail.html | 报告详情 |
+| `GET /reading-list` | GET | reading_list.html | 阅读清单 |
+
+### 首页参数 `GET /`
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `page` | int | 页码，默认 1 |
+| `tag` | string | 标签筛选 |
+| `date` | string | 日期筛选（YYYY-MM-DD） |
+| `min_rating` | int | 最低评级（0-5） |
+| `per_page` | int | 每页数量（5/10/20/50/100） |
+
+默认显示数据库中最新一天的论文。
+
+### 分类浏览参数 `GET /browse`
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `page` | int | 页码 |
+| `date` | string | 日期 |
+| `tag` | string | 标签 |
+| `category` | string | 分类（如 cs.RO） |
+| `min_rating` | int | 最低评级 |
+| `max_rating` | int | 最高评级 |
+| `has_analysis` | string | yes/no |
+| `has_deep_analysis` | string | yes/no |
+| `hidden` | string | yes（显示已隐藏） |
+
+### 阅读清单参数 `GET /reading-list`
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `status` | string | unread/read（留空显示全部） |
+
+---
+
+## 任务 API
+
+### 抓取论文
+
+```
+POST /api/fetch
+```
+
+| 参数（Query） | 类型 | 说明 |
+|---------------|------|------|
+| `category` | string | 分类（如 cs.RO），留空使用默认 |
+| `max_results` | int | 最大数量（仅在 days 和 date 都留空时生效） |
+| `days` | int | 抓取最近 N 天 |
+| `date` | string | 精确抓取某天（YYYY-MM-DD） |
+| `task_id` | string | SSE 进度任务 ID |
+
+优先级：date > days > max_results
+
+**响应：**
+```json
+{
+    "status": "ok",
+    "count": 42,
+    "unanalyzed": 15,
+    "message": "抓取完成：42 篇新论文（cs.RO）（最近 30 天）"
+}
+```
+
+### AI 分析
+
+```
+POST /api/analyze
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `limit` | int | 分析数量上限（默认 50） |
+| `task_id` | string | SSE 进度任务 ID |
+
+### 生成报告
+
+```
+POST /api/generate
+```
+
+| 参数（Query） | 类型 | 说明 |
+|---------------|------|------|
+| `date` | string | 指定日期（留空使用最新日期） |
+
+### 一键执行
+
+```
+POST /api/run
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `task_id` | string | SSE 进度任务 ID |
+
+依次执行：抓取 → 分析 → 生成报告
+
+### SSE 进度流
+
+```
+GET /api/progress/<task_id>
+```
+
+返回 `text/event-stream`，每个事件格式：
+```json
+{
+    "current": 5,
+    "total": 30,
+    "status": "running",
+    "success": 4,
+    "skip": 1,
+    "fail": 0,
+    "message": "[5/30] 2605.12345"
+}
+```
+
+status 值：`running` / `completed` / `error`
+
+---
+
+## 论文 API
+
+### 论文列表
+
+```
+GET /api/papers
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `page` | int | 页码 |
+| `tag` | string | 标签 |
+| `date` | string | 日期 |
+| `min_rating` | int | 最低评级 |
+
+### 标签列表
+
+```
+GET /api/tags
+```
+
+返回：`[["VLA", 15], ["World Model", 12], ...]`
+
+### 统计信息
+
+```
+GET /api/stats
+```
+
+返回：
+```json
+{
+    "total_papers": 1234,
+    "analyzed_papers": 567,
+    "unanalyzed_papers": 667,
+    "concurrency": 5,
+    "per_page": 20
+}
+```
+
+### 更新论文分析
+
+```
+PUT /api/paper/<arxiv_id>/analysis
+```
+
+Body (JSON)：
+```json
+{
+    "rating": 4,
+    "tags": ["VLA", "Diffusion Policy"],
+    "summary_cn": "...",
+    "value_comment": "...",
+    "qa_analysis": "..."
+}
+```
+
+字段均可选，只传需要更新的字段。
+
+### 隐藏/取消隐藏
+
+```
+POST /api/paper/<arxiv_id>/hide
+POST /api/paper/<arxiv_id>/unhide
+```
+
+### 删除论文
+
+```
+DELETE /api/paper/<arxiv_id>
+```
+
+级联删除关联的 analysis 和 reading_list 记录。
+
+### 重新分析（完整模式）
+
+```
+POST /api/paper/<arxiv_id>/reanalyze
+```
+
+下载 PDF，进行完整 AI 分析（含 Q&A 深度阅读）。
+
+### 添加指定论文
+
+```
+POST /api/paper/add
+```
+
+Body (JSON)：
+```json
+{
+    "input": "2603.18336",
+    "task_id": "add_123"
+}
+```
+
+支持 arXiv ID、PDF 链接、摘要页面链接。自动获取论文信息并进行完整分析。
+
+### 批量操作
+
+```
+POST /api/papers/batch-delete    # 批量删除
+POST /api/papers/batch-hide      # 批量隐藏
+POST /api/papers/batch-analyze   # 批量分析（基础模式）
+```
+
+Body (JSON)：
+```json
+{
+    "arxiv_ids": ["2603.18336", "2603.12345"]
+}
+```
+
+---
+
+## 阅读清单 API
+
+### 添加到清单
+
+```
+POST /api/paper/<arxiv_id>/todo
+```
+
+已在清单中则返回 ok（不重复添加）。
+
+### 从清单移除
+
+```
+DELETE /api/paper/<arxiv_id>/todo
+```
+
+### 标记已读/未读
+
+```
+POST /api/paper/<arxiv_id>/todo/read
+POST /api/paper/<arxiv_id>/todo/unread
+```
+
+### 获取清单
+
+```
+GET /api/reading-list
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `status` | string | unread/read（留空返回全部） |
+
+返回：
+```json
+{
+    "papers": [...],
+    "counts": {"total": 10, "unread": 5}
+}
+```
+
+---
+
+## 设置 API
+
+### 供应商管理
+
+```
+GET  /api/providers              # 列出所有供应商
+POST /api/providers              # 添加供应商
+PUT  /api/providers/<key>        # 更新供应商
+DELETE /api/providers/<key>      # 删除供应商
+POST /api/providers/<key>/activate  # 切换供应商
+GET  /api/providers/presets      # 获取预设供应商
+```
+
+### 测试连接
+
+```
+POST /api/test_connection        # 测试 AI API 连接
+POST /api/detect_thinking        # 检测是否为思考模型
+POST /api/test_proxy             # 测试 arXiv 代理连接
+```
+
+### Prompt 管理
+
+```
+GET  /api/prompts                # 获取 prompt
+POST /api/prompts                # 保存 prompt
+```
+
+### 配置管理
+
+```
+POST /api/settings/concurrency   # 保存并发数（1-20）
+POST /api/settings/per_page      # 保存每页数量（5-100）
+GET  /api/settings/proxy         # 获取代理配置
+POST /api/settings/proxy         # 保存代理配置
+GET  /api/settings/fetch         # 获取抓取配置
+POST /api/settings/fetch         # 保存抓取配置
+```
+
+### 数据库信息
+
+```
+GET /api/db/info
+```
+
+返回：论文总数、已分析数、标签种类、分类数、数据库大小、日期范围等。
+
+### 管理密码
+
+```
+POST /api/admin/password         # 设置密码
+DELETE /api/admin/password       # 清除密码
+```
+
+---
+
+## 任务日志 API
+
+### 任务统计
+
+```
+GET /api/tasks/stats
+```
+
+返回每个任务类型的执行次数、成功率、平均耗时、最后执行时间。
+
+### 任务日志
+
+```
+GET /api/tasks/logs
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `task` | string | 任务类型筛选 |
+| `page` | int | 页码 |
+
+### 定时任务
+
+```
+GET /api/tasks/scheduled
+```
+
+### 清理日志
+
+```
+POST /api/tasks/clear
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `keep_days` | int | 保留天数（默认 30） |
+
+---
+
+## 通用响应格式
+
+### 成功
+
+```json
+{
+    "status": "ok",
+    "message": "操作成功",
+    ...其他字段
+}
+```
+
+### 错误
+
+```json
+{
+    "status": "error",
+    "message": "错误信息"
+}
+```
+
+HTTP 状态码：400（参数错误）、404（不存在）、500（服务器错误）

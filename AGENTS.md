@@ -2,6 +2,12 @@
 
 本文件供 AI Agent 阅读，用于理解项目结构、代码逻辑和开发规范，以便后续维护和开发新功能。
 
+> **📚 完整文档：** 详细的用户手册、开发者指南、API 文档等请参阅 [`docs/`](docs/) 目录。
+> - [docs/agent-guide.md](docs/agent-guide.md) — AI Agent 快速入门
+> - [docs/developer-guide.md](docs/developer-guide.md) — 开发者指南
+> - [docs/api-reference.md](docs/api-reference.md) — API 接口文档
+> - [docs/architecture.md](docs/architecture.md) — 项目架构说明
+
 ---
 
 ## 1. 项目概述
@@ -180,8 +186,13 @@ APScheduler cron(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE)
 - `get_ai_config()` — 获取当前激活供应商的 API 配置
 - `get_prompts()` — 获取 system/user prompt
 - `get_concurrency()` — 获取并发数
+- `get_per_page()` — 获取每页论文数
+- `get_fetch_config()` / `save_fetch_config()` — 抓取配置（请求间隔、批次天数、批次间隔）
+- `get_proxy_config()` / `save_proxy_config()` — 代理配置
 - `add/remove/switch/update_provider()` — 供应商 CRUD
 - `get/set/verify/has_admin_password()` — 管理密码
+
+> **⚠️ 重要：** 在 `load_settings()` 中添加新字段时，必须在合并逻辑中显式添加对应的 `if "key" in migrated: merged["key"] = migrated["key"]`，否则新字段在读取时会丢失！这是已踩过的坑。
 
 ---
 
@@ -279,7 +290,14 @@ if "new_column" not in columns:
 - 避免过于宽泛的标签（如 "Transformer"、"LLM"）
 - 优先使用具体的技术方法名称
 
-### 7.6 CSS 样式约定
+### 7.6 arXiv API 注意事项
+- **submittedDate 过滤器不工作**：arXiv API 的 `submittedDate:[... TO ...]` 查询语法实际不返回结果，已踩坑
+- **正确做法**：使用 `cat:xxx` 查询 + `sortBy=submittedDate&sortOrder=descending` 排序，然后在代码中按 `published` 日期过滤
+- **分类查询**：`cat:cs.RO` 匹配主分类为 cs.RO 的论文，比 `primary_category:cs.RO` 更可靠
+- **分批抓取**：大批量抓取时使用 `fetch_batch()` 自动分批，避免单次请求过大
+- **时区问题**：arXiv 返回的 `published` 是带 UTC 时区的 datetime，比较时必须使用 `datetime.now(timezone.utc)`，否则报 `can't compare offset-naive and offset-aware datetimes`
+
+### 7.7 CSS 样式约定
 - 组件样式使用 kebab-case：`.paper-card`、`.qa-item`
 - 状态样式使用前缀：`.log-success`、`.log-error`、`.log-running`
 - 响应式断点：`@media (max-width: 768px)`

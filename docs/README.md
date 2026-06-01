@@ -1,0 +1,52 @@
+# AI 论文数据库 — 文档中心
+
+自动从 arXiv 抓取 AI/机器人领域论文，调用 AI 进行深度阅读分析（Q&A 格式、标签、评级、中文翻译），存入 SQLite 数据库，通过 Flask Web 界面浏览。
+
+## 📖 文档导航
+
+| 文档 | 说明 | 适用人群 |
+|------|------|----------|
+| [用户使用手册](user-guide.md) | 安装部署、配置、页面功能、常见操作、FAQ | 用户、运维 |
+| [开发者指南](developer-guide.md) | 项目结构、技术栈、开发规范、数据库设计 | 开发者 |
+| [API 接口文档](api-reference.md) | 全部 45 个路由的参数、响应、示例 | 前端/后端开发者 |
+| [AI Agent 开发指南](agent-guide.md) | 快速理解项目、常见修改场景、已知坑 | AI Agent |
+| [项目架构说明](architecture.md) | 系统架构、数据流、组件依赖、设计决策 | 架构师、新开发者 |
+| [更新日志](changelog.md) | 版本历史 | 所有人 |
+
+## 🚀 快速开始
+
+```bash
+# 1. 安装依赖
+pip install -r requirements.txt
+
+# 2. 配置 API（编辑 config.py 或通过 Web 设置页）
+# 3. 启动服务
+python app.py
+
+# 访问 http://localhost:5000
+```
+
+详细步骤请参阅 [用户使用手册](user-guide.md)。
+
+## 📁 项目结构
+
+```
+arxiv/
+├── config.py           # 硬编码配置（分类、标签、路径）
+├── settings.py         # 运行时配置（JSON：供应商、prompt）
+├── database.py         # SQLite 数据库操作
+├── fetcher.py          # arXiv API 论文抓取
+├── analyzer.py         # AI 分析（基础/完整）
+├── pdf_reader.py       # PDF 下载与文本提取
+├── markdown_gen.py     # Markdown 报告生成
+├── app.py              # Flask Web 服务 + 定时任务
+├── main.py             # CLI 入口
+├── templates/          # Jinja2 HTML 模板
+├── static/style.css    # 全局样式
+├── data/               # 运行时数据（不提交 git）
+│   ├── papers.db       # SQLite 数据库
+│   ├── settings.json   # 运行时配置
+│   └── pdf_cache/      # PDF 缓存
+├── output/             # 生成的 Markdown 报告
+└── docs/               # 本目录
+```
