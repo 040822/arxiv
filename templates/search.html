@@ -21,11 +21,13 @@
             <a href="/" class="nav-link">首页</a>
             <a href="/browse" class="nav-link">📂 分类浏览</a>
             <a href="/search" class="nav-link active">🔍 搜索</a>
+            <a href="/tasks" class="nav-link">📋 任务管理</a>
+            <a href="/reading-list" class="nav-link">📌 阅读清单</a>
         </nav>
 
         <div class="search-section">
             <form action="/search" method="GET" class="search-form">
-                <input type="text" name="q" value="{{ keyword }}" placeholder="搜索论文标题、摘要、标签..." class="search-input">
+                <input type="text" name="q" value="{{ keyword }}" placeholder="搜索论文标题、摘要、标签，或输入 arXiv ID（如 2603.18336）" class="search-input">
                 <button type="submit" class="search-btn">搜索</button>
             </form>
         </div>

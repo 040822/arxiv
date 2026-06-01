@@ -20,6 +20,8 @@
             <a href="/" class="nav-link">← 返回首页</a>
             <a href="/browse" class="nav-link">📂 分类浏览</a>
             <a href="/search" class="nav-link">🔍 搜索</a>
+            <a href="/tasks" class="nav-link">📋 任务管理</a>
+            <a href="/reading-list" class="nav-link">📌 阅读清单</a>
         </nav>
 
         <article class="paper-detail">
@@ -33,6 +35,7 @@
                 {% if paper.pdf_url %}
                 <span class="meta-item">📥 <a href="{{ paper.pdf_url }}" target="_blank" class="meta-link">下载 PDF</a></span>
                 {% endif %}
+                <span class="meta-item">📌 <a href="javascript:void(0)" class="meta-link" id="todo-toggle" onclick="toggleTodo('{{ paper.arxiv_id }}')">加入阅读清单</a></span>
                 {% if paper.hidden %}
                 <span class="meta-item" style="color:#dc3545;">🚫 已隐藏</span>
                 {% endif %}
@@ -218,6 +221,43 @@
 
     <script>
         const ARXIV_ID = '{{ paper.arxiv_id }}';
+
+        async function checkTodoStatus() {
+            try {
+                const resp = await fetch(`/api/paper/${ARXIV_ID}/todo`, { method: 'POST' });
+                const data = await resp.json();
+                // Just check if it's in the list, don't add
+                const el = document.getElementById('todo-toggle');
+                if (data.message === '已在阅读清单中') {
+                    el.textContent = '已加入清单';
+                    el.style.fontWeight = 'bold';
+                }
+            } catch (e) {}
+        }
+
+        async function toggleTodo(arxivId) {
+            const el = document.getElementById('todo-toggle');
+            const isAdded = el.textContent === '已加入清单';
+            try {
+                const resp = await fetch(`/api/paper/${arxivId}/todo`, {
+                    method: isAdded ? 'DELETE' : 'POST'
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    if (isAdded) {
+                        el.textContent = '加入阅读清单';
+                        el.style.fontWeight = 'normal';
+                    } else {
+                        el.textContent = '已加入清单';
+                        el.style.fontWeight = 'bold';
+                    }
+                } else {
+                    alert('操作失败: ' + data.message);
+                }
+            } catch (e) { alert('请求失败: ' + e.message); }
+        }
+
+        checkTodoStatus();
 
         function toggleDanger() {
             const content = document.getElementById('danger-content');

@@ -23,12 +23,12 @@
         </header>
 
         <nav class="nav-bar">
-            <a href="/" class="nav-link {% if not tag and not date and not min_rating and not today %}active{% endif %}">全部</a>
-            <a href="/?today=1" class="nav-link {% if today %}active{% endif %}">📅 今日论文</a>
+            <a href="/" class="nav-link active">📅 每日论文</a>
             <a href="/browse" class="nav-link">📂 分类浏览</a>
             <a href="/search" class="nav-link">🔍 搜索</a>
             <a href="/tasks" class="nav-link">📋 任务管理</a>
             <a href="/reports" class="nav-link">📊 每日报告</a>
+            <a href="/reading-list" class="nav-link">📌 阅读清单</a>
         </nav>
 
         {% if tags %}
@@ -44,14 +44,16 @@
         </div>
         {% endif %}
 
-        {% if tag or today %}
         <div class="filter-info">
-            当前筛选:
-            {% if today %}📅 <strong>今日论文</strong>{% endif %}
-            {% if tag %}🏷️ 标签 <strong>{{ tag }}</strong>{% endif %}
+            <span class="filter-date-row">
+                📅 <input type="date" id="date-picker" value="{{ date or '' }}" onchange="filterByDate(this.value)">
+                {% if date %}<a href="/" class="clear-filter">清除日期</a>{% endif %}
+            </span>
+            {% if tag %}
+            🏷️ 标签 <strong>{{ tag }}</strong>
             <a href="/" class="clear-filter">清除筛选</a>
+            {% endif %}
         </div>
-        {% endif %}
 
         <div class="papers-list">
             {% for paper in papers %}
@@ -144,6 +146,7 @@
                     <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
                     {% endif %}
                     <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
+                    <a href="javascript:void(0)" class="link-todo" onclick="toggleTodo('{{ paper.arxiv_id }}', this)">📌 加入清单</a>
                     <a href="javascript:void(0)" class="link-hide" onclick="hidePaper('{{ paper.arxiv_id }}', this)">😐 不感兴趣</a>
                 </div>
             </div>
@@ -173,6 +176,15 @@
                 跳转到 <input type="number" id="page-input" min="1" max="{{ total_pages }}" value="{{ page }}" onkeydown="if(event.key==='Enter')goPage()"> 页
                 <button class="action-btn" onclick="goPage()">Go</button>
             </span>
+            <span class="page-per-page">
+                <select id="per-page-select" onchange="changePerPage(this.value)">
+                    <option value="5" {% if per_page == 5 %}selected{% endif %}>5条/页</option>
+                    <option value="10" {% if per_page == 10 %}selected{% endif %}>10条/页</option>
+                    <option value="20" {% if per_page == 20 %}selected{% endif %}>20条/页</option>
+                    <option value="50" {% if per_page == 50 %}selected{% endif %}>50条/页</option>
+                    <option value="100" {% if per_page == 100 %}selected{% endif %}>100条/页</option>
+                </select>
+            </span>
         </div>
 
         <footer>
@@ -190,6 +202,20 @@
             window.location.href = url.toString();
         }
 
+        function changePerPage(val) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('per_page', val);
+            url.searchParams.set('page', '1');
+            window.location.href = url.toString();
+        }
+
+        function filterByDate(val) {
+            const url = new URL(window.location.origin + '/');
+            if (val) url.searchParams.set('date', val);
+            url.searchParams.set('page', '1');
+            window.location.href = url.toString();
+        }
+
         function toggleAbstract(arxivId, fullText) {
             const el = document.getElementById('abs-' + arxivId);
             const textEl = el.querySelector('.abstract-text');
@@ -201,6 +227,27 @@
                 textEl.textContent = fullText.substring(0, 300) + '...';
                 toggleEl.textContent = '展开';
             }
+        }
+
+        async function toggleTodo(arxivId, el) {
+            const isAdded = el.classList.contains('todo-added');
+            try {
+                const resp = await fetch(`/api/paper/${arxivId}/todo`, {
+                    method: isAdded ? 'DELETE' : 'POST'
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    if (isAdded) {
+                        el.classList.remove('todo-added');
+                        el.textContent = '📌 加入清单';
+                    } else {
+                        el.classList.add('todo-added');
+                        el.textContent = '📌 已加入';
+                    }
+                } else {
+                    alert('操作失败: ' + data.message);
+                }
+            } catch (e) { alert('请求失败: ' + e.message); }
         }
 
         async function hidePaper(arxivId, el) {

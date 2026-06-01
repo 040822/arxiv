@@ -21,6 +21,9 @@
             <a href="/" class="nav-link">首页</a>
             <a href="/browse" class="nav-link active">📂 分类浏览</a>
             <a href="/search" class="nav-link">🔍 搜索</a>
+            <a href="/tasks" class="nav-link">📋 任务管理</a>
+            <a href="/reports" class="nav-link">📊 每日报告</a>
+            <a href="/reading-list" class="nav-link">📌 阅读清单</a>
         </nav>
 
         <div class="browse-layout">
@@ -77,6 +80,23 @@
                     </div>
 
                     <div class="filter-group">
+                        <label>📖 深度分析</label>
+                        <select name="has_deep_analysis" onchange="this.form.submit()">
+                            <option value="">全部</option>
+                            <option value="yes" {% if has_deep_analysis == 'yes' %}selected{% endif %}>已有深度分析</option>
+                            <option value="no" {% if has_deep_analysis == 'no' %}selected{% endif %}>无深度分析</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label>👁️ 可见性</label>
+                        <select name="hidden" onchange="this.form.submit()">
+                            <option value="">未隐藏（默认）</option>
+                            <option value="yes" {% if hidden == 'yes' %}selected{% endif %}>已隐藏</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
                         <label>🏷️ 标签</label>
                         <select name="tag" onchange="this.form.submit()">
                             <option value="">全部标签</option>
@@ -95,7 +115,7 @@
             <main class="browse-main">
                 <div class="browse-header">
                     <span>共 <strong>{{ total }}</strong> 篇论文</span>
-                    {% if date or category or tag or min_rating is not none or max_rating is not none or has_analysis %}
+                    {% if date or category or tag or min_rating is not none or max_rating is not none or has_analysis or has_deep_analysis or hidden %}
                     <div class="active-filters">
                         {% if date %}<span class="filter-tag">日期: {{ date }} <a href="/browse?{{ _remove_param('date') }}">✕</a></span>{% endif %}
                         {% if category %}<span class="filter-tag">分类: {{ category }} <a href="/browse?{{ _remove_param('category') }}">✕</a></span>{% endif %}
@@ -103,6 +123,8 @@
                         {% if min_rating is not none %}<span class="filter-tag">最低: {{ min_rating }}★ <a href="/browse?{{ _remove_param('min_rating') }}">✕</a></span>{% endif %}
                         {% if max_rating is not none %}<span class="filter-tag">最高: {{ max_rating }}★ <a href="/browse?{{ _remove_param('max_rating') }}">✕</a></span>{% endif %}
                         {% if has_analysis %}<span class="filter-tag">报告: {% if has_analysis == 'yes' %}已有{% else %}未分析{% endif %} <a href="/browse?{{ _remove_param('has_analysis') }}">✕</a></span>{% endif %}
+                        {% if has_deep_analysis %}<span class="filter-tag">深度分析: {% if has_deep_analysis == 'yes' %}已有{% else %}无{% endif %} <a href="/browse?{{ _remove_param('has_deep_analysis') }}">✕</a></span>{% endif %}
+                        {% if hidden %}<span class="filter-tag">可见性: 已隐藏 <a href="/browse?{{ _remove_param('hidden') }}">✕</a></span>{% endif %}
                     </div>
                     {% endif %}
                 </div>
@@ -114,9 +136,14 @@
                     </label>
                     <button class="action-btn" onclick="selectAll()">☑️ 全选</button>
                     <button class="action-btn" onclick="deselectAll()">❎ 取消</button>
-                    <button class="action-btn btn-danger" onclick="batchDelete()">🗑️ 批量删除 (<span id="selected-count">0</span>)</button>
+                    <button class="action-btn" onclick="batchHide()">👁️ 批量隐藏 (<span id="selected-count">0</span>)</button>
+                    <button class="action-btn" onclick="batchAnalyze()">🤖 批量分析</button>
+                    <button class="action-btn btn-danger" onclick="batchDelete()">🗑️ 批量删除</button>
                     <div id="batch-status" class="action-status" style="display:inline-block;margin:0;padding:4px 10px;font-size:0.85em;"></div>
                 </div>
+                <p class="section-desc" style="margin:8px 0 0;font-size:0.82em;color:#64748b;">
+                    🤖 批量分析 = 普通 AI 报告（标签/评级/中文摘要，不下载 PDF）。深度分析（Q&A）请在论文详情页点击「📝 生成报告」。
+                </p>
 
                 <div class="papers-list">
                     {% for paper in papers %}
@@ -199,6 +226,8 @@
                                 <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
                                 {% endif %}
                                 <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
+                                <a href="javascript:void(0)" class="link-todo" onclick="toggleTodo('{{ paper.arxiv_id }}', this)">📌 加入清单</a>
+                                <a href="javascript:void(0)" class="link-hide" onclick="hidePaper('{{ paper.arxiv_id }}', this)">😐 不感兴趣</a>
                             </div>
                         </div>
                     </div>
@@ -219,6 +248,19 @@
                     {% if page < total_pages %}
                     <a href="/browse?page={{ page + 1 }}&{{ _build_query() }}" class="page-link">下一页 →</a>
                     {% endif %}
+                    <span class="page-jump">
+                        跳转到 <input type="number" id="page-input" min="1" max="{{ total_pages }}" value="{{ page }}" onkeydown="if(event.key==='Enter')goPage()"> 页
+                        <button class="action-btn" onclick="goPage()">Go</button>
+                    </span>
+                    <span class="page-per-page">
+                        <select id="per-page-select" onchange="changePerPage(this.value)">
+                            <option value="5" {% if per_page == 5 %}selected{% endif %}>5条/页</option>
+                            <option value="10" {% if per_page == 10 %}selected{% endif %}>10条/页</option>
+                            <option value="20" {% if per_page == 20 %}selected{% endif %}>20条/页</option>
+                            <option value="50" {% if per_page == 50 %}selected{% endif %}>50条/页</option>
+                            <option value="100" {% if per_page == 100 %}selected{% endif %}>100条/页</option>
+                        </select>
+                    </span>
                 </div>
                 {% endif %}
             </main>
@@ -230,6 +272,22 @@
     </div>
 
     <script>
+        function goPage() {
+            const input = document.getElementById('page-input');
+            const page = parseInt(input.value);
+            if (!page || page < 1) return;
+            const url = new URL(window.location.href);
+            url.searchParams.set('page', page);
+            window.location.href = url.toString();
+        }
+
+        function changePerPage(val) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('per_page', val);
+            url.searchParams.set('page', '1');
+            window.location.href = url.toString();
+        }
+
         function getSelectedIds() {
             return Array.from(document.querySelectorAll('.paper-checkbox:checked')).map(cb => cb.value);
         }
@@ -287,6 +345,106 @@
             } catch (e) {
                 statusEl.className = 'action-status error';
                 statusEl.textContent = '❌ 删除失败: ' + e.message;
+            }
+        }
+
+        async function batchHide() {
+            const ids = getSelectedIds();
+            if (ids.length === 0) { alert('请先选择要隐藏的论文'); return; }
+            if (!confirm(`确定隐藏选中的 ${ids.length} 篇论文？`)) return;
+
+            const statusEl = document.getElementById('batch-status');
+            statusEl.className = 'action-status info';
+            statusEl.style.display = 'inline-block';
+            statusEl.textContent = '正在隐藏...';
+
+            try {
+                const resp = await fetch('/api/papers/batch-hide', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ arxiv_ids: ids })
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    statusEl.className = 'action-status success';
+                    statusEl.textContent = '✅ ' + data.message;
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    statusEl.className = 'action-status error';
+                    statusEl.textContent = '❌ ' + data.message;
+                }
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ 操作失败: ' + e.message;
+            }
+        }
+
+        async function batchAnalyze() {
+            const ids = getSelectedIds();
+            if (ids.length === 0) { alert('请先选择要分析的论文'); return; }
+
+            const statusEl = document.getElementById('batch-status');
+            statusEl.className = 'action-status info';
+            statusEl.style.display = 'inline-block';
+            statusEl.textContent = '⏳ 正在分析...';
+
+            try {
+                const resp = await fetch('/api/papers/batch-analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ arxiv_ids: ids })
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    statusEl.className = 'action-status success';
+                    statusEl.textContent = '✅ ' + data.message;
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    statusEl.className = 'action-status error';
+                    statusEl.textContent = '❌ ' + data.message;
+                }
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ 操作失败: ' + e.message;
+            }
+        }
+
+        async function toggleTodo(arxivId, el) {
+            const isAdded = el.classList.contains('todo-added');
+            try {
+                const resp = await fetch(`/api/paper/${arxivId}/todo`, {
+                    method: isAdded ? 'DELETE' : 'POST'
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    if (isAdded) {
+                        el.classList.remove('todo-added');
+                        el.textContent = '📌 加入清单';
+                    } else {
+                        el.classList.add('todo-added');
+                        el.textContent = '📌 已加入';
+                    }
+                } else {
+                    alert('操作失败: ' + data.message);
+                }
+            } catch (e) { alert('请求失败: ' + e.message); }
+        }
+
+        async function hidePaper(arxivId, el) {
+            const card = el.closest('.paper-card');
+            try {
+                const resp = await fetch(`/api/paper/${arxivId}/hide`, { method: 'POST' });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    card.style.transition = 'opacity 0.3s, transform 0.3s';
+                    card.style.opacity = '0';
+                    card.style.transform = 'scale(0.95)';
+                    setTimeout(() => card.remove(), 300);
+                } else {
+                    alert('操作失败: ' + data.message);
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
             }
         }
     </script>
