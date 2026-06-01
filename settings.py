@@ -1,3 +1,23 @@
+"""
+运行时配置管理模块
+
+本模块负责管理项目的运行时配置，配置存储在 data/settings.json 文件中，
+可通过 Web 界面动态修改，无需重启服务即可生效。
+
+与 config.py 的区别：
+- config.py：硬编码的常量配置（分类列表、标签候选、评级标准等），修改需改代码
+- settings.py（本模块）：运行时可变配置（API密钥、供应商、Prompt模板等），Web界面可改
+
+主要功能：
+- AI 供应商管理（预设配置、增删切换）
+- API 配置获取（供 analyzer.py 调用）
+- Prompt 模板管理
+- 代理/抓取/分页等运行时参数
+- 管理员密码（SHA-256 哈希存储）
+
+配置文件结构示例见 DEFAULT_SETTINGS 变量。
+"""
+
 import json
 import os
 import logging
@@ -5,8 +25,15 @@ from config import DB_DIR
 
 logger = logging.getLogger(__name__)
 
+# 配置文件路径：data/settings.json
 SETTINGS_PATH = os.path.join(DB_DIR, "settings.json")
 
+# ============================================================================
+# 预设供应商配置
+# ============================================================================
+# 用于 Web 设置页的"添加供应商"功能，提供常见 AI API 的预设模板
+# 用户选择预设后，base_url 和 models 会自动填充，api_key 需手动输入
+# "custom" 为自定义 OpenAI 兼容接口，所有字段留空由用户填写
 PROVIDER_PRESETS = {
     "openai": {
         "name": "OpenAI",
@@ -50,6 +77,15 @@ PROVIDER_PRESETS = {
     },
 }
 
+# ============================================================================
+# 默认配置结构
+# ============================================================================
+# 当 settings.json 不存在或损坏时，使用此默认配置初始化
+# 各字段说明：
+#   active_provider: 当前激活的供应商 key（对应 providers 中的键名）
+#   concurrency: AI 分析的并发请求数
+#   providers: 已配置的供应商列表，每个包含 api_key/base_url/model 等
+#   prompts: AI 分析使用的 Prompt 模板
 DEFAULT_SETTINGS = {
     "active_provider": "deepseek",
     "concurrency": 5,
@@ -70,11 +106,31 @@ DEFAULT_SETTINGS = {
 }
 
 
+# ============================================================================
+# 内部工具函数
+# ============================================================================
+
 def _ensure_dir():
+    """确保数据目录存在，如果不存在则递归创建。"""
     os.makedirs(DB_DIR, exist_ok=True)
 
 
 def _migrate_old_settings(data):
+    """
+    迁移旧版配置格式到新版多供应商格式。
+
+    旧版配置将 api_key/base_url/model 等字段平铺在顶层，
+    新版将其收纳到 providers 字典中，支持多供应商切换。
+
+    如果数据已是新版格式（包含 "providers" 字段），直接返回。
+    否则将旧版平铺字段重组为 providers[active_provider] 结构。
+
+    参数:
+        data: 从 settings.json 读取的原始字典
+
+    返回:
+        迁移后的配置字典（新版格式）
+    """
     if "providers" in data:
         return data
     migrated = {
@@ -94,7 +150,28 @@ def _migrate_old_settings(data):
     return migrated
 
 
+# ============================================================================
+# 配置加载与保存
+# ============================================================================
+
 def load_settings():
+    """
+    加载运行时配置。
+
+    加载流程：
+    1. 确保数据目录存在
+    2. 如果配置文件不存在，写入默认配置并返回
+    3. 读取配置文件，执行旧版格式迁移
+    4. 以 DEFAULT_SETTINGS 为基础，用文件中的值覆盖（合并逻辑）
+    5. 对 max_tokens < 4096 的供应商自动升级到 8192（兼容旧配置）
+
+    注意：添加新配置字段时，必须在此函数的合并逻辑中显式添加对应的
+    if "key" in migrated 判断，否则新字段在读取时会被 DEFAULT_SETTINGS
+    的默认值覆盖而丢失！这是已踩过的坑。
+
+    返回:
+        合并后的完整配置字典
+    """
     _ensure_dir()
     if not os.path.exists(SETTINGS_PATH):
         save_settings(DEFAULT_SETTINGS)
@@ -102,9 +179,25 @@ def load_settings():
     try:
         with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
             saved = json.load(f)
+        # 执行旧版格式迁移
         migrated = _migrate_old_settings(saved)
+        # 深拷贝默认配置作为合并基础
         merged = json.loads(json.dumps(DEFAULT_SETTINGS))
+        # 逐字段合并：文件中有的字段覆盖默认值
         merged["active_provider"] = migrated.get("active_provider", "deepseek")
+        if "concurrency" in migrated:
+            merged["concurrency"] = migrated["concurrency"]
+        if "per_page" in migrated:
+            merged["per_page"] = migrated["per_page"]
+        if "proxy" in migrated:
+            merged["proxy"] = migrated["proxy"]
+        if "fetch" in migrated:
+            merged["fetch"] = migrated["fetch"]
+        if "admin_password" in migrated:
+            merged["admin_password"] = migrated["admin_password"]
+        if "prompts" in migrated:
+            merged["prompts"] = migrated["prompts"]
+        # 合并供应商配置，同时修复旧版过小的 max_tokens
         for k, v in migrated.get("providers", {}).items():
             if v.get("max_tokens", 0) < 4096:
                 v["max_tokens"] = 8192
@@ -116,6 +209,17 @@ def load_settings():
 
 
 def save_settings(settings):
+    """
+    将配置字典保存到 settings.json 文件。
+
+    使用 ensure_ascii=False 保留中文字符，indent=2 格式化输出便于手动编辑。
+
+    参数:
+        settings: 要保存的配置字典
+
+    返回:
+        bool: 保存成功返回 True，失败返回 False
+    """
     _ensure_dir()
     try:
         with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
@@ -126,7 +230,21 @@ def save_settings(settings):
         return False
 
 
+# ============================================================================
+# AI 配置获取函数（供 analyzer.py 调用）
+# ============================================================================
+
 def get_active_provider():
+    """
+    获取当前激活供应商的完整配置。
+
+    从 settings 中读取 active_provider 键名，然后从 providers 字典中
+    取出对应的供应商配置。
+
+    返回:
+        dict: 当前激活供应商的配置字典，包含 name/api_key/base_url/model 等字段。
+              如果激活的供应商不存在，返回空字典。
+    """
     settings = load_settings()
     active = settings.get("active_provider", "deepseek")
     providers = settings.get("providers", {})
@@ -134,6 +252,21 @@ def get_active_provider():
 
 
 def get_ai_config():
+    """
+    获取 AI API 调用所需的精简配置。
+
+    这是 analyzer.py 调用 OpenAI API 时使用的核心函数，提取供应商配置中
+    与 API 调用直接相关的字段。
+
+    返回:
+        dict: 包含以下字段的配置字典：
+            - api_key: API 密钥
+            - base_url: API 端点地址
+            - model: 模型名称
+            - temperature: 生成温度（0-1）
+            - max_tokens: 最大生成 token 数
+            - is_thinking: 是否为思维链模型（如 DeepSeek-R1）
+    """
     prov = get_active_provider()
     return {
         "api_key": prov.get("api_key", ""),
@@ -141,37 +274,175 @@ def get_ai_config():
         "model": prov.get("model", ""),
         "temperature": prov.get("temperature", 0.3),
         "max_tokens": prov.get("max_tokens", 1000),
+        "is_thinking": prov.get("is_thinking", False),
     }
 
 
+# ============================================================================
+# 运行时参数获取/保存函数
+# ============================================================================
+
 def get_concurrency():
+    """
+    获取 AI 分析的并发请迂数。
+
+    并发数控制 ThreadPoolExecutor 同时发起的 API 请求数量，
+    默认值为 5。过大会触发 API 速率限制，过小则分析速度慢。
+
+    返回:
+        int: 并发请求数
+    """
     settings = load_settings()
     return settings.get("concurrency", 5)
 
 
 def get_per_page():
+    """
+    获取 Web 界面每页显示的论文数量。
+
+    返回:
+        int: 每页论文数，默认 20
+    """
     settings = load_settings()
     return settings.get("per_page", 20)
 
 
+def get_fetch_config():
+    """
+    获取论文抓取的运行时配置。
+
+    抓取配置控制 arXiv API 的请求行为：
+    - request_delay: 两次 API 请求之间的间隔秒数（避免被限流）
+    - batch_days: 每个批次抓取的天数范围
+    - batch_delay: 两个批次之间的间隔秒数
+
+    如果用户未自定义，使用 config.py 中的默认值。
+
+    返回:
+        dict: 包含 request_delay/batch_days/batch_delay 的配置字典
+    """
+    settings = load_settings()
+    fetch = settings.get("fetch", {})
+    from config import FETCH_REQUEST_DELAY, FETCH_BATCH_DAYS, FETCH_BATCH_DELAY
+    return {
+        "request_delay": fetch.get("request_delay", FETCH_REQUEST_DELAY),
+        "batch_days": fetch.get("batch_days", FETCH_BATCH_DAYS),
+        "batch_delay": fetch.get("batch_delay", FETCH_BATCH_DELAY),
+    }
+
+
+def save_fetch_config(fetch_config):
+    """
+    保存论文抓取配置到 settings.json。
+
+    参数:
+        fetch_config: 包含 request_delay/batch_days/batch_delay 的字典
+
+    返回:
+        bool: 保存是否成功
+    """
+    settings = load_settings()
+    settings["fetch"] = fetch_config
+    return save_settings(settings)
+
+
+def get_proxy_config():
+    """
+    获取 HTTP 代理配置。
+
+    代理用于在无法直接访问 arXiv/OpenAI 等服务时进行网络转发。
+    配置项包括是否启用、HTTP 代理地址、HTTPS 代理地址。
+
+    返回:
+        dict: 包含以下字段的代理配置：
+            - enabled: bool, 是否启用代理
+            - http: str, HTTP 代理地址（如 "http://127.0.0.1:7890"）
+            - https: str, HTTPS 代理地址
+    """
+    settings = load_settings()
+    proxy = settings.get("proxy", {})
+    return {
+        "enabled": proxy.get("enabled", False),
+        "http": proxy.get("http", ""),
+        "https": proxy.get("https", ""),
+    }
+
+
+def save_proxy_config(proxy_config):
+    """
+    保存代理配置到 settings.json。
+
+    参数:
+        proxy_config: 包含 enabled/http/https 的代理配置字典
+
+    返回:
+        bool: 保存是否成功
+    """
+    settings = load_settings()
+    settings["proxy"] = proxy_config
+    return save_settings(settings)
+
+
+# ============================================================================
+# 供应商 CRUD 操作
+# ============================================================================
+
 def get_all_providers():
+    """
+    获取所有已配置的供应商列表。
+
+    返回:
+        dict: 以供应商 key 为键、配置字典为值的字典
+    """
     return load_settings().get("providers", {})
 
 
 def get_provider_presets():
+    """
+    获取所有预设供应商模板。
+
+    预设模板用于 Web 设置页的"添加供应商"下拉菜单，
+    提供常见 AI API 的 base_url 和 models 预填值。
+
+    返回:
+        dict: 预设供应商配置字典（PROVIDER_PRESETS）
+    """
     return PROVIDER_PRESETS
 
 
 def add_provider(key, config):
+    """
+    添加新供应商到配置。
+
+    参数:
+        key: 供应商唯一标识（如 "openai"、"my_api"）
+        config: 供应商配置字典，包含 name/api_key/base_url/model 等
+
+    返回:
+        bool: 保存是否成功
+    """
     settings = load_settings()
     settings["providers"][key] = config
     return save_settings(settings)
 
 
 def remove_provider(key):
+    """
+    删除指定供应商。
+
+    如果删除的是当前激活的供应商，会自动切换到剩余供应商中的第一个。
+    如果没有任何剩余供应商，active_provider 设为空字符串。
+
+    参数:
+        key: 要删除的供应商标识
+
+    返回:
+        bool: 删除是否成功（供应商不存在时返回 False）
+    """
     settings = load_settings()
     if key in settings["providers"]:
         del settings["providers"][key]
+        # 如果删除的是当前激活供应商，自动切换到第一个剩余供应商
         if settings["active_provider"] == key:
             remaining = list(settings["providers"].keys())
             settings["active_provider"] = remaining[0] if remaining else ""
@@ -180,6 +451,18 @@ def remove_provider(key):
 
 
 def switch_provider(key):
+    """
+    切换当前激活的供应商。
+
+    切换后，AI 分析将使用新供应商的 API 配置。
+    供应商必须已存在于 providers 中。
+
+    参数:
+        key: 要切换到的供应商标识
+
+    返回:
+        bool: 切换是否成功（供应商不存在时返回 False）
+    """
     settings = load_settings()
     if key in settings["providers"]:
         settings["active_provider"] = key
@@ -188,6 +471,19 @@ def switch_provider(key):
 
 
 def update_provider(key, config):
+    """
+    更新已有供应商的配置字段。
+
+    使用 dict.update() 合并新配置，只更新传入的字段，
+    未传入的字段保持不变。
+
+    参数:
+        key: 要更新的供应商标识
+        config: 要更新的字段字典（如 {"api_key": "sk-xxx"}）
+
+    返回:
+        bool: 更新是否成功（供应商不存在时返回 False）
+    """
     settings = load_settings()
     if key in settings["providers"]:
         settings["providers"][key].update(config)
@@ -195,7 +491,22 @@ def update_provider(key, config):
     return False
 
 
+# ============================================================================
+# Prompt 模板管理
+# ============================================================================
+
 def get_prompts():
+    """
+    获取 AI 分析使用的 Prompt 模板。
+
+    以默认 prompt 为基础，用用户自定义的 prompt 覆盖。
+    这样用户只需修改想改的部分，其余保持默认。
+
+    返回:
+        dict: 包含 system_prompt 和 user_prompt 的字典
+            - system_prompt: 系统角色设定
+            - user_prompt: 用户消息模板，包含 {title}/{authors}/{abstract}/{tag_candidates}/{rating_criteria} 占位符
+    """
     settings = load_settings()
     default_prompts = DEFAULT_SETTINGS.get("prompts", {})
     prompts = settings.get("prompts", {})
@@ -205,17 +516,50 @@ def get_prompts():
 
 
 def save_prompts(prompts):
+    """
+    保存用户自定义的 Prompt 模板。
+
+    参数:
+        prompts: 包含 system_prompt 和/或 user_prompt 的字典
+
+    返回:
+        bool: 保存是否成功
+    """
     settings = load_settings()
     settings["prompts"] = prompts
     return save_settings(settings)
 
 
+# ============================================================================
+# 管理员密码管理
+# ============================================================================
+
 def get_admin_password():
+    """
+    获取管理员密码的 SHA-256 哈希值。
+
+    密码以哈希形式存储，不保存明文。
+    空字符串表示未设置密码（无需验证）。
+
+    返回:
+        str: 密码的 SHA-256 哈希值，未设置时返回空字符串
+    """
     settings = load_settings()
     return settings.get("admin_password", "")
 
 
 def set_admin_password(password):
+    """
+    设置管理员密码。
+
+    密码使用 SHA-256 哈希后存储，传入空字符串则清除密码。
+
+    参数:
+        password: 要设置的明文密码，空字符串表示清除密码
+
+    返回:
+        bool: 保存是否成功
+    """
     import hashlib
     settings = load_settings()
     if password:
@@ -226,6 +570,18 @@ def set_admin_password(password):
 
 
 def verify_admin_password(password):
+    """
+    验证管理员密码是否正确。
+
+    如果未设置密码（哈希值为空），直接返回 True（无需验证）。
+    否则将输入密码哈希后与存储的哈希值比较。
+
+    参数:
+        password: 待验证的明文密码
+
+    返回:
+        bool: 密码正确或未设置密码时返回 True
+    """
     import hashlib
     stored = get_admin_password()
     if not stored:
@@ -234,4 +590,10 @@ def verify_admin_password(password):
 
 
 def has_admin_password():
+    """
+    检查是否已设置管理员密码。
+
+    返回:
+        bool: 已设置密码返回 True，未设置返回 False
+    """
     return bool(get_admin_password())
