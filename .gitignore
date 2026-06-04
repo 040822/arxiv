@@ -1,9 +1,12 @@
 __pycache__/
 *.pyc
-data/papers.db
 .env
 *.egg-info/
 dist/
 build/
-data/pdf_cache/*
 .envrc
+
+# Runtime secrets and local data
+data/settings.json
+data/*.db
+data/pdf_cache/

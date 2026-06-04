@@ -22,9 +22,9 @@ config.py - 硬编码配置文件
 import os
 
 # ==================== OpenAI API 配置 ====================
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "sk-bc3ecff7b6f54b9e84f0617ea414fd7a")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "https://api.deepseek.com")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "deepseek-chat")
 
 # ==================== arxiv 分类配置 ====================
 ARXIV_CATEGORIES = [
