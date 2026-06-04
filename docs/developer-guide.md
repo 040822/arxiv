@@ -192,7 +192,7 @@ CREATE TABLE reading_list (
 | 配置项 | 说明 |
 |--------|------|
 | `active_provider` | 当前激活的 AI 供应商 |
-| `providers` | 供应商配置（API key、model 等） |
+| `providers` | 供应商配置（API key、model、参数开关、思考模式、模型缓存等） |
 | `prompts` | system/user prompt 模板 |
 | `concurrency` | AI 分析并发数 |
 | `per_page` | 首页每页论文数 |
@@ -201,6 +201,8 @@ CREATE TABLE reading_list (
 | `admin_password` | 管理密码（SHA-256） |
 
 > **⚠️ 重要：** 在 `load_settings()` 中添加新字段时，必须在合并逻辑中显式添加 `if "key" in migrated: merged["key"] = migrated["key"]`，否则新字段在读取时会丢失！
+
+AI 调用参数统一由 `settings.build_chat_completion_kwargs()` 生成。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，否则会破坏不同供应商的兼容性。
 
 ---
 

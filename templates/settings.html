@@ -38,11 +38,47 @@
                     <h4 id="add-form-title">配置供应商</h4>
                     <div class="form-group"><label>供应商ID</label><input type="text" id="add-key" placeholder="例如: deepseek"></div>
                     <div class="form-group"><label>显示名称</label><input type="text" id="add-name" placeholder="例如: DeepSeek"></div>
-                    <div class="form-group"><label>API Key</label><div class="input-group"><input type="password" id="add-api-key" placeholder="输入 API Key"><button class="btn-small" onclick="togglePwd('add-api-key')">👁</button></div></div>
-                    <div class="form-group"><label>Base URL</label><input type="text" id="add-base-url" placeholder="https://api.deepseek.com"></div>
-                    <div class="form-group"><label>模型</label><div class="input-group"><select id="add-model-select" onchange="document.getElementById('add-model').value=this.value"><option value="">-- 从预设列表选择 --</option></select><input type="text" id="add-model" placeholder="或手动输入模型名称"></div></div>
-                    <div class="form-row"><div class="form-group"><label>Temperature</label><input type="number" id="add-temperature" min="0" max="2" step="0.1" value="0.3"></div><div class="form-group"><label>Max Tokens</label><input type="number" id="add-max-tokens" min="100" max="128000" step="100" value="1000"></div></div>
-                    <div class="form-group"><label><input type="checkbox" id="add-is-thinking" style="margin-right:6px;">🧠 思考模型（启用后会传递 enable_thinking 参数）</label></div>
+                    <div class="form-group"><label>API Key</label><div class="input-group"><input type="password" id="add-api-key" placeholder="输入 API Key" onchange="scheduleModelFetch()"><button class="btn-small" onclick="togglePwd('add-api-key')">👁</button></div></div>
+                    <div class="form-group"><label>Base URL</label><input type="text" id="add-base-url" placeholder="https://api.deepseek.com" onchange="scheduleModelFetch()"></div>
+                    <div class="form-group">
+                        <label>模型</label>
+                        <div class="input-group">
+                            <select id="add-model-select" onchange="selectModelFromList()"><option value="">-- 从模型列表选择 --</option></select>
+                            <button class="btn-small" onclick="fetchModelsForForm()">刷新模型</button>
+                            <input type="text" id="add-model" placeholder="或手动输入模型名称">
+                        </div>
+                        <div id="model-list-status" class="field-hint"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label><input type="checkbox" id="add-max-tokens-enabled" onchange="toggleMaxTokensField()" style="margin-right:6px;">限制输出长度</label>
+                            <input type="number" id="add-max-tokens" min="100" max="200000" step="100" value="8192" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label><input type="checkbox" id="add-is-thinking" onchange="toggleThinkingFields()" style="margin-right:6px;">🧠 思考模型</label>
+                            <div id="thinking-fields" style="display:none;">
+                                <select id="add-thinking-effort">
+                                    <option value="auto">自动</option>
+                                    <option value="low">低</option>
+                                    <option value="medium" selected>中</option>
+                                    <option value="high">高</option>
+                                    <option value="max">最高</option>
+                                </select>
+                                <p class="section-desc">思考模式下将不发送 temperature/top_p/presence/frequency 等采样参数</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="advanced-box" id="sampling-section">
+                        <h5>高级采样参数</h5>
+                        <div class="form-row">
+                            <div class="form-group"><label><input type="checkbox" id="add-temperature-enabled" onchange="toggleSamplingField('temperature')" checked> Temperature</label><input type="number" id="add-temperature" min="0" max="2" step="0.1" value="0.3"></div>
+                            <div class="form-group"><label><input type="checkbox" id="add-top-p-enabled" onchange="toggleSamplingField('top-p')"> Top P</label><input type="number" id="add-top-p" min="0" max="1" step="0.05" value="1" disabled></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group"><label><input type="checkbox" id="add-presence-penalty-enabled" onchange="toggleSamplingField('presence-penalty')"> Presence Penalty</label><input type="number" id="add-presence-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
+                            <div class="form-group"><label><input type="checkbox" id="add-frequency-penalty-enabled" onchange="toggleSamplingField('frequency-penalty')"> Frequency Penalty</label><input type="number" id="add-frequency-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
+                        </div>
+                    </div>
                     <div class="settings-actions"><button class="action-btn btn-primary" onclick="submitAdd()">💾 保存供应商</button><button class="action-btn" onclick="cancelAdd()">取消</button></div>
                 </div>
             </div>
@@ -167,6 +203,20 @@
     <script>
         let presets = {};
         let providerData = {};
+        let modelFetchTimer = null;
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        function parseNumber(id, fallback) {
+            const value = parseFloat(document.getElementById(id).value);
+            return Number.isNaN(value) ? fallback : value;
+        }
+
+        function jsString(value) {
+            return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        }
 
         function switchTab(name) {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -214,20 +264,23 @@
             let html = '';
             for (const [key, prov] of Object.entries(providers)) {
                 const isActive = key === active;
+                const thinking = !!(prov.is_thinking || prov.effective_is_thinking);
+                const effort = prov.thinking_effort || 'medium';
                 html += `<div class="provider-item ${isActive ? 'active' : ''}">
                     <div class="provider-item-header">
-                        <div class="provider-item-info"><span class="provider-item-name">${prov.name}</span>${isActive ? '<span class="active-badge">✅ 当前使用</span>' : ''}</div>
+                        <div class="provider-item-info"><span class="provider-item-name">${escapeHtml(prov.name)}</span>${isActive ? '<span class="active-badge">✅ 当前使用</span>' : ''}</div>
                         <div class="provider-item-actions">
-                            ${isActive ? '<span class="status-text">已激活</span>' : `<button class="btn-sm btn-activate" onclick="activateProvider('${key}')">激活</button>`}
-                            <button class="btn-sm btn-edit" onclick="editProvider('${key}')">编辑</button>
-                            ${!isActive ? `<button class="btn-sm btn-delete" onclick="deleteProvider('${key}')">删除</button>` : ''}
+                            ${isActive ? '<span class="status-text">已激活</span>' : `<button class="btn-sm btn-activate" onclick="activateProvider('${jsString(key)}')">激活</button>`}
+                            <button class="btn-sm btn-edit" onclick="editProvider('${jsString(key)}')">编辑</button>
+                            ${!isActive ? `<button class="btn-sm btn-delete" onclick="deleteProvider('${jsString(key)}')">删除</button>` : ''}
                         </div>
                     </div>
                     <div class="provider-item-detail">
-                        <span>Base URL: ${prov.base_url}</span>
-                        <span>模型: ${prov.model}</span>
+                        <span>Base URL: ${escapeHtml(prov.base_url)}</span>
+                        <span>模型: ${escapeHtml(prov.model)}</span>
                         <span>API Key: ${prov.api_key_masked || '未设置'}</span>
-                        ${prov.is_thinking ? '<span class="thinking-badge">🧠 思考模型</span>' : ''}
+                        ${thinking ? `<span class="thinking-badge">🧠 思考模型 · ${escapeHtml(effort)}</span>` : ''}
+                        ${prov.max_tokens_enabled ? `<span>限制输出: ${prov.max_tokens}</span>` : ''}
                     </div>
                 </div>`;
             }
@@ -239,9 +292,105 @@
             let html = '';
             for (const [key, preset] of Object.entries(presets)) {
                 const exists = providerData.providers && providerData.providers[key];
-                html += `<div class="preset-card ${exists ? 'exists' : ''}" onclick="${exists ? '' : `showAddForm('${key}')`}"><div class="preset-name">${preset.name}</div>${exists ? '<div class="preset-exists">已添加</div>' : ''}</div>`;
+                html += `<div class="preset-card ${exists ? 'exists' : ''}" onclick="${exists ? '' : `showAddForm('${jsString(key)}')`}"><div class="preset-name">${escapeHtml(preset.name)}</div>${exists ? '<div class="preset-exists">已添加</div>' : ''}</div>`;
             }
             grid.innerHTML = html;
+        }
+
+        function getModelOptionsFromSelect() {
+            return Array.from(document.getElementById('add-model-select').options)
+                .map(opt => opt.value)
+                .filter(v => v);
+        }
+
+        function populateModelOptions(models, selected) {
+            const select = document.getElementById('add-model-select');
+            const unique = Array.from(new Set((models || []).filter(v => String(v).trim()).map(v => String(v).trim()))).sort((a, b) => a.localeCompare(b));
+            let html = '<option value="">-- 从模型列表选择 --</option>';
+            if (selected && !unique.includes(selected)) unique.unshift(selected);
+            for (const model of unique) html += `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`;
+            select.innerHTML = html;
+            select.value = selected || '';
+        }
+
+        function selectModelFromList() {
+            const val = document.getElementById('add-model-select').value;
+            if (val) document.getElementById('add-model').value = val;
+        }
+
+        function toggleMaxTokensField() {
+            document.getElementById('add-max-tokens').disabled = !document.getElementById('add-max-tokens-enabled').checked;
+        }
+
+        function toggleSamplingField(name) {
+            const thinking = document.getElementById('add-is-thinking').checked;
+            const checkbox = document.getElementById(`add-${name}-enabled`);
+            const input = document.getElementById(`add-${name}`);
+            input.disabled = thinking || !checkbox.checked;
+        }
+
+        function toggleThinkingFields() {
+            const thinking = document.getElementById('add-is-thinking').checked;
+            document.getElementById('thinking-fields').style.display = thinking ? 'block' : 'none';
+            for (const name of ['temperature', 'top-p', 'presence-penalty', 'frequency-penalty']) {
+                document.getElementById(`add-${name}-enabled`).disabled = thinking;
+                toggleSamplingField(name);
+            }
+        }
+
+        function scheduleModelFetch() {
+            clearTimeout(modelFetchTimer);
+            modelFetchTimer = setTimeout(() => {
+                const apiKey = document.getElementById('add-api-key').value.trim();
+                const baseUrl = document.getElementById('add-base-url').value.trim();
+                if (apiKey && baseUrl) fetchModelsForForm(true);
+            }, 450);
+        }
+
+        async function fetchModelsForForm(silent = false) {
+            const statusEl = document.getElementById('model-list-status');
+            const key = document.getElementById('add-key').value.trim();
+            const isEdit = document.getElementById('add-key').readOnly;
+            const apiKey = document.getElementById('add-api-key').value.trim();
+            const baseUrl = document.getElementById('add-base-url').value.trim();
+            if (!baseUrl) { if (!silent) statusEl.textContent = '请先填写 Base URL'; return; }
+            if (!apiKey && !isEdit) { if (!silent) statusEl.textContent = '请先填写 API Key'; return; }
+
+            const payload = { base_url: baseUrl };
+            if (apiKey) payload.api_key = apiKey;
+            if (isEdit && key) payload.provider_key = key;
+
+            if (!silent) statusEl.textContent = '正在获取模型列表...';
+            try {
+                const resp = await fetch('/api/providers/models', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+                const result = await resp.json();
+                if (result.status === 'ok') {
+                    const current = document.getElementById('add-model').value.trim();
+                    populateModelOptions(result.models || [], current);
+                    statusEl.textContent = `已获取 ${result.count || 0} 个模型；也可以继续手动输入`;
+                } else if (!silent) {
+                    statusEl.textContent = result.message || '获取模型列表失败，可手动输入模型名称';
+                }
+            } catch (e) {
+                if (!silent) statusEl.textContent = '获取模型列表失败：' + e.message;
+            }
+        }
+
+        function resetProviderAdvancedFields(prov = {}) {
+            document.getElementById('add-max-tokens-enabled').checked = !!prov.max_tokens_enabled;
+            document.getElementById('add-max-tokens').value = prov.max_tokens ?? 8192;
+            document.getElementById('add-temperature-enabled').checked = prov.temperature_enabled ?? !prov.is_thinking;
+            document.getElementById('add-temperature').value = prov.temperature ?? 0.3;
+            document.getElementById('add-top-p-enabled').checked = !!prov.top_p_enabled;
+            document.getElementById('add-top-p').value = prov.top_p ?? 1;
+            document.getElementById('add-presence-penalty-enabled').checked = !!prov.presence_penalty_enabled;
+            document.getElementById('add-presence-penalty').value = prov.presence_penalty ?? 0;
+            document.getElementById('add-frequency-penalty-enabled').checked = !!prov.frequency_penalty_enabled;
+            document.getElementById('add-frequency-penalty').value = prov.frequency_penalty ?? 0;
+            document.getElementById('add-is-thinking').checked = !!prov.is_thinking;
+            document.getElementById('add-thinking-effort').value = prov.thinking_effort || 'medium';
+            toggleMaxTokensField();
+            toggleThinkingFields();
         }
 
         function showAddForm(presetKey) {
@@ -253,23 +402,49 @@
             document.getElementById('add-api-key').placeholder = '输入 API Key';
             document.getElementById('add-base-url').value = preset.base_url || '';
             document.getElementById('add-model').value = (preset.models && preset.models[0]) || '';
-            document.getElementById('add-temperature').value = 0.3;
-            document.getElementById('add-max-tokens').value = 1000;
-            document.getElementById('add-is-thinking').checked = false;
-            const modelSelect = document.getElementById('add-model-select');
-            modelSelect.innerHTML = '<option value="">-- 从预设列表选择 --</option>';
-            if (preset.models) for (const m of preset.models) modelSelect.innerHTML += `<option value="${m}">${m}</option>`;
+            populateModelOptions(preset.models || [], document.getElementById('add-model').value);
+            document.getElementById('model-list-status').textContent = '';
+            resetProviderAdvancedFields({
+                max_tokens: 8192,
+                max_tokens_enabled: false,
+                temperature: 0.3,
+                temperature_enabled: true,
+                thinking_effort: 'medium',
+                is_thinking: false,
+            });
             document.getElementById('add-form-title').textContent = `添加供应商: ${preset.name || presetKey}`;
             document.getElementById('add-form').style.display = 'block';
             document.getElementById('add-form').scrollIntoView({behavior: 'smooth'});
         }
 
-        function cancelAdd() { document.getElementById('add-form').style.display = 'none'; }
+        function cancelAdd() {
+            document.getElementById('add-form').style.display = 'none';
+            document.getElementById('model-list-status').textContent = '';
+        }
 
         async function submitAdd() {
             const statusEl = document.getElementById('test-status');
             const isEdit = document.getElementById('add-key').readOnly;
-            const data = { key: document.getElementById('add-key').value.trim(), name: document.getElementById('add-name').value.trim(), api_key: document.getElementById('add-api-key').value.trim(), base_url: document.getElementById('add-base-url').value.trim(), model: document.getElementById('add-model').value.trim(), temperature: parseFloat(document.getElementById('add-temperature').value) || 0.3, max_tokens: parseInt(document.getElementById('add-max-tokens').value) || 1000, is_thinking: document.getElementById('add-is-thinking').checked };
+            const data = {
+                key: document.getElementById('add-key').value.trim(),
+                name: document.getElementById('add-name').value.trim(),
+                api_key: document.getElementById('add-api-key').value.trim(),
+                base_url: document.getElementById('add-base-url').value.trim(),
+                model: document.getElementById('add-model').value.trim(),
+                available_models: getModelOptionsFromSelect(),
+                max_tokens_enabled: document.getElementById('add-max-tokens-enabled').checked,
+                max_tokens: parseInt(document.getElementById('add-max-tokens').value) || 8192,
+                is_thinking: document.getElementById('add-is-thinking').checked,
+                thinking_effort: document.getElementById('add-thinking-effort').value || 'medium',
+                temperature_enabled: document.getElementById('add-temperature-enabled').checked,
+                temperature: parseNumber('add-temperature', 0.3),
+                top_p_enabled: document.getElementById('add-top-p-enabled').checked,
+                top_p: parseNumber('add-top-p', 1),
+                presence_penalty_enabled: document.getElementById('add-presence-penalty-enabled').checked,
+                presence_penalty: parseNumber('add-presence-penalty', 0),
+                frequency_penalty_enabled: document.getElementById('add-frequency-penalty-enabled').checked,
+                frequency_penalty: parseNumber('add-frequency-penalty', 0),
+            };
             if (!data.key) { alert('供应商ID不能为空'); return; }
             if (!data.base_url) { alert('Base URL 不能为空'); return; }
             if (!data.model) { alert('模型名称不能为空'); return; }
@@ -298,11 +473,10 @@
             document.getElementById('add-api-key').value = ''; document.getElementById('add-api-key').placeholder = '留空则保持原值不变';
             document.getElementById('add-base-url').value = prov.base_url || '';
             document.getElementById('add-model').value = prov.model || '';
-            document.getElementById('add-temperature').value = prov.temperature ?? 0.3;
-            document.getElementById('add-max-tokens').value = prov.max_tokens ?? 1000;
-            document.getElementById('add-is-thinking').checked = !!prov.is_thinking;
-            const modelSelect = document.getElementById('add-model-select'); modelSelect.innerHTML = '<option value="">-- 从预设列表选择 --</option>';
-            for (const m of (preset.models || [])) modelSelect.innerHTML += `<option value="${m}">${m}</option>`;
+            const models = (prov.available_models && prov.available_models.length > 0) ? prov.available_models : (preset.models || []);
+            populateModelOptions(models, prov.model || '');
+            document.getElementById('model-list-status').textContent = '';
+            resetProviderAdvancedFields(prov);
             document.getElementById('add-form-title').textContent = `编辑供应商: ${prov.name || key}`;
             document.getElementById('add-form').style.display = 'block'; document.getElementById('add-form').scrollIntoView({behavior: 'smooth'});
         }
@@ -331,12 +505,7 @@
                 if (result.status === 'ok') {
                     statusEl.className = 'action-status success';
                     statusEl.textContent = result.message;
-                    if (result.is_thinking) {
-                        const activeKey = providerData.active_provider;
-                        if (activeKey && providerData.providers[activeKey]) {
-                            providerData.providers[activeKey].is_thinking = true;
-                        }
-                    }
+                    await init();
                 } else {
                     statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + result.message;
                 }

@@ -314,7 +314,22 @@ PUT  /api/providers/<key>        # 更新供应商
 DELETE /api/providers/<key>      # 删除供应商
 POST /api/providers/<key>/activate  # 切换供应商
 GET  /api/providers/presets      # 获取预设供应商
+POST /api/providers/models       # 从供应商 /models 接口获取模型列表
 ```
+
+`POST /api/providers/models` Body：
+
+```json
+{
+    "provider_key": "deepseek",
+    "api_key": "sk-xxx",
+    "base_url": "https://api.deepseek.com"
+}
+```
+
+`provider_key` 可选；传入后会优先复用已保存的 API Key/Base URL，并在成功获取后保存 `available_models`。
+
+供应商配置支持 `max_tokens_enabled`、`temperature_enabled`、`top_p_enabled`、`presence_penalty_enabled`、`frequency_penalty_enabled`、`is_thinking`、`thinking_effort` 等字段。未启用的参数不会发送给模型；思考模式下采样参数会被后端自动省略。
 
 ### 测试连接
 
@@ -323,6 +338,8 @@ POST /api/test_connection        # 测试 AI API 连接
 POST /api/detect_thinking        # 检测是否为思考模型
 POST /api/test_proxy             # 测试 arXiv 代理连接
 ```
+
+`POST /api/detect_thinking` 返回 `is_thinking`、`confidence`、`thinking_protocol`，并会把检测结果保存到当前激活供应商。
 
 ### Prompt 管理
 

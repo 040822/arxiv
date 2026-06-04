@@ -18,7 +18,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 from config import TAG_CANDIDATES, RATING_CRITERIA, ANALYSIS_CONCURRENCY
-from settings import get_ai_config, get_prompts
+from settings import build_chat_completion_kwargs, get_ai_config, get_prompts
 from database import insert_analysis, get_unanalyzed_papers
 from pdf_reader import get_paper_full_text
 
@@ -121,19 +121,17 @@ def _call_ai(system_prompt, user_prompt, paper_data, include_qa=False):
     cfg = get_ai_config()
 
     try:
-        # 调用 AI API：传入模型名称、消息列表、温度和最大 token 数
-        response = client.chat.completions.create(
-            model=cfg["model"],
-            messages=[
+        messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
-            ],
-            temperature=cfg["temperature"],
-            max_tokens=cfg["max_tokens"],
-        )
+        ]
+        kwargs = build_chat_completion_kwargs(cfg, messages)
+
+        # 调用 AI API：请求参数由 settings.build_chat_completion_kwargs 统一处理
+        response = client.chat.completions.create(**kwargs)
 
         # 提取响应文本内容并去除首尾空白
-        content = response.choices[0].message.content.strip()
+        content = (response.choices[0].message.content or "").strip()
 
         # 清理 AI 返回的 JSON 内容
         content = _clean_json_content(content)

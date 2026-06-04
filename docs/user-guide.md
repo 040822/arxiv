@@ -73,9 +73,11 @@ python main.py generate # 仅生成报告
 
 1. 访问 `/settings` → AI 设置 tab
 2. 点击预设供应商卡片（如 DeepSeek）或「自定义」
-3. 填写 API Key、Base URL、模型名称
+3. 填写 API Key、Base URL，点击「刷新模型」自动获取模型列表，或手动输入模型名称
 4. 点击「保存供应商」
 5. 点击「🔗 测试连接」验证
+
+默认不会发送 Max Tokens 限制；只有勾选「限制输出长度」后才会把该参数传给模型。Temperature 默认开启，Top P、Presence Penalty、Frequency Penalty 默认关闭，可在高级采样参数中按需启用。
 
 ### 支持的预设供应商
 
@@ -94,8 +96,11 @@ python main.py generate # 仅生成报告
 如果你的模型支持思考/推理模式（如 DeepSeek-R1、MiMo-7B-RL）：
 
 1. 编辑供应商，勾选「🧠 思考模型」
-2. 或点击「🧠 检测是否为思考模型」自动检测
-3. 启用后 API 调用会传递 `enable_thinking` 参数
+2. 选择思考强度：自动、低、中、高、最高
+3. 或点击「🧠 检测是否为思考模型」自动检测并保存结果
+4. 启用后后端会按供应商协议传递思考参数，例如 OpenAI 的 `reasoning_effort`、DeepSeek 的 `thinking`、Qwen/MiMo 的 `enable_thinking`/`thinking_budget`
+
+思考模式下，系统会自动省略 `temperature`、`top_p`、`presence_penalty`、`frequency_penalty` 等采样参数。
 
 ---
 

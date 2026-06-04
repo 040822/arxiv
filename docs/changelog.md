@@ -1,5 +1,15 @@
 # 更新日志
 
+## 未发布
+
+### AI 供应商配置
+- 新增 `/api/providers/models`，可从 OpenAI 兼容供应商自动获取模型列表
+- Max Tokens 改为默认不发送，只有启用「限制输出长度」后才传递
+- 新增 Top P、Presence Penalty、Frequency Penalty 等采样参数开关
+- 思考模式新增强度档位，并按 OpenAI、DeepSeek、Qwen/MiMo 等供应商协议映射参数
+- 思考模式下自动省略 temperature/top_p/presence_penalty/frequency_penalty
+- 重做思考模型检测，返回置信度和协议类型，并保存到当前激活供应商
+
 ## v0.3.0 (2026-06-01)
 
 ### 阅读清单
@@ -23,7 +33,7 @@
 
 ### 思考模型支持
 - 供应商配置新增 `is_thinking` 字段
-- API 调用时自动传递 `enable_thinking` 参数
+- API 调用时按供应商协议自动传递思考参数
 - 设置页新增「检测是否为思考模型」功能
 
 ### AI 分析优化

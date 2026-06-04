@@ -41,7 +41,9 @@ from settings import (
     load_settings, save_settings, get_provider_presets, get_all_providers,
     add_provider, remove_provider, switch_provider, update_provider,
     get_prompts, save_prompts, get_concurrency, get_per_page,
-    get_admin_password, set_admin_password, verify_admin_password, has_admin_password
+    get_admin_password, set_admin_password, verify_admin_password, has_admin_password,
+    build_chat_completion_kwargs, get_ai_config, get_thinking_protocol,
+    normalize_provider_config
 )
 from config import WEB_HOST, WEB_PORT, SCHEDULE_HOUR, SCHEDULE_MINUTE
 
@@ -977,10 +979,166 @@ def api_save_fetch_config():
 #            设置 API — AI 供应商管理（Provider Management）
 # ====================================================================
 
+def _request_bool(data, key, default=False):
+    """解析前端传来的布尔字段，保留显式 false。"""
+    if key not in data:
+        return default
+    value = data.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+def _request_float(data, key, default):
+    try:
+        value = data.get(key, default)
+        if value == "" or value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _request_int(data, key, default):
+    try:
+        value = data.get(key, default)
+        if value == "" or value is None:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _provider_config_from_request(data, key="", partial=False):
+    """从请求 JSON 中提取供应商配置字段。"""
+    data = data or {}
+    config = {}
+
+    string_fields = ("name", "base_url", "model", "thinking_effort")
+    for field in string_fields:
+        if field in data or not partial:
+            config[field] = data.get(field, key if field == "name" else "")
+
+    if "api_key" in data:
+        if data.get("api_key") or not partial:
+            config["api_key"] = data.get("api_key", "")
+    elif not partial:
+        config["api_key"] = ""
+
+    float_fields = {
+        "temperature": 0.3,
+        "top_p": 1.0,
+        "presence_penalty": 0.0,
+        "frequency_penalty": 0.0,
+    }
+    for field, default in float_fields.items():
+        if field in data or not partial:
+            config[field] = _request_float(data, field, default)
+
+    if "max_tokens" in data or not partial:
+        config["max_tokens"] = _request_int(data, "max_tokens", 8192)
+
+    bool_fields = (
+        "temperature_enabled",
+        "top_p_enabled",
+        "presence_penalty_enabled",
+        "frequency_penalty_enabled",
+        "max_tokens_enabled",
+        "is_thinking",
+    )
+    defaults = {
+        "temperature_enabled": True,
+        "top_p_enabled": False,
+        "presence_penalty_enabled": False,
+        "frequency_penalty_enabled": False,
+        "max_tokens_enabled": False,
+        "is_thinking": False,
+    }
+    for field in bool_fields:
+        if field in data or not partial:
+            config[field] = _request_bool(data, field, defaults[field])
+
+    if "available_models" in data:
+        models = data.get("available_models") or []
+        config["available_models"] = [str(m).strip() for m in models if str(m).strip()]
+    elif not partial:
+        config["available_models"] = []
+
+    return normalize_provider_config(config, key) if not partial else config
+
+
+def _extract_model_ids(model_page):
+    """从 OpenAI SDK models.list() 响应中提取模型 ID。"""
+    data = getattr(model_page, "data", model_page)
+    models = []
+    for item in data or []:
+        model_id = getattr(item, "id", None)
+        if model_id is None and isinstance(item, dict):
+            model_id = item.get("id")
+        if model_id:
+            models.append(str(model_id))
+    return sorted(set(models), key=str.lower)
+
+
+def _get_nested_value(obj, *path):
+    """同时兼容 OpenAI SDK 对象和测试中的 dict 响应。"""
+    current = obj
+    for part in path:
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(part)
+        else:
+            current = getattr(current, part, None)
+    return current
+
+
+def _has_reasoning_content(message):
+    return bool(_get_nested_value(message, "reasoning_content"))
+
+
+def _get_reasoning_tokens(response):
+    value = _get_nested_value(response, "usage", "completion_tokens_details", "reasoning_tokens")
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 @app.route("/api/providers/presets", methods=["GET"])
 def api_provider_presets():
     """获取预设的 AI 供应商列表（如 DeepSeek、OpenAI 等）"""
     return jsonify(get_provider_presets())
+
+
+@app.route("/api/providers/models", methods=["POST"])
+def api_provider_models():
+    """从供应商的 OpenAI 兼容 /models 接口拉取可用模型列表。"""
+    try:
+        from openai import OpenAI
+
+        data = request.get_json() or {}
+        provider_key = data.get("provider_key", "")
+        saved_provider = {}
+        if provider_key:
+            saved_provider = get_all_providers().get(provider_key, {})
+
+        api_key = data.get("api_key") or saved_provider.get("api_key", "")
+        base_url = data.get("base_url") or saved_provider.get("base_url", "")
+        if not api_key:
+            return jsonify({"status": "error", "message": "请先配置 API Key"}), 400
+        if not base_url:
+            return jsonify({"status": "error", "message": "Base URL 不能为空"}), 400
+
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        models = _extract_model_ids(client.models.list())
+        if provider_key and models:
+            update_provider(provider_key, {"available_models": models})
+        return jsonify({"status": "ok", "models": models, "count": len(models)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"获取模型列表失败: {str(e)}"}), 500
 
 
 @app.route("/api/providers", methods=["GET"])
@@ -1011,19 +1169,11 @@ def api_list_providers():
 def api_add_provider():
     """添加新的 AI 供应商配置"""
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         key = data.get("key", "").strip()
         if not key:
             return jsonify({"status": "error", "message": "供应商ID不能为空"}), 400
-        config = {
-            "name": data.get("name", key),
-            "api_key": data.get("api_key", ""),
-            "base_url": data.get("base_url", ""),
-            "model": data.get("model", ""),
-            "temperature": float(data.get("temperature", 0.3)),
-            "max_tokens": int(data.get("max_tokens", 1000)),
-            "is_thinking": bool(data.get("is_thinking", False)),  # 是否为思考型模型
-        }
+        config = _provider_config_from_request(data, key, partial=False)
         if add_provider(key, config):
             return jsonify({"status": "ok", "message": f"供应商 {config['name']} 已添加"})
         return jsonify({"status": "error", "message": "保存失败"}), 500
@@ -1035,23 +1185,8 @@ def api_add_provider():
 def api_update_provider(key):
     """更新指定供应商的配置（仅更新传入的字段）"""
     try:
-        data = request.get_json()
-        config = {}
-        # 仅收集请求中包含的字段，实现部分更新
-        if "name" in data:
-            config["name"] = data["name"]
-        if "api_key" in data and data["api_key"]:
-            config["api_key"] = data["api_key"]
-        if "base_url" in data:
-            config["base_url"] = data["base_url"]
-        if "model" in data:
-            config["model"] = data["model"]
-        if "temperature" in data:
-            config["temperature"] = float(data["temperature"])
-        if "max_tokens" in data:
-            config["max_tokens"] = int(data["max_tokens"])
-        if "is_thinking" in data:
-            config["is_thinking"] = bool(data["is_thinking"])
+        data = request.get_json() or {}
+        config = _provider_config_from_request(data, key, partial=True)
         if update_provider(key, config):
             return jsonify({"status": "ok", "message": "已更新"})
         return jsonify({"status": "error", "message": "更新失败，供应商不存在"}), 404
@@ -1080,17 +1215,17 @@ def api_test_connection():
     """测试当前激活的 AI 供应商连接：发送简单请求验证 API 可用性"""
     try:
         from openai import OpenAI
-        from settings import get_ai_config
         cfg = get_ai_config()
         if not cfg["api_key"]:
             return jsonify({"status": "error", "message": "请先配置 API Key"}), 400
         client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
-        response = client.chat.completions.create(
-            model=cfg["model"],
-            messages=[{"role": "user", "content": "Hello, reply with 'ok' only."}],
-            max_tokens=10,
+        kwargs = build_chat_completion_kwargs(
+            cfg,
+            [{"role": "user", "content": "Hello, reply with 'ok' only."}],
+            token_limit_override=10,
         )
-        reply = response.choices[0].message.content.strip()
+        response = client.chat.completions.create(**kwargs)
+        reply = (response.choices[0].message.content or "").strip()
         return jsonify({"status": "ok", "message": f"连接成功！模型回复: {reply}"})
     except Exception as e:
         return jsonify({"status": "error", "message": f"连接失败: {str(e)}"}), 500
@@ -1101,7 +1236,7 @@ def api_detect_thinking():
     """
     检测当前模型是否支持思考模式（reasoning）
 
-    通过发送带有 enable_thinking 参数的请求，检查响应中是否包含 reasoning_content。
+    使用当前供应商对应的思考协议发送请求，并结合响应字段、usage 和模型名启发式判断。
     """
     try:
         from openai import OpenAI
@@ -1109,19 +1244,46 @@ def api_detect_thinking():
         if not cfg["api_key"]:
             return jsonify({"status": "error", "message": "请先配置 API Key"}), 400
         client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
-        response = client.chat.completions.create(
-            model=cfg["model"],
-            messages=[{"role": "user", "content": "What is 1+1? Reply with just the number."}],
-            max_tokens=50,
-            extra_body={"enable_thinking": True},
+        kwargs = build_chat_completion_kwargs(
+            cfg,
+            [{"role": "user", "content": "What is 1+1? Reply with just the number."}],
+            token_limit_override=50,
+            force_thinking=True,
         )
+        response = client.chat.completions.create(**kwargs)
         msg = response.choices[0].message
-        # 检查响应消息是否包含思考内容字段
-        has_thinking = hasattr(msg, "reasoning_content") and bool(msg.reasoning_content)
-        if has_thinking:
-            return jsonify({"status": "ok", "is_thinking": True, "message": "✅ 该模型支持思考模式，已自动开启"})
+        has_reasoning = _has_reasoning_content(msg)
+        reasoning_tokens = _get_reasoning_tokens(response)
+        protocol = get_thinking_protocol({**cfg, "is_thinking": True})
+        model_heuristic = bool(cfg.get("effective_is_thinking")) or protocol in {
+            "openai_reasoning",
+            "deepseek_v4",
+            "deepseek_legacy",
+            "qwen_compatible",
+        }
+        is_thinking = has_reasoning or reasoning_tokens > 0 or model_heuristic
+        confidence = "high" if (has_reasoning or reasoning_tokens > 0) else ("medium" if model_heuristic else "low")
+
+        settings = load_settings()
+        active = settings.get("active_provider", "")
+        if active:
+            update_provider(active, {
+                "is_thinking": is_thinking,
+                "thinking_effort": cfg.get("thinking_effort", "medium") or "medium",
+            })
+
+        if is_thinking:
+            message = f"该模型支持思考模式（{protocol}，置信度 {confidence}），已保存检测结果"
         else:
-            return jsonify({"status": "ok", "is_thinking": False, "message": "ℹ️ 该模型未返回思考内容，可能不支持思考模式"})
+            message = "该模型未返回思考内容，也未命中已知思考模型规则，已保存检测结果"
+        return jsonify({
+            "status": "ok",
+            "is_thinking": is_thinking,
+            "confidence": confidence,
+            "thinking_protocol": protocol,
+            "reasoning_tokens": reasoning_tokens,
+            "message": message,
+        })
     except Exception as e:
         return jsonify({"status": "error", "message": f"检测失败: {str(e)}"}), 500
 

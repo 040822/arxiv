@@ -171,7 +171,12 @@ APScheduler cron(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE)
       "base_url": "https://api.deepseek.com",
       "model": "deepseek-chat",
       "temperature": 0.3,
-      "max_tokens": 8192
+      "temperature_enabled": true,
+      "max_tokens": 8192,
+      "max_tokens_enabled": false,
+      "is_thinking": false,
+      "thinking_effort": "medium",
+      "available_models": ["deepseek-chat", "deepseek-reasoner"]
     }
   },
   "prompts": {
@@ -184,6 +189,8 @@ APScheduler cron(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE)
 **settings.py 函数:**
 - `load_settings()` / `save_settings()` — 读写JSON（含自动迁移）
 - `get_ai_config()` — 获取当前激活供应商的 API 配置
+- `build_chat_completion_kwargs()` — 统一构建 Chat Completions 参数（思考模型会省略采样参数）
+- `normalize_provider_config()` — 补齐供应商配置字段，兼容旧版 settings.json
 - `get_prompts()` — 获取 system/user prompt
 - `get_concurrency()` — 获取并发数
 - `get_per_page()` — 获取每页论文数
@@ -235,6 +242,7 @@ APScheduler cron(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE)
 | `/api/providers/<key>` | PUT/DELETE | 更新/删除供应商 |
 | `/api/providers/<key>/activate` | POST | 切换供应商 |
 | `/api/providers/presets` | GET | 预设供应商列表 |
+| `/api/providers/models` | POST | 从供应商 API 自动获取模型列表 |
 | `/api/test_connection` | POST | 测试API连接 |
 | `/api/prompts` | GET/POST | 读取/保存Prompt |
 | `/api/settings/concurrency` | POST | 保存并发数 |
@@ -278,6 +286,14 @@ if "new_column" not in columns:
     "models": ["model-1", "model-2"],
 },
 ```
+
+供应商运行时配置还支持：
+- `available_models` — 自动拉取或预设的模型列表
+- `max_tokens_enabled` — 是否发送输出长度限制；默认 `false`
+- `temperature_enabled/top_p_enabled/presence_penalty_enabled/frequency_penalty_enabled` — 采样参数开关
+- `is_thinking` / `thinking_effort` — 思考模型开关与强度档位（auto/low/medium/high/max）
+
+调用模型时必须通过 `build_chat_completion_kwargs()` 构建参数，不要在业务代码中直接固定传 `temperature` 或 `max_tokens`。
 
 ### 7.4 修改 Prompt
 - prompt 存储在 `data/settings.json` 的 `prompts` 字段

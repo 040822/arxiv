@@ -1469,6 +1469,33 @@ footer {
     flex: 1;
 }
 
+.field-hint {
+    margin-top: 6px;
+    font-size: 0.82em;
+    color: #666;
+}
+
+.advanced-box {
+    padding: 12px;
+    margin-bottom: 15px;
+    border: 1px solid #e1e4e8;
+    border-radius: 8px;
+    background: #fafbfc;
+}
+
+.advanced-box h5 {
+    margin: 0 0 10px;
+    font-size: 0.9em;
+    color: #444;
+}
+
+.advanced-box input:disabled,
+.form-group input:disabled,
+.form-group select:disabled {
+    background: #f3f4f6;
+    color: #888;
+}
+
 .btn-small {
     padding: 8px 10px;
     border: 1px solid #ddd;
