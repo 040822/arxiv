@@ -133,6 +133,9 @@
             <p class="section-desc">每日自动执行抓取、分析、生成报告的定时任务配置</p>
             <div class="form-row">
                 <div class="form-group" style="flex:1;">
+                    <label><input type="checkbox" id="schedule-enabled" {% if schedule_enabled %}checked{% endif %} style="margin-right:6px;">启用每日定时任务</label>
+                </div>
+                <div class="form-group" style="flex:1;">
                     <label>执行时间</label>
                     <div style="display:flex;gap:8px;align-items:center;">
                         <select id="schedule-hour">
@@ -153,6 +156,10 @@
                     <div id="schedule-status-text" style="padding:8px 0;color:#64748b;">加载中...</div>
                 </div>
             </div>
+            <div class="settings-actions">
+                <button class="action-btn btn-primary" onclick="saveSchedule()">💾 保存定时任务</button>
+            </div>
+            <div id="schedule-save-status" class="action-status"></div>
             <div id="scheduled-tasks" class="task-log-list"></div>
         </div>
 
@@ -205,6 +212,10 @@
 
         let currentPage = 1;
         let currentEventSource = null;
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
 
         /* ---- 抓取 ---- */
         async function runFetch(btn) {
@@ -460,29 +471,63 @@
         async function loadScheduled() {
             try {
                 const resp = await fetch('/api/tasks/scheduled');
-                const jobs = await resp.json();
+                const data = await resp.json();
+                const jobs = data.jobs || [];
                 const el = document.getElementById('scheduled-tasks');
                 const statusText = document.getElementById('schedule-status-text');
+                document.getElementById('schedule-enabled').checked = !!data.enabled;
+                document.getElementById('schedule-hour').value = data.hour ?? document.getElementById('schedule-hour').value;
+                document.getElementById('schedule-minute').value = data.minute ?? document.getElementById('schedule-minute').value;
+                if (!data.enabled) {
+                    el.innerHTML = '';
+                    statusText.textContent = '已停用';
+                    return;
+                }
                 if (jobs.length === 0) {
                     el.innerHTML = '';
                     statusText.textContent = '未配置';
                     return;
                 }
                 const j = jobs[0];
-                statusText.innerHTML = `<span style="color:#059669;">✅ 已启用</span> · 下次执行: ${j.next_run}`;
+                statusText.innerHTML = `<span style="color:#059669;">✅ 已启用</span> · 下次执行: ${escapeHtml(j.next_run)}`;
                 el.innerHTML = jobs.map(j => `
                     <div class="log-item log-running">
                         <div class="log-main">
                             <span class="log-status">⏰</span>
-                            <span class="log-task">${j.name || j.id}</span>
-                            <span class="log-msg">触发规则: ${j.trigger}</span>
-                            <span class="log-time">下次执行: ${j.next_run}</span>
+                            <span class="log-task">${escapeHtml(j.name || j.id)}</span>
+                            <span class="log-msg">触发规则: ${escapeHtml(j.trigger)}</span>
+                            <span class="log-time">下次执行: ${escapeHtml(j.next_run)}</span>
                         </div>
                     </div>
                 `).join('');
             } catch (e) {
                 document.getElementById('scheduled-tasks').innerHTML = '';
                 document.getElementById('schedule-status-text').textContent = '加载失败';
+            }
+        }
+
+        async function saveSchedule() {
+            const statusEl = document.getElementById('schedule-save-status');
+            const data = {
+                enabled: document.getElementById('schedule-enabled').checked,
+                hour: parseInt(document.getElementById('schedule-hour').value) || 0,
+                minute: parseInt(document.getElementById('schedule-minute').value) || 0,
+            };
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在保存...';
+            try {
+                const resp = await fetch('/api/settings/schedule', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + (result.message || '保存失败');
+                if (result.status === 'ok') loadScheduled();
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
             }
         }
 
@@ -503,17 +548,17 @@
                         const avgDur = s.avg_duration ? s.avg_duration.toFixed(1) + 's' : 'N/A';
                         html += `
                         <div class="task-stat-card">
-                            <div class="task-stat-name">${name}</div>
+                            <div class="task-stat-name">${escapeHtml(name)}</div>
                             <div class="task-stat-row">
-                                <span>总执行: <strong>${s.total_runs}</strong></span>
-                                <span>成功率: <strong>${successRate}%</strong></span>
-                                <span>平均耗时: <strong>${avgDur}</strong></span>
+                                <span>总执行: <strong>${escapeHtml(s.total_runs)}</strong></span>
+                                <span>成功率: <strong>${escapeHtml(successRate)}%</strong></span>
+                                <span>平均耗时: <strong>${escapeHtml(avgDur)}</strong></span>
                             </div>
                             <div class="task-stat-row">
-                                <span class="stat-success">✅ ${s.success_runs}</span>
-                                <span class="stat-error">❌ ${s.error_runs}</span>
-                                <span class="stat-running">⏳ ${s.running}</span>
-                                <span>最后: ${lastRun}</span>
+                                <span class="stat-success">✅ ${escapeHtml(s.success_runs)}</span>
+                                <span class="stat-error">❌ ${escapeHtml(s.error_runs)}</span>
+                                <span class="stat-running">⏳ ${escapeHtml(s.running)}</span>
+                                <span>最后: ${escapeHtml(lastRun)}</span>
                             </div>
                         </div>`;
                     }
@@ -526,9 +571,9 @@
                     runningEl.innerHTML = data.running.map(r => `
                         <div class="log-item log-running">
                             <span class="log-status">⏳</span>
-                            <span class="log-task">${TASK_NAMES[r.task_name] || r.task_name}</span>
-                            <span class="log-time">${r.started_at}</span>
-                            <span class="log-msg">${r.message || ''}</span>
+                            <span class="log-task">${escapeHtml(TASK_NAMES[r.task_name] || r.task_name)}</span>
+                            <span class="log-time">${escapeHtml(r.started_at)}</span>
+                            <span class="log-msg">${escapeHtml(r.message || '')}</span>
                         </div>
                     `).join('');
                 } else {
@@ -561,12 +606,12 @@
                     <div class="log-item ${statusClass}">
                         <div class="log-main">
                             <span class="log-status">${statusIcon}</span>
-                            <span class="log-task">${name}</span>
-                            <span class="log-msg">${r.message || ''}</span>
-                            <span class="log-dur">${dur}</span>
-                            <span class="log-time">${r.started_at}</span>
+                            <span class="log-task">${escapeHtml(name)}</span>
+                            <span class="log-msg">${escapeHtml(r.message || '')}</span>
+                            <span class="log-dur">${escapeHtml(dur)}</span>
+                            <span class="log-time">${escapeHtml(r.started_at)}</span>
                         </div>
-                        ${r.detail ? `<div class="log-detail">${r.detail}</div>` : ''}
+                        ${r.detail ? `<div class="log-detail">${escapeHtml(r.detail)}</div>` : ''}
                     </div>`;
                 }).join('');
                 const totalPages = Math.ceil(data.total / data.per_page);

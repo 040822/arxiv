@@ -75,8 +75,10 @@ APScheduler cron(hour=10, minute=0)
     → fetch_latest_papers(days=3)  # 近 3 日
     → analyze_pending_papers(limit=1000)
     → generate_report_content(latest_date)
-    → save_report()
+  → save_report()
 ```
+
+实际执行时间从 `settings.json` 的 `schedule` 字段读取，`config.py` 仅提供首次默认值。
 
 ---
 
@@ -93,14 +95,19 @@ if "new_field" in migrated:
 
 **否则新字段在读取时会丢失！** 这是已踩过的坑。
 
-### 2. arXiv API 注意事项
+### 2. 认证与敏感字段
+
+- 设置管理密码后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录
+- `GET /api/providers` 只能返回 `api_key_masked`，不要返回完整 `api_key`
+- 用户/AI/数据库内容进入 HTML 前必须转义，报告页的 `|safe` 只用于后端生成且已转义的 HTML
+### 3. arXiv API 注意事项
 
 - `submittedDate:[... TO ...]` 过滤器**不工作**，不要使用
 - 正确做法：`cat:xxx` + `sortBy=submittedDate` + 代码中按 `published` 日期过滤
 - `cat:cs.RO` 比 `primary_category:cs.RO` 更可靠
 - arXiv 返回的 `published` 是带 UTC 时区的 datetime，比较时必须用 `datetime.now(timezone.utc)`
 
-### 3. 数据库迁移模式
+### 4. 数据库迁移模式
 
 ```python
 cursor.execute("PRAGMA table_info(table_name)")

@@ -235,15 +235,20 @@ def fetch_latest_papers(categories=None, max_results=None, days=None):
                 num_retries=3,
             )
 
-            # 使用 primary_category 查询，只返回主分类匹配的论文
+            # 使用 cat: 查询更可靠，再在代码中保留主分类匹配的论文
+            search_limit = max_results * 5
             search = arxiv.Search(
-                query=f"primary_category:{category}",
-                max_results=max_results,
+                query=f"cat:{category}",
+                max_results=search_limit,
                 sort_by=arxiv.SortCriterion.SubmittedDate,
                 sort_order=arxiv.SortOrder.Descending,
             )
 
+            category_count = 0
             for result in client.results(search):
+                if str(result.primary_category) != category:
+                    continue
+
                 # 解析 arXiv ID，去掉版本号
                 arxiv_id = result.entry_id.split("/abs/")[-1]
                 if "." in arxiv_id:
@@ -285,7 +290,10 @@ def fetch_latest_papers(categories=None, max_results=None, days=None):
                 if paper_id:
                     paper_data["id"] = paper_id
                     all_papers.append(paper_data)
+                    category_count += 1
                     logger.info(f"  New paper: {arxiv_id} - {paper_data['title'][:60]}...")
+                    if category_count >= max_results:
+                        break
 
         except Exception as e:
             # 单个分类失败不影响整体
@@ -541,23 +549,3 @@ def fetch_paper_by_id(arxiv_id):
     except Exception as e:
         logger.error(f"Error fetching paper {arxiv_id}: {e}")
         return None
-
-
-# ============================================================
-# 兼容性函数
-# ============================================================
-
-def fetch_papers_by_date(date_str, categories=None):
-    """
-    按日期抓取论文（旧版接口，保留用于向后兼容）。
-
-    已废弃：请使用 fetch_by_date() 代替。
-
-    参数:
-        date_str (str): 目标日期，格式为 "YYYY-MM-DD"
-        categories (list, optional): arXiv 分类列表
-
-    返回:
-        list[dict]: 论文数据列表
-    """
-    return fetch_by_date(date_str, categories)

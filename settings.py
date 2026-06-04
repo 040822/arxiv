@@ -21,7 +21,8 @@
 import json
 import os
 import logging
-from config import DB_DIR
+from string import Formatter
+from config import DB_DIR, SCHEDULE_HOUR, SCHEDULE_MINUTE
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ THINKING_BUDGETS = {
     "max": 16384,
 }
 OPENAI_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
+REQUIRED_PROMPT_FIELDS = {"title", "authors", "abstract", "tag_candidates", "rating_criteria"}
 
 DEFAULT_PROVIDER_OPTIONS = {
     "available_models": [],
@@ -114,6 +116,12 @@ DEFAULT_PROVIDER_OPTIONS = {
 DEFAULT_SETTINGS = {
     "active_provider": "deepseek",
     "concurrency": 5,
+    "per_page": 20,
+    "schedule": {
+        "enabled": True,
+        "hour": SCHEDULE_HOUR,
+        "minute": SCHEDULE_MINUTE,
+    },
     "providers": {
         "deepseek": {
             "name": "DeepSeek",
@@ -180,6 +188,18 @@ def _as_int(value, default):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_schedule(schedule):
+    """补齐并约束定时任务配置。"""
+    schedule = dict(schedule or {})
+    hour = _as_int(schedule.get("hour"), SCHEDULE_HOUR)
+    minute = _as_int(schedule.get("minute"), SCHEDULE_MINUTE)
+    return {
+        "enabled": _as_bool(schedule.get("enabled"), True),
+        "hour": max(0, min(23, hour)),
+        "minute": max(0, min(59, minute)),
+    }
 
 
 def _model_leaf(model):
@@ -490,6 +510,8 @@ def load_settings():
             merged["concurrency"] = migrated["concurrency"]
         if "per_page" in migrated:
             merged["per_page"] = migrated["per_page"]
+        if "schedule" in migrated:
+            merged["schedule"] = _normalize_schedule(migrated["schedule"])
         if "proxy" in migrated:
             merged["proxy"] = migrated["proxy"]
         if "fetch" in migrated:
@@ -621,6 +643,32 @@ def get_fetch_config():
         "batch_days": fetch.get("batch_days", FETCH_BATCH_DAYS),
         "batch_delay": fetch.get("batch_delay", FETCH_BATCH_DELAY),
     }
+
+
+def get_schedule_config():
+    """
+    获取每日自动任务配置。
+
+    返回:
+        dict: enabled/hour/minute，默认来自 config.py 的 SCHEDULE_HOUR/MINUTE
+    """
+    settings = load_settings()
+    return _normalize_schedule(settings.get("schedule", {}))
+
+
+def save_schedule_config(schedule_config):
+    """
+    保存每日自动任务配置到 settings.json。
+
+    参数:
+        schedule_config: 包含 enabled/hour/minute 的字典
+
+    返回:
+        bool: 保存是否成功
+    """
+    settings = load_settings()
+    settings["schedule"] = _normalize_schedule(schedule_config)
+    return save_settings(settings)
 
 
 def save_fetch_config(fetch_config):
@@ -821,6 +869,39 @@ def save_prompts(prompts):
     settings = load_settings()
     settings["prompts"] = prompts
     return save_settings(settings)
+
+
+def validate_prompt_template(user_prompt):
+    """
+    校验用户 Prompt 模板是否能被 str.format 正常渲染。
+
+    返回:
+        tuple(bool, str): 是否有效，以及错误消息
+    """
+    try:
+        fields = set()
+        for _, field_name, _, _ in Formatter().parse(user_prompt or ""):
+            if field_name:
+                fields.add(field_name.split(".")[0].split("[")[0])
+    except ValueError as e:
+        return False, f"Prompt 大括号格式错误：{e}。普通 JSON 大括号需要写成 {{ 和 }}。"
+
+    missing = sorted(REQUIRED_PROMPT_FIELDS - fields)
+    if missing:
+        return False, "Prompt 缺少必需变量：" + ", ".join("{" + name + "}" for name in missing)
+
+    try:
+        (user_prompt or "").format(
+            title="测试标题",
+            authors="测试作者",
+            abstract="测试摘要",
+            tag_candidates="标签A, 标签B",
+            rating_criteria="评级标准",
+        )
+    except (KeyError, IndexError, ValueError) as e:
+        return False, f"Prompt 渲染失败：{e}"
+
+    return True, ""
 
 
 # ============================================================================

@@ -179,7 +179,7 @@ CREATE TABLE reading_list (
 | `MAX_PAPERS_PER_CATEGORY` | 每分类每次拉取上限 |
 | `TAG_CANDIDATES` | AI 标签候选列表 |
 | `RATING_CRITERIA` | 评级标准文本 |
-| `SCHEDULE_HOUR/MINUTE` | 定时任务时间 |
+| `SCHEDULE_HOUR/MINUTE` | 定时任务首次默认时间；运行后以 `settings.json.schedule` 为准 |
 | `FETCH_REQUEST_DELAY` | API 请求间隔 |
 | `FETCH_BATCH_DAYS` | 分批抓取每批天数 |
 | `FETCH_BATCH_DELAY` | 批次间隔 |
@@ -196,6 +196,7 @@ CREATE TABLE reading_list (
 | `prompts` | system/user prompt 模板 |
 | `concurrency` | AI 分析并发数 |
 | `per_page` | 首页每页论文数 |
+| `schedule` | 每日定时任务启用状态和执行时间 |
 | `fetch` | 抓取延迟配置 |
 | `proxy` | 代理配置 |
 | `admin_password` | 管理密码（SHA-256） |
@@ -203,6 +204,8 @@ CREATE TABLE reading_list (
 > **⚠️ 重要：** 在 `load_settings()` 中添加新字段时，必须在合并逻辑中显式添加 `if "key" in migrated: merged["key"] = migrated["key"]`，否则新字段在读取时会丢失！
 
 AI 调用参数统一由 `settings.build_chat_completion_kwargs()` 生成。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，否则会破坏不同供应商的兼容性。
+
+设置管理密码后，写接口和敏感设置读取接口需要登录；供应商列表接口只能返回脱敏后的 `api_key_masked`。
 
 ---
 

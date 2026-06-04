@@ -15,10 +15,11 @@ Flask Web 应用主模块
 import logging
 import os
 import json
+import secrets
 import threading
 import time
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for
 from apscheduler.schedulers.background import BackgroundScheduler
 from database import (
     init_db, get_papers_with_analysis, get_all_tags,
@@ -35,17 +36,17 @@ from database import (
     mark_as_read, mark_as_unread, get_reading_list, get_reading_list_count
 )
 from fetcher import fetch_latest_papers, fetch_paper_by_id, parse_arxiv_id
-from analyzer import analyze_pending_papers, analyze_paper_full
-from markdown_gen import generate_all_markdown
+from analyzer import analyze_pending_papers, analyze_paper_full, analyze_papers
 from settings import (
     load_settings, save_settings, get_provider_presets, get_all_providers,
     add_provider, remove_provider, switch_provider, update_provider,
     get_prompts, save_prompts, get_concurrency, get_per_page,
-    get_admin_password, set_admin_password, verify_admin_password, has_admin_password,
+    set_admin_password, verify_admin_password, has_admin_password,
     build_chat_completion_kwargs, get_ai_config, get_thinking_protocol,
-    normalize_provider_config
+    normalize_provider_config, get_schedule_config, save_schedule_config,
+    validate_prompt_template
 )
-from config import WEB_HOST, WEB_PORT, SCHEDULE_HOUR, SCHEDULE_MINUTE
+from config import WEB_HOST, WEB_PORT
 
 # ==================== 日志配置 ====================
 
@@ -59,6 +60,7 @@ logger = logging.getLogger(__name__)
 # ==================== Flask 应用初始化 ====================
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
 
 # 进度存储：用于跟踪长时间运行任务（抓取、分析）的实时进度
 # key 为 task_id，value 为进度数据字典（含 current、total、status、message 等字段）
@@ -77,6 +79,74 @@ def get_progress(task_id):
     """获取指定任务的进度数据，不存在则返回 None"""
     with progress_lock:
         return progress_store.get(task_id)
+
+
+# ==================== 认证与访问控制 ====================
+
+PUBLIC_GET_ENDPOINTS = {
+    "index",
+    "paper_detail",
+    "search",
+    "browse",
+    "reports_page",
+    "report_detail_page",
+    "reading_list_page",
+    "api_papers",
+    "api_tags",
+    "api_stats",
+    "api_progress",
+    "api_todo_status",
+    "api_reading_list",
+    "login_page",
+    "api_auth_status",
+}
+AUTH_ENDPOINTS = {"login_page", "api_auth_login", "api_auth_logout", "api_auth_status"}
+
+
+def is_authenticated():
+    """未设置管理密码时保持本地免登录；设置后检查 session。"""
+    return (not has_admin_password()) or bool(session.get("admin_authenticated"))
+
+
+def _json_auth_error():
+    return jsonify({
+        "status": "error",
+        "message": "需要登录后才能执行该操作",
+        "auth_required": True,
+    }), 401
+
+
+def _safe_next_url(next_url):
+    """只允许站内相对路径作为登录后的跳转目标。"""
+    if not next_url or not next_url.startswith("/") or next_url.startswith("//"):
+        return "/settings"
+    return next_url
+
+
+@app.before_request
+def require_auth_for_protected_routes():
+    """保护设置页、任务页、所有写接口和敏感配置读取接口。"""
+    endpoint = request.endpoint
+    if endpoint in (None, "static") or endpoint in AUTH_ENDPOINTS:
+        return None
+    if not has_admin_password():
+        return None
+    if request.method == "GET" and endpoint in PUBLIC_GET_ENDPOINTS:
+        return None
+    if is_authenticated():
+        return None
+    if request.path.startswith("/api/"):
+        return _json_auth_error()
+    return redirect(url_for("login_page", next=request.full_path if request.query_string else request.path))
+
+
+@app.context_processor
+def auth_processor():
+    """向模板注入认证状态，用于显示未设置密码提示。"""
+    return {
+        "auth_enabled": has_admin_password(),
+        "is_authenticated": is_authenticated(),
+    }
 
 
 # ==================== 模板上下文处理器 ====================
@@ -110,6 +180,31 @@ def utility_processor():
 # ==================== 定时任务调度器 ====================
 
 scheduler = BackgroundScheduler()
+
+
+def configure_daily_job(schedule=None):
+    """按 settings.json 中的配置启用、禁用或重建每日任务。"""
+    schedule = schedule or get_schedule_config()
+    try:
+        if hasattr(scheduler, "get_job") and scheduler.get_job("daily_pipeline"):
+            scheduler.remove_job("daily_pipeline")
+    except Exception as e:
+        logger.warning(f"Failed to remove existing daily job: {e}")
+
+    if not schedule.get("enabled", True):
+        logger.info("Scheduler daily job disabled.")
+        return
+
+    scheduler.add_job(
+        daily_pipeline,
+        "cron",
+        hour=schedule["hour"],
+        minute=schedule["minute"],
+        id="daily_pipeline",
+        name="每日定时任务",
+        replace_existing=True,
+    )
+    logger.info(f"Scheduler daily job configured: {schedule['hour']:02d}:{schedule['minute']:02d}")
 
 
 def daily_pipeline():
@@ -154,6 +249,42 @@ def daily_pipeline():
 #                         页面路由（Page Routes）
 # ====================================================================
 
+@app.route("/login")
+def login_page():
+    """登录页。未设置管理密码或已登录时直接返回目标页面。"""
+    next_url = _safe_next_url(request.args.get("next") or "/settings")
+    if is_authenticated():
+        return redirect(next_url)
+    return render_template("login.html", next_url=next_url)
+
+
+@app.route("/api/auth/status", methods=["GET"])
+def api_auth_status():
+    """获取当前认证状态。"""
+    return jsonify({
+        "password_enabled": has_admin_password(),
+        "authenticated": is_authenticated(),
+    })
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    """使用管理密码登录。"""
+    data = request.get_json() or {}
+    password = data.get("password", "")
+    if verify_admin_password(password):
+        session["admin_authenticated"] = True
+        return jsonify({"status": "ok", "message": "登录成功"})
+    return jsonify({"status": "error", "message": "密码错误"}), 403
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    """退出登录。"""
+    session.pop("admin_authenticated", None)
+    return jsonify({"status": "ok", "message": "已退出登录"})
+
+
 @app.route("/")
 def index():
     """
@@ -164,7 +295,7 @@ def index():
     - tag: 按标签筛选
     - date: 按日期筛选（默认最新日期）
     - min_rating: 最低评级筛选（0-5）
-    - per_page: 每页数量（5/10/20/50/100，修改后持久化保存）
+    - per_page: 每页数量（5/10/20/50/100，仅影响当前请求）
     """
     page = request.args.get("page", 1, type=int)
     tag = request.args.get("tag", None)
@@ -173,12 +304,9 @@ def index():
     per_page_param = request.args.get("per_page", None, type=int)
     per_page = get_per_page()
 
-    # 如果用户指定了合法的每页数量，则持久化保存到配置
+    # 如果用户指定了合法的每页数量，则仅用于当前请求；持久化保存走受保护的设置 API
     if per_page_param and per_page_param in (5, 10, 20, 50, 100):
         per_page = per_page_param
-        settings = load_settings()
-        settings["per_page"] = per_page
-        save_settings(settings)
 
     # 评级范围限制在 0-5 之间
     if min_rating is not None:
@@ -334,9 +462,11 @@ def tasks_page():
 
     显示定时任务状态、任务统计和日志。传入定时任务的执行时间配置。
     """
+    schedule = get_schedule_config()
     return render_template("tasks.html",
-        schedule_hour=SCHEDULE_HOUR,
-        schedule_minute=SCHEDULE_MINUTE
+        schedule_enabled=schedule["enabled"],
+        schedule_hour=schedule["hour"],
+        schedule_minute=schedule["minute"]
     )
 
 
@@ -691,7 +821,7 @@ def api_batch_analyze_papers():
         if not papers:
             return jsonify({"status": "ok", "message": "所选论文均已分析过", "count": 0})
         concurrency = get_concurrency()
-        count = analyze_pending_papers(limit=len(papers), concurrency=concurrency)
+        count = analyze_papers(papers, concurrency=concurrency)
         return jsonify({"status": "ok", "message": f"已分析 {count} 篇论文", "count": count})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -810,6 +940,18 @@ def api_add_todo(arxiv_id):
     if add_to_reading_list(paper["id"]):
         return jsonify({"status": "ok", "message": "已加入阅读清单"})
     return jsonify({"status": "error", "message": "添加失败"}), 500
+
+
+@app.route("/api/paper/<arxiv_id>/todo/status", methods=["GET"])
+def api_todo_status(arxiv_id):
+    """只读检查论文是否已在阅读清单中。"""
+    paper = get_paper_by_arxiv_id(arxiv_id)
+    if not paper:
+        return jsonify({"status": "error", "message": "论文不存在"}), 404
+    return jsonify({
+        "status": "ok",
+        "in_reading_list": is_in_reading_list(paper["id"]),
+    })
 
 
 @app.route("/api/paper/<arxiv_id>/todo", methods=["DELETE"])
@@ -971,6 +1113,38 @@ def api_save_fetch_config():
         if save_fetch_config(fetch_config):
             return jsonify({"status": "ok", "message": "抓取配置已保存"})
         return jsonify({"status": "error", "message": "保存失败"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/settings/schedule", methods=["GET"])
+def api_get_schedule_config():
+    """获取每日定时任务配置。"""
+    return jsonify(get_schedule_config())
+
+
+@app.route("/api/settings/schedule", methods=["POST"])
+def api_save_schedule_config():
+    """保存每日定时任务配置，并立即重建 APScheduler job。"""
+    try:
+        data = request.get_json() or {}
+        schedule_config = {
+            "enabled": _request_bool(data, "enabled", True),
+            "hour": _request_int(data, "hour", 10),
+            "minute": _request_int(data, "minute", 0),
+        }
+        if not save_schedule_config(schedule_config):
+            return jsonify({"status": "error", "message": "保存失败"}), 500
+        schedule = get_schedule_config()
+        configure_daily_job(schedule)
+        if not getattr(scheduler, "running", False):
+            scheduler.start()
+        status = "已启用" if schedule["enabled"] else "已停用"
+        return jsonify({
+            "status": "ok",
+            "message": f"定时任务{status}，时间 {schedule['hour']:02d}:{schedule['minute']:02d}",
+            "schedule": schedule,
+        })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -1160,6 +1334,7 @@ def api_list_providers():
             item["api_key_masked"] = key[:4] + "****" + key[-4:] if len(key) > 8 else "****"
         else:
             item["api_key_masked"] = ""
+        item.pop("api_key", None)
         item["is_active"] = (k == active)
         result[k] = item
     return jsonify({"active_provider": active, "providers": result})
@@ -1309,6 +1484,9 @@ def api_save_prompts():
             "system_prompt": data.get("system_prompt", ""),
             "user_prompt": data.get("user_prompt", ""),
         }
+        ok, message = validate_prompt_template(prompts["user_prompt"])
+        if not ok:
+            return jsonify({"status": "error", "message": message}), 400
         if save_prompts(prompts):
             return jsonify({"status": "ok", "message": "Prompt 已保存"})
         return jsonify({"status": "error", "message": "保存失败"}), 500
@@ -1416,7 +1594,11 @@ def api_set_admin_password():
 def api_clear_admin_password():
     """清除管理密码（设置为空字符串）"""
     try:
+        data = request.get_json(silent=True) or {}
+        if has_admin_password() and not verify_admin_password(data.get("current_password", "")):
+            return jsonify({"status": "error", "message": "当前密码错误"}), 403
         set_admin_password("")
+        session.pop("admin_authenticated", None)
         return jsonify({"status": "ok", "message": "管理密码已清除"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -1461,6 +1643,7 @@ def api_clear_logs():
 @app.route("/api/tasks/scheduled", methods=["GET"])
 def api_scheduled_tasks():
     """获取 APScheduler 中所有已注册的定时任务信息（ID、名称、下次执行时间、触发器类型）"""
+    schedule = get_schedule_config()
     jobs = []
     for job in scheduler.get_jobs():
         next_run = job.next_run_time
@@ -1470,7 +1653,12 @@ def api_scheduled_tasks():
             "next_run": next_run.strftime("%Y-%m-%d %H:%M:%S") if next_run else "未调度",
             "trigger": str(job.trigger),
         })
-    return jsonify(jobs)
+    return jsonify({
+        "enabled": schedule["enabled"],
+        "hour": schedule["hour"],
+        "minute": schedule["minute"],
+        "jobs": jobs,
+    })
 
 
 # ====================================================================
@@ -1487,19 +1675,10 @@ def create_app():
     3. 启动调度器
     """
     init_db()
-
-    # 注册每日定时任务（cron 表达式由 config.py 中的 SCHEDULE_HOUR/MINUTE 控制）
-    scheduler.add_job(
-        daily_pipeline,
-        "cron",
-        hour=SCHEDULE_HOUR,
-        minute=SCHEDULE_MINUTE,
-        id="daily_pipeline",
-        name="每日定时任务",
-        replace_existing=True,
-    )
-    scheduler.start()
-    logger.info(f"Scheduler started: daily at {SCHEDULE_HOUR:02d}:{SCHEDULE_MINUTE:02d}")
+    configure_daily_job()
+    if not getattr(scheduler, "running", False):
+        scheduler.start()
+        logger.info("Scheduler started.")
 
     return app
 

@@ -22,6 +22,16 @@
             <button class="tab-btn" onclick="switchTab('admin')">🔒 管理</button>
         </div>
 
+        {% if not auth_enabled %}
+        <div class="action-status error" style="display:block;margin:12px 0;">
+            ⚠️ 尚未设置管理密码，设置页和写接口当前未受保护。请在「管理」中设置密码。
+        </div>
+        {% else %}
+        <div class="settings-actions" style="justify-content:flex-end;">
+            <button class="action-btn" onclick="logout()">退出登录</button>
+        </div>
+        {% endif %}
+
         <!-- ============ Tab 1: AI 设置 ============ -->
         <div id="tab-ai" class="tab-panel active">
             <div class="settings-section">
@@ -215,7 +225,11 @@
         }
 
         function jsString(value) {
-            return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            return escapeHtml(String(value ?? '')
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\r/g, '\\r')
+                .replace(/\n/g, '\\n'));
         }
 
         function switchTab(name) {
@@ -278,7 +292,7 @@
                     <div class="provider-item-detail">
                         <span>Base URL: ${escapeHtml(prov.base_url)}</span>
                         <span>模型: ${escapeHtml(prov.model)}</span>
-                        <span>API Key: ${prov.api_key_masked || '未设置'}</span>
+                        <span>API Key: ${escapeHtml(prov.api_key_masked || '未设置')}</span>
                         ${thinking ? `<span class="thinking-badge">🧠 思考模型 · ${escapeHtml(effort)}</span>` : ''}
                         ${prov.max_tokens_enabled ? `<span>限制输出: ${prov.max_tokens}</span>` : ''}
                     </div>
@@ -492,6 +506,14 @@
 
         function togglePwd(id) { const el = document.getElementById(id); el.type = el.type === 'password' ? 'text' : 'password'; }
 
+        async function logout() {
+            try {
+                await fetch('/api/auth/logout', {method: 'POST'});
+            } finally {
+                window.location.href = '/login';
+            }
+        }
+
         async function testConnection() {
             const statusEl = document.getElementById('test-status'); statusEl.className = 'action-status info'; statusEl.textContent = '⏳ 正在测试...';
             try { const resp = await fetch('/api/test_connection', {method: 'POST'}); const result = await resp.json();
@@ -565,7 +587,7 @@
 
         function parseQuestionsFromPrompt(prompt) { const questions = []; const regex = /### Q\d+:\s*(.*?)(?:\\n|\n)/g; let m; while ((m = regex.exec(prompt)) !== null) questions.push(m[1].trim()); renderQuestions(questions.length === 0 ? DEFAULT_QUESTIONS : questions); }
 
-        function renderQuestions(questions) { const list = document.getElementById('qa-questions-list'); let html = ''; questions.forEach((q, i) => { html += `<div class="qa-q-item"><span class="qa-q-label">Q${i+1}</span><input type="text" class="qa-q-input" value="${q.replace(/"/g, '&quot;')}" data-index="${i}"><button class="btn-sm btn-delete" onclick="removeQuestion(${i})">✕</button></div>`; }); list.innerHTML = html; }
+        function renderQuestions(questions) { const list = document.getElementById('qa-questions-list'); let html = ''; questions.forEach((q, i) => { html += `<div class="qa-q-item"><span class="qa-q-label">Q${i+1}</span><input type="text" class="qa-q-input" value="${escapeHtml(q)}" data-index="${i}"><button class="btn-sm btn-delete" onclick="removeQuestion(${i})">✕</button></div>`; }); list.innerHTML = html; }
         function getQuestionsFromUI() { return Array.from(document.querySelectorAll('.qa-q-input')).map(el => el.value.trim()).filter(v => v); }
         function addQuestion() { const input = document.getElementById('qa-new-question'); const q = input.value.trim(); if (!q) return; const questions = getQuestionsFromUI(); questions.push(q); renderQuestions(questions); input.value = ''; }
         function removeQuestion(index) { const questions = getQuestionsFromUI(); questions.splice(index, 1); renderQuestions(questions); }
@@ -605,20 +627,20 @@
                 const resp = await fetch('/api/db/info'); const data = await resp.json();
                 const info = document.getElementById('db-info');
                 info.innerHTML = `
-                    <div class="db-stat"><div class="db-stat-value">${data.total_papers}</div><div class="db-stat-label">论文总数</div></div>
-                    <div class="db-stat"><div class="db-stat-value">${data.analyzed_papers}</div><div class="db-stat-label">已分析</div></div>
-                    <div class="db-stat"><div class="db-stat-value">${data.unanalyzed_papers}</div><div class="db-stat-label">待分析</div></div>
-                    <div class="db-stat"><div class="db-stat-value">${data.total_tags}</div><div class="db-stat-label">标签种类</div></div>
-                    <div class="db-stat"><div class="db-stat-value">${data.total_categories}</div><div class="db-stat-label">分类数</div></div>
-                    <div class="db-stat"><div class="db-stat-value">${data.db_size}</div><div class="db-stat-label">数据库大小</div></div>
-                    <div class="db-stat"><div class="db-stat-value">${data.avg_rating || 'N/A'}</div><div class="db-stat-label">平均评级</div></div>
-                    <div class="db-stat db-stat-wide"><div class="db-stat-label">日期范围</div><div class="db-stat-value">${data.date_range || 'N/A'}</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.total_papers)}</div><div class="db-stat-label">论文总数</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.analyzed_papers)}</div><div class="db-stat-label">已分析</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.unanalyzed_papers)}</div><div class="db-stat-label">待分析</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.total_tags)}</div><div class="db-stat-label">标签种类</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.total_categories)}</div><div class="db-stat-label">分类数</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.db_size)}</div><div class="db-stat-label">数据库大小</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.avg_rating || 'N/A')}</div><div class="db-stat-label">平均评级</div></div>
+                    <div class="db-stat db-stat-wide"><div class="db-stat-label">日期范围</div><div class="db-stat-value">${escapeHtml(data.date_range || 'N/A')}</div></div>
                 `;
                 const paths = document.getElementById('db-paths');
                 paths.innerHTML = `
-                    <div class="db-path-item"><strong>数据库文件:</strong> <code>${data.db_path}</code></div>
-                    <div class="db-path-item"><strong>输出目录:</strong> <code>${data.output_dir}</code></div>
-                    <div class="db-path-item"><strong>日报目录:</strong> <code>${data.daily_dir}</code></div>
+                    <div class="db-path-item"><strong>数据库文件:</strong> <code>${escapeHtml(data.db_path)}</code></div>
+                    <div class="db-path-item"><strong>输出目录:</strong> <code>${escapeHtml(data.output_dir)}</code></div>
+                    <div class="db-path-item"><strong>日报目录:</strong> <code>${escapeHtml(data.daily_dir)}</code></div>
                 `;
             } catch (e) { document.getElementById('db-info').innerHTML = '<p>加载失败</p>'; }
         }
@@ -642,8 +664,13 @@
         async function clearAdminPassword() {
             if (!confirm('确定清除管理密码？')) return;
             const statusEl = document.getElementById('admin-status');
+            const current = document.getElementById('admin-current-pwd').value;
             try {
-                const resp = await fetch('/api/admin/password', { method: 'DELETE' });
+                const resp = await fetch('/api/admin/password', {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({current_password: current})
+                });
                 const result = await resp.json(); statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
             } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
         }
@@ -652,10 +679,10 @@
             try {
                 const resp = await fetch('/api/stats'); const data = await resp.json();
                 document.getElementById('system-status').innerHTML = `
-                    <div class="db-stat"><div class="db-stat-value">${data.total_papers}</div><div class="db-stat-label">论文总数</div></div>
-                    <div class="db-stat"><div class="db-stat-value">${data.analyzed_papers}</div><div class="db-stat-label">已分析</div></div>
-                    <div class="db-stat"><div class="db-stat-value">${data.unanalyzed_papers}</div><div class="db-stat-label">待分析</div></div>
-                    <div class="db-stat"><div class="db-stat-value">${data.concurrency}</div><div class="db-stat-label">并发数</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.total_papers)}</div><div class="db-stat-label">论文总数</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.analyzed_papers)}</div><div class="db-stat-label">已分析</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.unanalyzed_papers)}</div><div class="db-stat-label">待分析</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.concurrency)}</div><div class="db-stat-label">并发数</div></div>
                 `;
             } catch (e) {}
         }

@@ -35,7 +35,7 @@
                 {% if paper.pdf_url %}
                 <span class="meta-item">📥 <a href="{{ paper.pdf_url }}" target="_blank" class="meta-link">下载 PDF</a></span>
                 {% endif %}
-                <span class="meta-item">📌 <a href="javascript:void(0)" class="meta-link" id="todo-toggle" onclick="toggleTodo('{{ paper.arxiv_id }}')">加入阅读清单</a></span>
+                <span class="meta-item">📌 <a href="javascript:void(0)" class="meta-link" id="todo-toggle" onclick="toggleTodo({{ paper.arxiv_id | tojson }})">加入阅读清单</a></span>
                 {% if paper.hidden %}
                 <span class="meta-item" style="color:#dc3545;">🚫 已隐藏</span>
                 {% endif %}
@@ -86,11 +86,11 @@
                         {% if analysis and analysis.tags %}
                             {% if analysis.tags is string %}
                                 {% for t in analysis.tags.split(",") %}
-                                <span class="tag-small">{{ t.strip() }} <a onclick="removeTag('{{ t.strip() }}')" class="tag-remove">✕</a></span>
+                                <span class="tag-small">{{ t.strip() }} <a onclick="removeTag({{ t.strip() | tojson }})" class="tag-remove">✕</a></span>
                                 {% endfor %}
                             {% else %}
                                 {% for t in analysis.tags %}
-                                <span class="tag-small">{{ t }} <a onclick="removeTag('{{ t }}')" class="tag-remove">✕</a></span>
+                                <span class="tag-small">{{ t }} <a onclick="removeTag({{ t | tojson }})" class="tag-remove">✕</a></span>
                                 {% endfor %}
                             {% endif %}
                         {% endif %}
@@ -142,7 +142,12 @@
                             let raw = {{ analysis.qa_analysis | tojson }};
                             raw = raw.replace(/\\n/g, '\n');
 
+                            function escapeHtml(value) {
+                                return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+                            }
+
                             function renderMd(text) {
+                                text = escapeHtml(text);
                                 text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
                                 text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
                                 text = text.replace(/`(.+?)`/g, '<code>$1</code>');
@@ -220,15 +225,26 @@
     </div>
 
     <script>
-        const ARXIV_ID = '{{ paper.arxiv_id }}';
+        const ARXIV_ID = {{ paper.arxiv_id | tojson }};
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        function jsString(value) {
+            return escapeHtml(String(value ?? '')
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\r/g, '\\r')
+                .replace(/\n/g, '\\n'));
+        }
 
         async function checkTodoStatus() {
             try {
-                const resp = await fetch(`/api/paper/${ARXIV_ID}/todo`, { method: 'POST' });
+                const resp = await fetch(`/api/paper/${ARXIV_ID}/todo/status`);
                 const data = await resp.json();
-                // Just check if it's in the list, don't add
                 const el = document.getElementById('todo-toggle');
-                if (data.message === '已在阅读清单中') {
+                if (data.in_reading_list) {
                     el.textContent = '已加入清单';
                     el.style.fontWeight = 'bold';
                 }
@@ -322,7 +338,7 @@
         // Tags
         function renderTags(tags) {
             const list = document.getElementById('tags-list');
-            list.innerHTML = tags.map(t => `<span class="tag-small">${t} <a onclick="removeTag('${t}')" class="tag-remove">✕</a></span>`).join('');
+            list.innerHTML = tags.map(t => `<span class="tag-small">${escapeHtml(t)} <a onclick="removeTag('${jsString(t)}')" class="tag-remove">✕</a></span>`).join('');
         }
 
         async function addTag() {
@@ -369,7 +385,7 @@
             const result = await saveField({summary_cn: val});
             if (result.status === 'ok') {
                 toggleSummaryEdit();
-                document.getElementById('summary-view').innerHTML = val ? `<p>${val}</p>` : '<p class="no-data">暂无中文摘要</p>';
+                document.getElementById('summary-view').innerHTML = val ? `<p>${escapeHtml(val)}</p>` : '<p class="no-data">暂无中文摘要</p>';
             }
         }
 
@@ -386,7 +402,7 @@
             const result = await saveField({value_comment: val});
             if (result.status === 'ok') {
                 toggleCommentEdit();
-                document.getElementById('comment-view').innerHTML = val ? `<p class="value-comment">${val}</p>` : '<p class="no-data">暂无评价</p>';
+                document.getElementById('comment-view').innerHTML = val ? `<p class="value-comment">${escapeHtml(val)}</p>` : '<p class="no-data">暂无评价</p>';
             }
         }
 

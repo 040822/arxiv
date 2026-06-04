@@ -27,7 +27,7 @@
 ```
 arxiv/
 ├── config.py           # 硬编码配置（分类、标签候选、评级标准、路径）
-├── settings.py         # 运行时配置（JSON文件：供应商、prompt、并发数、密码）
+├── settings.py         # 运行时配置（JSON文件：供应商、prompt、并发数、定时任务、密码）
 ├── database.py         # SQLite 数据库全部操作（CRUD、迁移、任务日志）
 ├── fetcher.py          # arXiv API 论文抓取（去重、按分类拉取）
 ├── analyzer.py         # AI 分析逻辑（并发调用、PDF全文提取、Q&A生成）
@@ -137,12 +137,13 @@ analyzer.analyze_pending_papers(limit, concurrency)
 
 ### 4.3 定时任务流程
 ```
-APScheduler cron(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE)
+APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
   → daily_pipeline()
     → start_task_log()
-    → fetch_latest_papers()
+    → fetch_latest_papers(days=3)
     → analyze_pending_papers()
-    → generate_all_markdown()
+    → generate_report_content(latest_date)
+    → save_report()
     → finish_task_log(status="success")
 ```
 
@@ -155,7 +156,7 @@ APScheduler cron(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE)
 - `TAG_CANDIDATES` — AI 标签候选列表
 - `RATING_CRITERIA` — 评级标准文本
 - `ANALYSIS_CONCURRENCY` — 默认并发数
-- `SCHEDULE_HOUR/MINUTE` — 定时任务时间
+- `SCHEDULE_HOUR/MINUTE` — 定时任务首次默认时间；运行后以 `settings.json` 的 `schedule` 为准
 - `WEB_HOST/PORT` — Web 服务地址
 
 ### 5.2 data/settings.json（运行时，Web界面可改）
@@ -164,6 +165,7 @@ APScheduler cron(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE)
   "active_provider": "deepseek",
   "concurrency": 5,
   "admin_password": "sha256...",
+  "schedule": {"enabled": true, "hour": 10, "minute": 0},
   "providers": {
     "deepseek": {
       "name": "DeepSeek",
@@ -194,6 +196,7 @@ APScheduler cron(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE)
 - `get_prompts()` — 获取 system/user prompt
 - `get_concurrency()` — 获取并发数
 - `get_per_page()` — 获取每页论文数
+- `get_schedule_config()` / `save_schedule_config()` — 获取/保存每日定时任务配置
 - `get_fetch_config()` / `save_fetch_config()` — 抓取配置（请求间隔、批次天数、批次间隔）
 - `get_proxy_config()` / `save_proxy_config()` — 代理配置
 - `add/remove/switch/update_provider()` — 供应商 CRUD
@@ -234,18 +237,25 @@ APScheduler cron(hour=SCHEDULE_HOUR, minute=SCHEDULE_MINUTE)
 | `/api/paper/<id>/unhide` | POST | 取消隐藏 |
 | `/api/paper/<id>` | DELETE | 删除论文 |
 | `/api/paper/<id>/reanalyze` | POST | 重新AI分析 |
+| `/api/paper/<id>/todo/status` | GET | 检查阅读清单状态 |
 
 ### 设置 API
 | 端点 | 方法 | 说明 |
 |------|------|------|
+| `/login` | GET | 管理登录页 |
+| `/api/auth/status` | GET | 当前认证状态 |
+| `/api/auth/login` | POST | 管理密码登录 |
+| `/api/auth/logout` | POST | 退出登录 |
 | `/api/providers` | GET/POST | 供应商列表/添加 |
 | `/api/providers/<key>` | PUT/DELETE | 更新/删除供应商 |
 | `/api/providers/<key>/activate` | POST | 切换供应商 |
 | `/api/providers/presets` | GET | 预设供应商列表 |
 | `/api/providers/models` | POST | 从供应商 API 自动获取模型列表 |
 | `/api/test_connection` | POST | 测试API连接 |
+| `/api/detect_thinking` | POST | 检测是否为思考模型 |
 | `/api/prompts` | GET/POST | 读取/保存Prompt |
 | `/api/settings/concurrency` | POST | 保存并发数 |
+| `/api/settings/schedule` | GET/POST | 读取/保存每日定时任务配置 |
 | `/api/db/info` | GET | 数据库信息 |
 | `/api/admin/password` | POST/DELETE | 设置/清除密码 |
 
@@ -284,7 +294,7 @@ if "new_column" not in columns:
     "name": "显示名称",
     "base_url": "https://api.example.com/v1",
     "models": ["model-1", "model-2"],
-},
+}
 ```
 
 供应商运行时配置还支持：
@@ -295,10 +305,13 @@ if "new_column" not in columns:
 
 调用模型时必须通过 `build_chat_completion_kwargs()` 构建参数，不要在业务代码中直接固定传 `temperature` 或 `max_tokens`。
 
+管理密码设置后，`/settings`、`/tasks`、所有写接口和敏感设置读取接口都需要登录；`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
+
 ### 7.4 修改 Prompt
 - prompt 存储在 `data/settings.json` 的 `prompts` 字段
 - Web 设置页可修改，也可直接编辑 JSON 文件
 - 可用变量：`{title}` `{authors}` `{abstract}` `{tag_candidates}` `{rating_criteria}`
+- 保存 Prompt 时会校验上述必需变量；JSON 示例中的普通大括号需要写成 `{{` 和 `}}`
 - 注意：`{abstract}` 实际可能是论文全文（如果 PDF 提取成功）
 
 ### 7.5 添加新标签

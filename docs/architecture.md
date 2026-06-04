@@ -172,7 +172,7 @@ app.py
 
 **原因：**
 - config.py 存放不常改的配置（分类、标签、路径）
-- settings.json 存放用户可改的配置（供应商、prompt）
+- settings.json 存放用户可改的配置（供应商、prompt、代理、抓取参数、定时任务）
 - 两者合并使用，优先级 settings.json > config.py
 
 ---
@@ -206,5 +206,7 @@ app.py
 
 - 管理密码使用 SHA-256 哈希存储
 - API Key 在接口返回时脱敏（只显示前 4 后 4 位）
-- 无用户登录系统，管理密码仅保护设置页
+- 设置管理密码后，设置页、任务页、写接口和敏感设置读取接口需要登录
+- 供应商列表接口只返回 `api_key_masked`，不返回完整 `api_key`
+- 报告 HTML 由后端生成，数据库/AI 内容进入 HTML 前必须转义
 - 代理配置明文存储在 settings.json

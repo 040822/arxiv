@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - AI 论文数据库</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔒 管理登录</h1>
+        </header>
+
+        <div class="settings-section" style="max-width:420px;margin:40px auto;">
+            <h3>输入管理密码</h3>
+            <p class="section-desc">设置页、任务执行和配置接口需要登录后访问。</p>
+            <div class="form-group">
+                <label>管理密码</label>
+                <input type="password" id="password" autofocus onkeydown="if(event.key==='Enter')login()">
+            </div>
+            <div class="settings-actions">
+                <button class="action-btn btn-primary" onclick="login()">登录</button>
+                <a class="action-btn" href="/">返回首页</a>
+            </div>
+            <div id="login-status" class="action-status"></div>
+        </div>
+    </div>
+
+    <script>
+        const NEXT_URL = {{ next_url | tojson }};
+        async function login() {
+            const statusEl = document.getElementById('login-status');
+            const password = document.getElementById('password').value;
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在登录...';
+            try {
+                const resp = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({password})
+                });
+                const result = await resp.json();
+                if (result.status === 'ok') {
+                    window.location.href = NEXT_URL || '/settings';
+                } else {
+                    statusEl.className = 'action-status error';
+                    statusEl.textContent = '❌ ' + (result.message || '登录失败');
+                }
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            }
+        }
+    </script>
+</body>
+</html>

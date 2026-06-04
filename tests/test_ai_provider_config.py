@@ -1,9 +1,11 @@
+import os
+import tempfile
 import sys
 import types
 import unittest
 from unittest.mock import patch
 
-from settings import build_chat_completion_kwargs
+from settings import build_chat_completion_kwargs, validate_prompt_template
 
 
 class ProviderRequestBuilderTests(unittest.TestCase):
@@ -115,12 +117,15 @@ def install_import_stubs():
 
     class FakeFlask:
         def __init__(self, *args, **kwargs):
-            pass
+            self.secret_key = None
 
         def route(self, *args, **kwargs):
             def decorator(func):
                 return func
             return decorator
+
+        def before_request(self, func):
+            return func
 
         def context_processor(self, func):
             return func
@@ -142,15 +147,27 @@ def install_import_stubs():
     flask_mod.request = types.SimpleNamespace(args={}, get_json=lambda: {})
     flask_mod.jsonify = jsonify
     flask_mod.Response = lambda *args, **kwargs: types.SimpleNamespace(args=args, kwargs=kwargs)
+    flask_mod.session = {}
+    flask_mod.redirect = lambda target: {"redirect": target}
+    flask_mod.url_for = lambda endpoint, **kwargs: "/" + endpoint
     sys.modules.setdefault("flask", flask_mod)
 
     sched_mod = types.ModuleType("apscheduler.schedulers.background")
 
     class FakeScheduler:
+        running = False
+
         def add_job(self, *args, **kwargs):
             pass
 
+        def remove_job(self, *args, **kwargs):
+            pass
+
+        def get_job(self, *args, **kwargs):
+            return None
+
         def start(self):
+            self.running = True
             pass
 
         def get_jobs(self):
@@ -170,10 +187,16 @@ def install_import_stubs():
 
 
 class FakeRequest:
-    def __init__(self, data):
+    def __init__(self, data=None, endpoint="", method="POST", path="/api/test"):
         self._data = data
+        self.endpoint = endpoint
+        self.method = method
+        self.path = path
+        self.full_path = path
+        self.query_string = b""
+        self.args = {}
 
-    def get_json(self):
+    def get_json(self, *args, **kwargs):
         return self._data
 
 
@@ -254,6 +277,135 @@ class ProviderEndpointTests(unittest.TestCase):
             "deepseek",
             {"is_thinking": True, "thinking_effort": "high"},
         )
+
+    def test_provider_list_does_not_return_plain_api_key(self):
+        app_module = self.app_module
+        with patch.object(app_module, "load_settings", return_value={
+            "active_provider": "demo",
+            "providers": {
+                "demo": {
+                    "name": "Demo",
+                    "api_key": "sk-secret-value",
+                    "base_url": "https://api.example.com/v1",
+                    "model": "demo-model",
+                }
+            },
+        }):
+            result = app_module.api_list_providers()
+
+        provider = result["providers"]["demo"]
+        self.assertNotIn("api_key", provider)
+        self.assertEqual(provider["api_key_masked"], "sk-s****alue")
+
+    def test_auth_blocks_protected_api_when_not_logged_in(self):
+        app_module = self.app_module
+        app_module.session.clear()
+        app_module.request = FakeRequest(
+            {},
+            endpoint="api_save_concurrency",
+            method="POST",
+            path="/api/settings/concurrency",
+        )
+
+        with patch.object(app_module, "has_admin_password", return_value=True):
+            result, status = app_module.require_auth_for_protected_routes()
+
+        self.assertEqual(status, 401)
+        self.assertTrue(result["auth_required"])
+
+    def test_clear_admin_password_requires_current_password(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest({"current_password": "wrong"})
+
+        with patch.object(app_module, "has_admin_password", return_value=True), \
+             patch.object(app_module, "verify_admin_password", return_value=False), \
+             patch.object(app_module, "set_admin_password") as set_password:
+            result, status = app_module.api_clear_admin_password()
+
+        self.assertEqual(status, 403)
+        self.assertEqual(result["status"], "error")
+        set_password.assert_not_called()
+
+    def test_batch_analyze_uses_selected_papers(self):
+        app_module = self.app_module
+        selected = [
+            {"id": 1, "arxiv_id": "2601.00001", "title": "A", "authors": [], "abstract": ""},
+            {"id": 2, "arxiv_id": "2601.00002", "title": "B", "authors": [], "abstract": ""},
+        ]
+        app_module.request = FakeRequest({"arxiv_ids": ["2601.00001", "2601.00002"]})
+
+        with patch("database.get_unanalyzed_papers_by_ids", return_value=selected), \
+             patch.object(app_module, "get_concurrency", return_value=3), \
+             patch.object(app_module, "analyze_papers", return_value=2) as analyze_papers:
+            result = app_module.api_batch_analyze_papers()
+
+        self.assertEqual(result["status"], "ok")
+        analyze_papers.assert_called_once_with(selected, concurrency=3)
+
+    def test_schedule_endpoint_saves_and_reconfigures(self):
+        app_module = self.app_module
+        schedule = {"enabled": True, "hour": 8, "minute": 30}
+        app_module.request = FakeRequest(schedule)
+
+        with patch.object(app_module, "save_schedule_config", return_value=True), \
+             patch.object(app_module, "get_schedule_config", return_value=schedule), \
+             patch.object(app_module, "configure_daily_job") as configure_daily_job:
+            result = app_module.api_save_schedule_config()
+
+        self.assertEqual(result["status"], "ok")
+        configure_daily_job.assert_called_once_with(schedule)
+
+
+class PromptAndReportSafetyTests(unittest.TestCase):
+    def test_prompt_validation_rejects_missing_required_field(self):
+        ok, message = validate_prompt_template("标题: {title}\n摘要: {abstract}")
+        self.assertFalse(ok)
+        self.assertIn("{authors}", message)
+
+    def test_prompt_validation_rejects_unescaped_json_braces(self):
+        ok, message = validate_prompt_template("{title}\n{\"rating\": 3}\n{authors}\n{abstract}\n{tag_candidates}\n{rating_criteria}")
+        self.assertFalse(ok)
+        self.assertIn("Prompt", message)
+
+    def test_report_generation_escapes_database_content(self):
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            database.DB_DIR = tmp
+            database.DB_PATH = os.path.join(tmp, "papers.db")
+            database.init_db()
+            paper_id = database.insert_paper({
+                "arxiv_id": "2601.00001",
+                "title": "<script>alert(1)</script>",
+                "authors": ["Alice <Admin>"],
+                "abstract": "abstract",
+                "categories": ["cs.RO"],
+                "primary_category": "cs.RO",
+                "url": "https://arxiv.org/abs/2601.00001",
+                "pdf_url": "https://arxiv.org/pdf/2601.00001",
+                "published_date": "2026-01-01",
+                "updated_date": "2026-01-01",
+            })
+            database.insert_analysis(paper_id, {
+                "tags": ["<tag>"],
+                "summary_cn": "<img src=x onerror=alert(1)>",
+                "summary_en": "",
+                "rating": 5,
+                "value_comment": "<b>bad</b>",
+                "qa_analysis": "",
+            })
+
+            content, _, _, _ = database.generate_report_content("2026-01-01")
+
+        database.DB_DIR = original_dir
+        database.DB_PATH = original_path
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", content)
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", content)
+        self.assertIn("&lt;b&gt;bad&lt;/b&gt;", content)
+        self.assertNotIn("<script>", content)
+        self.assertNotIn("<img", content)
 
 
 if __name__ == "__main__":

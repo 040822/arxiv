@@ -214,12 +214,7 @@ python main.py generate # 仅生成报告
 
 ## 定时任务配置
 
-在 `config.py` 中修改：
-
-```python
-SCHEDULE_HOUR = 10      # 每天几点执行（24小时制）
-SCHEDULE_MINUTE = 0     # 几分执行
-```
+进入「任务管理 → 定时任务设置」，可启用/停用每日任务并保存执行时间。配置会写入 `data/settings.json`；`config.py` 中的 `SCHEDULE_HOUR/SCHEDULE_MINUTE` 只作为首次默认值。
 
 每日任务执行内容：
 1. 抓取近 3 日 cs.RO 论文（防止周末无论文）

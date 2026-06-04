@@ -2,6 +2,23 @@
 
 ## 未发布
 
+### 安全与鉴权
+- 新增管理登录页和认证 API，设置管理密码后保护设置页、任务页、写接口和敏感设置读取接口
+- 修复 `/api/providers` 返回完整 API Key 的问题，仅返回 `api_key_masked`
+- 清除管理密码时必须验证当前密码
+- 报告、任务日志、论文详情中的数据库/AI 内容进入 HTML 前统一转义，降低存储型 XSS 风险
+
+### 任务与分析修复
+- 定时任务配置迁入 `settings.json`，任务管理页可启用/停用并保存执行时间，保存后自动重建 APScheduler job
+- 修复分类浏览「批量分析」可能分析全局未分析论文而不是选中论文的问题
+- 批量分析新增单篇异常兜底，坏 Prompt 或单篇失败不会中断整批
+- Prompt 保存时校验必需占位符和大括号格式
+
+### 清理与文档
+- 清理 `database.init_db()` 中重复的建表逻辑
+- 删除废弃的 `fetch_papers_by_date()` 兼容函数
+- 文档同步默认分类、报告体系、鉴权接口和定时任务配置方式
+
 ### AI 供应商配置
 - 新增 `/api/providers/models`，可从 OpenAI 兼容供应商自动获取模型列表
 - Max Tokens 改为默认不发送，只有启用「限制输出长度」后才传递
@@ -60,7 +77,7 @@
 - 新增 `docs/` 目录，包含完整文档体系
   - `user-guide.md` — 用户使用手册
   - `developer-guide.md` — 开发者指南
-  - `api-reference.md` — API 接口文档（45 个路由）
+  - `api-reference.md` — API 接口文档
   - `agent-guide.md` — AI Agent 开发指南
   - `architecture.md` — 项目架构说明
   - `changelog.md` — 更新日志
@@ -100,7 +117,7 @@
 
 ### 其他
 - 新增 `AGENTS.md` 维护文档
-- arXiv API 查询改为 `primary_category:` 精确匹配
+- arXiv API 查询改为按 arXiv 分类抓取，并在代码中保留主分类匹配的论文
 
 ---
 

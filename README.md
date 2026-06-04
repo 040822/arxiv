@@ -1,14 +1,15 @@
 # AI 论文数据库
 
-自动从 arXiv 抓取具身智能与人工智能领域最新论文，调用 AI 快速阅读分析（标签、翻译、摘要、评级），生成 Markdown 报告，并提供 Web 浏览界面。
+自动从 arXiv 抓取具身智能与人工智能领域最新论文，调用 AI 快速阅读分析（标签、翻译、摘要、评级），生成 Web 报告，并提供 Flask 浏览界面。CLI 仍可按需生成 Markdown 报告。
 
 ## 功能特性
 
-- **每日自动抓取** — 从 arXiv 拉取 cs.AI、cs.RO、cs.CV、cs.LG、cs.CL、cs.MA 分类的最新论文
+- **每日自动抓取** — 默认从 arXiv 拉取 cs.RO 分类论文，可在 `config.py` 中增减分类
 - **AI 快速阅读** — 自动调用 OpenAI 兼容 API，为每篇论文生成标签（VLA、World Model 等）、中文摘要翻译、精炼总结、0~5 星评级
-- **Markdown 报告** — 自动生成 README 总览和每日论文报告
+- **Web 报告** — 自动生成数据库内的每日结构化报告；CLI 可生成 Markdown 总览和日报
 - **Web 浏览** — Flask 本地 Web 服务，支持按标签/评级筛选、关键词搜索
-- **定时任务** — 内置 APScheduler，每天定时自动执行抓取和分析流程
+- **定时任务** — 内置 APScheduler，每天定时自动执行抓取、分析和报告生成
+- **管理保护** — 可设置管理密码保护设置页、任务执行和写接口
 
 ## 快速开始
 
@@ -54,21 +55,9 @@ pip install -r requirements.txt
 
 ### 2. 配置 API
 
-编辑 `config.py`，填入你的 OpenAI 兼容 API 信息：
+启动 Web 服务后进入 `http://localhost:5000/settings`，在「AI 设置」中添加 OpenAI 兼容供应商，填写 API Key、Base URL 和模型名称。
 
-```python
-OPENAI_API_KEY = "your-api-key-here"
-OPENAI_BASE_URL = "https://your-api-url/v1"   # 自定义 URL
-OPENAI_MODEL = "gpt-4o-mini"                   # 模型名称
-```
-
-也可通过环境变量设置：
-
-```bash
-set OPENAI_API_KEY=your-key
-set OPENAI_BASE_URL=https://your-url/v1
-set OPENAI_MODEL=gpt-4o-mini
-```
+运行时配置保存在 `data/settings.json`，该文件包含 API Key，已被 `.gitignore` 排除，请不要提交到 GitHub。`config.py` 中的 API 相关变量只作为首次默认值或环境变量 fallback。
 
 ### 3. 运行
 
@@ -97,13 +86,13 @@ python app.py
 ## 项目结构
 
 ```
-├── config.py           # 配置文件（API、分类、标签候选等）
+├── config.py           # 硬编码配置（分类、标签候选、路径、默认值）
 ├── main.py             # 主入口，支持 fetch/analyze/generate/run
 ├── app.py              # Flask Web 服务 + APScheduler 定时任务
 ├── database.py         # SQLite 数据库操作
 ├── fetcher.py          # arXiv API 论文抓取
 ├── analyzer.py         # OpenAI API 论文分析（标签/翻译/摘要/评级）
-├── markdown_gen.py     # Markdown 报告生成
+├── markdown_gen.py     # CLI Markdown 报告生成
 ├── templates/          # Flask HTML 模板
 ├── static/style.css    # Web 样式
 ├── data/papers.db      # SQLite 数据库（自动创建）
@@ -114,6 +103,8 @@ python app.py
 ```
 
 ## Web API
+
+设置管理密码后，所有 `POST/PUT/DELETE` 写接口、设置接口、任务管理接口都需要先登录；首页、浏览、搜索、报告和只读论文数据保持可读。
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -129,12 +120,7 @@ python app.py
 
 ## 定时任务配置
 
-在 `config.py` 中修改每日执行时间（24 小时制）：
-
-```python
-SCHEDULE_HOUR = 10      # 默认早上 10 点
-SCHEDULE_MINUTE = 0
-```
+首次默认时间来自 `config.py`，之后可在「任务管理 → 定时任务设置」中启用/停用并保存执行时间，配置会写入 `data/settings.json`。
 
 ## 监控的 arXiv 分类
 
@@ -147,7 +133,7 @@ SCHEDULE_MINUTE = 0
 | cs.CL | 计算与语言（NLP） |
 | cs.MA | 多智能体系统 |
 
-在 `config.py` 的 `ARXIV_CATEGORIES` 中可自行增减。
+当前默认只启用 `cs.RO`。在 `config.py` 的 `ARXIV_CATEGORIES` 中可自行增减。
 
 ## 评级标准
 
@@ -177,7 +163,7 @@ SCHEDULE_MINUTE = 0
 - 批量分析（每日定时/手动批量）改为轻量模式：不下载 PDF，仅基于摘要生成标签/评级/翻译
 - paper 详情页「生成报告」触发完整分析：下载 PDF 全文，生成 Q&A 深度阅读
 - PDF 下载新增令牌桶限速（默认 1 次/秒），避免触发 arXiv 风控
-- 抓取改为仅拉取主分类论文（`primary_category:` 查询）
+- 抓取改为使用 `cat:` 查询并在代码中按发布日期过滤
 
 **Web 报告系统**
 - 新增 `/reports` 报告汇总页和 `/reports/<date>` 单日报告详情页
@@ -193,8 +179,8 @@ SCHEDULE_MINUTE = 0
 
 **分页与设置**
 - 首页分页支持页码跳转，显示总页数
-- 设置页新增「每页论文数」配置（默认 20，范围 5~100）
+- 首页/分类浏览支持每页数量配置（默认 20，范围 5~100）
 
 **其他**
 - 新增 `AGENTS.md` 维护文档
-- 首页 arXiv API 查询改为 `primary_category:` 精确匹配
+- arXiv API 查询改为 `cat:` 分类查询并在代码中过滤日期

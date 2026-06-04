@@ -3,6 +3,8 @@
 ## 目录
 
 - [页面路由](#页面路由)
+- [认证](#认证)
+- [页面参数](#页面参数)
 - [任务 API](#任务-api)
 - [论文 API](#论文-api)
 - [阅读清单 API](#阅读清单-api)
@@ -21,11 +23,42 @@
 | `GET /paper/<arxiv_id>` | GET | paper.html | 论文详情 |
 | `GET /search?q=` | GET | search.html | 搜索 |
 | `GET /browse` | GET | browse.html | 分类浏览 |
-| `GET /settings` | GET | settings.html | 设置 |
-| `GET /tasks` | GET | tasks.html | 任务管理 |
+| `GET /settings` | GET | settings.html | 设置（设置管理密码后需登录） |
+| `GET /tasks` | GET | tasks.html | 任务管理（设置管理密码后需登录） |
 | `GET /reports` | GET | reports.html | 报告列表 |
 | `GET /reports/<date>` | GET | report_detail.html | 报告详情 |
 | `GET /reading-list` | GET | reading_list.html | 阅读清单 |
+| `GET /login` | GET | login.html | 管理登录 |
+
+---
+
+## 认证
+
+未设置管理密码时，系统保持本地免登录兼容。设置管理密码后，`/settings`、`/tasks`、所有 `POST/PUT/DELETE` 写接口、设置读取接口、任务日志接口都需要登录。
+
+```
+GET  /api/auth/status
+POST /api/auth/login
+POST /api/auth/logout
+```
+
+`POST /api/auth/login` Body：
+
+```json
+{"password": "管理密码"}
+```
+
+未登录访问受保护 API 时返回：
+
+```json
+{
+    "status": "error",
+    "message": "需要登录后才能执行该操作",
+    "auth_required": true
+}
+```
+
+## 页面参数
 
 ### 首页参数 `GET /`
 
@@ -69,6 +102,8 @@
 POST /api/fetch
 ```
 
+需要登录。
+
 | 参数（Query） | 类型 | 说明 |
 |---------------|------|------|
 | `category` | string | 分类（如 cs.RO），留空使用默认 |
@@ -95,6 +130,8 @@ POST /api/fetch
 POST /api/analyze
 ```
 
+需要登录。
+
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `limit` | int | 分析数量上限（默认 50） |
@@ -106,6 +143,8 @@ POST /api/analyze
 POST /api/generate
 ```
 
+需要登录。
+
 | 参数（Query） | 类型 | 说明 |
 |---------------|------|------|
 | `date` | string | 指定日期（留空使用最新日期） |
@@ -115,6 +154,8 @@ POST /api/generate
 ```
 POST /api/run
 ```
+
+需要登录。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
@@ -270,6 +311,14 @@ POST /api/paper/<arxiv_id>/todo
 
 已在清单中则返回 ok（不重复添加）。
 
+### 检查清单状态
+
+```
+GET /api/paper/<arxiv_id>/todo/status
+```
+
+返回该论文是否已在阅读清单中。此接口只读，公开页面可使用。
+
 ### 从清单移除
 
 ```
@@ -331,6 +380,8 @@ POST /api/providers/models       # 从供应商 /models 接口获取模型列表
 
 供应商配置支持 `max_tokens_enabled`、`temperature_enabled`、`top_p_enabled`、`presence_penalty_enabled`、`frequency_penalty_enabled`、`is_thinking`、`thinking_effort` 等字段。未启用的参数不会发送给模型；思考模式下采样参数会被后端自动省略。
 
+`GET /api/providers` 只返回 `api_key_masked`，不会返回完整 `api_key`。
+
 ### 测试连接
 
 ```
@@ -348,16 +399,32 @@ GET  /api/prompts                # 获取 prompt
 POST /api/prompts                # 保存 prompt
 ```
 
+保存时会校验用户 Prompt 是否包含 `{title}`、`{authors}`、`{abstract}`、`{tag_candidates}`、`{rating_criteria}`。JSON 示例中的普通大括号需要写成 `{{` 和 `}}`。
+
 ### 配置管理
 
 ```
 POST /api/settings/concurrency   # 保存并发数（1-20）
 POST /api/settings/per_page      # 保存每页数量（5-100）
+GET  /api/settings/schedule      # 获取每日定时任务配置
+POST /api/settings/schedule      # 保存每日定时任务配置并重建 APScheduler job
 GET  /api/settings/proxy         # 获取代理配置
 POST /api/settings/proxy         # 保存代理配置
 GET  /api/settings/fetch         # 获取抓取配置
 POST /api/settings/fetch         # 保存抓取配置
 ```
+
+`POST /api/settings/schedule` Body：
+
+```json
+{
+    "enabled": true,
+    "hour": 8,
+    "minute": 0
+}
+```
+
+保存后会立即重建 APScheduler 中的每日任务。未设置 `data/settings.json.schedule` 时，首次默认值来自 `config.py` 的 `SCHEDULE_HOUR/SCHEDULE_MINUTE`。
 
 ### 数据库信息
 
@@ -372,6 +439,12 @@ GET /api/db/info
 ```
 POST /api/admin/password         # 设置密码
 DELETE /api/admin/password       # 清除密码
+```
+
+`DELETE /api/admin/password` 必须传当前密码：
+
+```json
+{"current_password": "当前管理密码"}
 ```
 
 ---
@@ -401,6 +474,19 @@ GET /api/tasks/logs
 
 ```
 GET /api/tasks/scheduled
+```
+
+返回当前配置和实际注册到 APScheduler 的 job：
+
+```json
+{
+    "enabled": true,
+    "hour": 8,
+    "minute": 0,
+    "jobs": [
+        {"id": "daily_pipeline", "name": "daily_pipeline", "next_run_time": "..."}
+    ]
+}
 ```
 
 ### 清理日志

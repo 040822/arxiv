@@ -57,7 +57,7 @@ def _clean_json_content(content):
 
     AI 模型返回的 JSON 可能存在以下问题：
     1. 包裹在 markdown 代码块中：```json ... ```
-    2. 包含无效的反斜杠转义：\_、\[、\] 等
+    2. 包含无效的反斜杠转义：\\_、\\[、\\] 等
     3. 前后包含多余文本（解释说明等）
 
     Args:
@@ -276,26 +276,23 @@ def analyze_paper_full(paper_data):
 # 批量分析与并发控制
 # ============================================================
 
-def analyze_pending_papers(limit=50, concurrency=None, progress_callback=None):
+def analyze_papers(papers, concurrency=None, progress_callback=None):
     """
-    批量分析未处理的论文：使用线程池并发执行基础分析。
+    批量分析指定论文列表：使用线程池并发执行基础分析。
 
     该函数是批量分析的入口，负责：
-      1. 从数据库获取指定数量的未分析论文
-      2. 使用 ThreadPoolExecutor 并发执行基础分析
-      3. 将分析结果写入数据库（含去重检查）
-      4. 通过回调函数报告进度（支持 Web 前端实时显示）
+      1. 使用 ThreadPoolExecutor 并发执行基础分析
+      2. 将分析结果写入数据库（含去重检查）
+      3. 通过回调函数报告进度（支持 Web 前端实时显示）
 
     Args:
-        limit (int): 最大处理论文数量，默认 50
+        papers (list[dict]): 要分析的论文列表
         concurrency (int | None): 并发线程数，None 时使用 config.py 中的默认值
         progress_callback (callable | None): 进度回调函数，接收 dict 参数
 
     Returns:
         int: 成功新增分析的论文数量
     """
-    # 获取未分析的论文列表
-    papers = get_unanalyzed_papers(limit=limit)
     if not papers:
         logger.info("No unanalyzed papers found.")
         return 0
@@ -324,7 +321,13 @@ def analyze_pending_papers(limit=50, concurrency=None, progress_callback=None):
 
         # 按完成顺序处理结果（as_completed 保证先完成的先返回）
         for future in as_completed(futures):
-            paper_data, result, error = future.result()
+            source_paper = futures[future]
+            try:
+                paper_data, result, error = future.result()
+            except Exception as e:
+                paper_data = source_paper
+                result = None
+                error = str(e)
             arxiv_id = paper_data.get("arxiv_id", "unknown")
             completed_count += 1
 
@@ -374,3 +377,19 @@ def analyze_pending_papers(limit=50, concurrency=None, progress_callback=None):
             "message": f"基础分析完成：{success_count} 篇新增，{skip_count} 跳过，{fail_count} 失败"
         })
     return success_count
+
+
+def analyze_pending_papers(limit=50, concurrency=None, progress_callback=None):
+    """
+    批量分析未处理的论文：从数据库获取指定数量后调用 analyze_papers()。
+
+    Args:
+        limit (int): 最大处理论文数量，默认 50
+        concurrency (int | None): 并发线程数，None 时使用 config.py 中的默认值
+        progress_callback (callable | None): 进度回调函数，接收 dict 参数
+
+    Returns:
+        int: 成功新增分析的论文数量
+    """
+    papers = get_unanalyzed_papers(limit=limit)
+    return analyze_papers(papers, concurrency=concurrency, progress_callback=progress_callback)

@@ -25,6 +25,7 @@ import sqlite3
 import json
 import os
 import logging
+import html as html_module
 from datetime import datetime
 from config import DB_PATH, DB_DIR
 
@@ -125,33 +126,6 @@ def init_db():
     if "hidden" not in paper_columns:
         cursor.execute("ALTER TABLE papers ADD COLUMN hidden INTEGER DEFAULT 0")
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS task_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_name TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'running',
-            message TEXT,
-            detail TEXT,
-            started_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            finished_at TEXT,
-            duration_sec REAL
-        )
-    """)
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_name ON task_logs(task_name)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_status ON task_logs(status)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_started ON task_logs(started_at)")
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            report_date TEXT UNIQUE NOT NULL,
-            content TEXT NOT NULL,
-            paper_count INTEGER DEFAULT 0,
-            analyzed_count INTEGER DEFAULT 0,
-            avg_rating REAL DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
     # ==================== task_logs 表：任务执行日志 ====================
     # 记录定时任务和手动操作的执行情况
     # 用于任务统计、问题排查和执行历史查看
@@ -1327,6 +1301,9 @@ def generate_report_content(date):
     if not rows:
         return None, 0, 0, 0
 
+    def esc(value):
+        return html_module.escape(str(value or ""), quote=True)
+
     # 解析 JSON 字段
     papers = []
     for row in rows:
@@ -1377,28 +1354,30 @@ def generate_report_content(date):
     if top_categories:
         html += '<div class="report-section"><h3>📂 分类分布</h3><div class="report-tags">'
         for cat, cnt in top_categories:
-            html += f'<span class="tag-badge">{cat} <span class="tag-count">{cnt}</span></span>'
+            html += f'<span class="tag-badge">{esc(cat)} <span class="tag-count">{cnt}</span></span>'
         html += '</div></div>'
 
     # 热门标签区块
     if top_tags:
         html += '<div class="report-section"><h3>🏷️ 热门标签</h3><div class="report-tags">'
         for tag, cnt in top_tags:
-            html += f'<span class="tag-badge">{tag} <span class="tag-count">{cnt}</span></span>'
+            html += f'<span class="tag-badge">{esc(tag)} <span class="tag-count">{cnt}</span></span>'
         html += '</div></div>'
 
     # 高分论文区块（4 星以上）
     if high_rated:
         html += '<div class="report-section"><h3>⭐ 高分论文 (4★+)</h3><div class="report-papers">'
         for p in high_rated:
-            stars = '★' * p['rating'] + '☆' * (5 - p['rating'])
-            authors = ', '.join(p['authors'][:3]) if isinstance(p.get('authors'), list) else str(p.get('authors', ''))
-            cats = ' '.join(f'<span class="category-tag">{c}</span>' for c in (p.get('categories') or [])[:3])
+            rating = max(0, min(5, int(p.get('rating') or 0)))
+            stars = '★' * rating + '☆' * (5 - rating)
+            authors = ', '.join(esc(a) for a in p['authors'][:3]) if isinstance(p.get('authors'), list) else esc(p.get('authors', ''))
+            cats = ' '.join(f'<span class="category-tag">{esc(c)}</span>' for c in (p.get('categories') or [])[:3])
+            arxiv_id = esc(p.get('arxiv_id', ''))
             html += f'''<div class="report-paper">
-                <div class="report-paper-title"><a href="/paper/{p['arxiv_id']}">{p['title']}</a></div>
+                <div class="report-paper-title"><a href="/paper/{arxiv_id}">{esc(p.get('title', ''))}</a></div>
                 <div class="report-paper-meta"><span class="rating">{stars}</span> {cats}</div>
                 <div class="report-paper-authors">{authors}</div>
-                {f'<div class="report-paper-comment">{p["value_comment"]}</div>' if p.get('value_comment') else ''}
+                {f'<div class="report-paper-comment">{esc(p["value_comment"])}</div>' if p.get('value_comment') else ''}
             </div>'''
         html += '</div></div>'
 
@@ -1407,15 +1386,17 @@ def generate_report_content(date):
     for p in papers:
         stars = ''
         if p.get('rating') and p['rating'] > 0:
-            stars = f'<span class="rating">{"★" * p["rating"]}{"☆" * (5 - p["rating"])}</span>'
-        cats = ' '.join(f'<span class="category-tag">{c}</span>' for c in (p.get('categories') or [])[:3])
-        authors = ', '.join(p['authors'][:3]) if isinstance(p.get('authors'), list) else str(p.get('authors', ''))
+            rating = max(0, min(5, int(p.get('rating') or 0)))
+            stars = f'<span class="rating">{"★" * rating}{"☆" * (5 - rating)}</span>'
+        cats = ' '.join(f'<span class="category-tag">{esc(c)}</span>' for c in (p.get('categories') or [])[:3])
+        authors = ', '.join(esc(a) for a in p['authors'][:3]) if isinstance(p.get('authors'), list) else esc(p.get('authors', ''))
         tags_html = ''
         if p.get('tags') and isinstance(p['tags'], list):
-            tags_html = ' '.join(f'<span class="tag-small">{t}</span>' for t in p['tags'][:5])
-        summary = f'<div class="report-paper-summary">{p["summary_cn"]}</div>' if p.get('summary_cn') else ''
+            tags_html = ' '.join(f'<span class="tag-small">{esc(t)}</span>' for t in p['tags'][:5])
+        summary = f'<div class="report-paper-summary">{esc(p["summary_cn"])}</div>' if p.get('summary_cn') else ''
+        arxiv_id = esc(p.get('arxiv_id', ''))
         html += f'''<div class="report-paper">
-            <div class="report-paper-title"><a href="/paper/{p['arxiv_id']}">{p['title']}</a> {stars}</div>
+            <div class="report-paper-title"><a href="/paper/{arxiv_id}">{esc(p.get('title', ''))}</a> {stars}</div>
             <div class="report-paper-meta">{cats}</div>
             <div class="report-paper-authors">{authors}</div>
             {'<div class="report-paper-tags">' + tags_html + '</div>' if tags_html else ''}

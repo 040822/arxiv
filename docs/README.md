@@ -8,7 +8,7 @@
 |------|------|----------|
 | [用户使用手册](user-guide.md) | 安装部署、配置、页面功能、常见操作、FAQ | 用户、运维 |
 | [开发者指南](developer-guide.md) | 项目结构、技术栈、开发规范、数据库设计 | 开发者 |
-| [API 接口文档](api-reference.md) | 全部 45 个路由的参数、响应、示例 | 前端/后端开发者 |
+| [API 接口文档](api-reference.md) | 页面、任务、论文、设置、认证等接口的参数、响应、示例 | 前端/后端开发者 |
 | [AI Agent 开发指南](agent-guide.md) | 快速理解项目、常见修改场景、已知坑 | AI Agent |
 | [项目架构说明](architecture.md) | 系统架构、数据流、组件依赖、设计决策 | 架构师、新开发者 |
 | [更新日志](changelog.md) | 版本历史 | 所有人 |
@@ -19,7 +19,7 @@
 # 1. 安装依赖
 pip install -r requirements.txt
 
-# 2. 配置 API（编辑 config.py 或通过 Web 设置页）
+# 2. 配置 API（启动后通过 Web 设置页）
 # 3. 启动服务
 python app.py
 
