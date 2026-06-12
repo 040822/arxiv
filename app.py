@@ -1098,7 +1098,8 @@ def api_save_ai_tasks():
 def api_get_ai_usage():
     """获取近期 LLM token 用量汇总。"""
     days = request.args.get("days", 7, type=int)
-    return jsonify(get_ai_usage_summary(days=days))
+    group_by = request.args.get("group_by", "task")
+    return jsonify(get_ai_usage_summary(days=days, group_by=group_by))
 
 
 # ====================================================================

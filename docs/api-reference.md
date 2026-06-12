@@ -418,7 +418,7 @@ POST /api/prompts                # 保存 prompt
 }
 ```
 
-旧版 `system_prompt/user_prompt` 保存仍可用，会映射到 `deep_reading`，并继续校验 `{title}`、`{authors}`、`{abstract}`、`{tag_candidates}`、`{rating_criteria}`。新版 Profile 中论文动态内容不写入 instruction，而是由后端作为最后一条 JSON message 传入。
+旧版 `system_prompt/user_prompt` 保存仍可用，会映射到 `deep_reading`。新版 Profile 中论文动态内容不写入 instruction，而是由后端作为最后一条 JSON message 传入；`basic_analysis` 可使用 `{tag_candidates}` 和 `{rating_criteria}`，`deep_reading` 只需要描述 Q&A 输出。
 
 ### 配置管理
 
@@ -427,7 +427,7 @@ POST /api/settings/concurrency   # 保存并发数（1-20）
 POST /api/settings/per_page      # 保存每页数量（5-100）
 GET  /api/settings/ai-tasks      # 获取 AI 功能模型路由
 POST /api/settings/ai-tasks      # 保存 AI 功能模型路由
-GET  /api/settings/ai-usage      # 获取近期 LLM token 用量汇总
+GET  /api/settings/ai-usage      # 获取近期 LLM token 用量汇总和趋势
 GET  /api/settings/schedule      # 获取每日定时任务配置
 POST /api/settings/schedule      # 保存每日定时任务配置并重建 APScheduler job
 GET  /api/settings/proxy         # 获取代理配置
@@ -435,6 +435,13 @@ POST /api/settings/proxy         # 保存代理配置
 GET  /api/settings/fetch         # 获取抓取配置
 POST /api/settings/fetch         # 保存抓取配置
 ```
+
+`/api/settings/ai-usage` 查询参数：
+
+- `days`：统计天数，默认 `7`，范围 `1-365`
+- `group_by`：趋势图分组方式，`task` 或 `model`，默认 `task`
+
+返回中 `items` 保留按任务/模型的明细汇总；`dates`、`groups`、`totals` 用于账单页趋势图。
 
 `POST /api/settings/schedule` Body：
 

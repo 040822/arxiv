@@ -237,8 +237,42 @@
         <div id="tab-billing" class="tab-panel">
             <div class="settings-section">
                 <h3>📊 LLM 用量账本</h3>
-                <p class="section-desc">近 7 天按任务和模型统计的 token 用量；这里只记录 token，不内置价格表。</p>
-                <div id="ai-usage-summary" class="db-info-grid"></div>
+                <p class="section-desc">按模型查看 token 用量趋势；这里只记录 token，不内置价格表。</p>
+                <div class="usage-toolbar">
+                    <div class="usage-control">
+                        <span>模型</span>
+                        <select id="ai-usage-model" onchange="setAiUsageModel(this.value)"></select>
+                    </div>
+                    <div class="usage-control">
+                        <span>范围</span>
+                        <select id="ai-usage-days" onchange="setAiUsageDays(this.value)">
+                            <option value="7">近 7 天</option>
+                            <option value="30">近 30 天</option>
+                            <option value="90">近 90 天</option>
+                        </select>
+                    </div>
+                    <button class="action-btn" onclick="loadAiUsage()">刷新</button>
+                </div>
+                <div class="usage-chart-card">
+                    <div class="usage-chart-title">
+                        <span id="ai-usage-chart-title">Tokens</span>
+                        <span id="ai-usage-chart-subtitle"></span>
+                    </div>
+                    <div id="ai-usage-token-chart" class="usage-chart"></div>
+                    <div id="ai-usage-token-tooltip" class="usage-token-tooltip" hidden aria-hidden="true"></div>
+                    <div class="usage-legend">
+                        <span class="usage-legend-item"><i class="usage-color-cache-hit"></i>缓存命中输入</span>
+                        <span class="usage-legend-item"><i class="usage-color-cache-miss"></i>缓存未命中输入</span>
+                        <span class="usage-legend-item"><i class="usage-color-output"></i>输出 tokens</span>
+                    </div>
+                </div>
+                <div class="usage-chart-card usage-pie-card">
+                    <div class="usage-chart-title">
+                        <span>模型 Tokens 占比</span>
+                        <span id="ai-usage-pie-subtitle"></span>
+                    </div>
+                    <div id="ai-usage-pie" class="usage-pie-layout"></div>
+                </div>
             </div>
         </div>
 
@@ -251,6 +285,8 @@
         let providerData = {};
         let aiTaskData = {};
         let promptProfiles = {};
+        let aiUsageData = {};
+        let aiUsageState = { days: 7, selectedModel: '' };
         let currentPromptProfile = 'deep_reading';
         let modelFetchTimer = null;
 
@@ -285,7 +321,7 @@
                 fetch('/api/providers'), fetch('/api/providers/presets'),
                 fetch('/api/prompts'), fetch('/api/stats'), fetch('/api/settings/proxy'),
                 fetch('/api/settings/fetch'), fetch('/api/settings/ai-tasks'),
-                fetch('/api/settings/ai-usage?days=7')
+                fetch('/api/settings/ai-usage?days=7&group_by=model')
             ]);
             providerData = await provResp.json();
             presets = await presetResp.json();
@@ -294,12 +330,12 @@
             const proxyData = await proxyResp.json();
             const fetchData = await fetchResp.json();
             aiTaskData = await taskResp.json();
-            const usageData = await usageResp.json();
+            aiUsageData = await usageResp.json();
 
             renderProviderList();
             renderPresetGrid();
             renderAiTasks(aiTaskData.tasks || {});
-            renderAiUsage(usageData);
+            renderAiUsage(aiUsageData);
             renderPrompts(promptData);
             if (statsData.concurrency !== undefined) document.getElementById('concurrency').value = statsData.concurrency;
 
@@ -435,20 +471,250 @@
             }
         }
 
-        function renderAiUsage(data) {
-            const box = document.getElementById('ai-usage-summary');
-            const items = data.items || [];
-            if (!items.length) {
-                box.innerHTML = '<div class="empty-state"><p>暂无 LLM 用量记录</p></div>';
+        const PIE_COLORS = ['#1a73e8', '#60a5fa', '#0f3b8f', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ef4444'];
+
+        function formatUsageNumber(value, suffix = '') {
+            const n = Number(value || 0);
+            if (n >= 1000000) return (n / 1000000).toFixed(n >= 10000000 ? 0 : 1) + 'M' + suffix;
+            if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'K' + suffix;
+            return String(n) + suffix;
+        }
+
+        function formatUsageExact(value) {
+            return Number(value || 0).toLocaleString('en-US');
+        }
+
+        function usageGroupLabel(group) {
+            return group.label || group.key || 'unknown';
+        }
+
+        function tokenParts(point) {
+            const prompt = Math.max(0, Number(point?.prompt_tokens || 0));
+            const cached = Math.min(prompt, Math.max(0, Number(point?.cached_tokens || 0)));
+            const uncached = Math.max(prompt - cached, 0);
+            const output = Math.max(0, Number(point?.completion_tokens || 0));
+            return {cached, uncached, output, total: cached + uncached + output};
+        }
+
+        function hideTokenTooltip() {
+            const tooltip = document.getElementById('ai-usage-token-tooltip');
+            if (!tooltip) return;
+            tooltip.hidden = true;
+            tooltip.setAttribute('aria-hidden', 'true');
+        }
+
+        function showTokenTooltip(event, bar) {
+            const tooltip = document.getElementById('ai-usage-token-tooltip');
+            if (!tooltip) return;
+            const data = bar.dataset;
+            const date = data.date || '';
+            const total = Number(data.total || 0);
+            const cached = Number(data.cached || 0);
+            const uncached = Number(data.uncached || 0);
+            const output = Number(data.output || 0);
+            tooltip.innerHTML = `
+                <div class="usage-tooltip-head">
+                    <strong>${escapeHtml(date)}</strong>
+                    <strong>${escapeHtml(formatUsageExact(total))} tokens</strong>
+                </div>
+                <div class="usage-tooltip-row">
+                    <span class="usage-tooltip-swatch usage-color-cache-hit"></span>
+                    <span>输入（命中缓存）</span>
+                    <strong>${escapeHtml(formatUsageExact(cached))} tokens</strong>
+                </div>
+                <div class="usage-tooltip-row">
+                    <span class="usage-tooltip-swatch usage-color-cache-miss"></span>
+                    <span>输入（未命中缓存）</span>
+                    <strong>${escapeHtml(formatUsageExact(uncached))} tokens</strong>
+                </div>
+                <div class="usage-tooltip-row">
+                    <span class="usage-tooltip-swatch usage-color-output"></span>
+                    <span>输出</span>
+                    <strong>${escapeHtml(formatUsageExact(output))} tokens</strong>
+                </div>`;
+            tooltip.hidden = false;
+            tooltip.setAttribute('aria-hidden', 'false');
+
+            const card = tooltip.closest('.usage-chart-card');
+            if (!card) return;
+            const cardRect = card.getBoundingClientRect();
+            const tooltipRect = tooltip.getBoundingClientRect();
+            const gap = 14;
+            const padding = 8;
+            let left = event.clientX - cardRect.left + gap;
+            let top = event.clientY - cardRect.top + gap;
+            if (left + tooltipRect.width > cardRect.width - padding) {
+                left = event.clientX - cardRect.left - tooltipRect.width - gap;
+            }
+            if (top + tooltipRect.height > cardRect.height - padding) {
+                top = event.clientY - cardRect.top - tooltipRect.height - gap;
+            }
+            tooltip.style.left = `${Math.max(padding, left)}px`;
+            tooltip.style.top = `${Math.max(padding, top)}px`;
+        }
+
+        function bindTokenTooltip(chart) {
+            chart.querySelectorAll('.usage-token-bar').forEach(bar => {
+                bar.addEventListener('mouseenter', event => showTokenTooltip(event, bar));
+                bar.addEventListener('mousemove', event => showTokenTooltip(event, bar));
+                bar.addEventListener('mouseleave', hideTokenTooltip);
+            });
+        }
+
+        function setAiUsageModel(model) {
+            aiUsageState.selectedModel = model || '';
+            renderAiUsage(aiUsageData);
+        }
+
+        function setAiUsageDays(days) {
+            aiUsageState.days = Math.max(1, parseInt(days) || 7);
+            loadAiUsage();
+        }
+
+        async function loadAiUsage() {
+            const chart = document.getElementById('ai-usage-token-chart');
+            hideTokenTooltip();
+            chart.innerHTML = '<div class="empty-state"><p>正在加载用量数据...</p></div>';
+            const params = new URLSearchParams({days: String(aiUsageState.days), group_by: 'model'});
+            try {
+                const resp = await fetch('/api/settings/ai-usage?' + params.toString());
+                aiUsageData = await resp.json();
+                renderAiUsage(aiUsageData);
+            } catch (e) {
+                chart.innerHTML = `<div class="empty-state"><p>加载失败：${escapeHtml(e.message)}</p></div>`;
+            }
+        }
+
+        function renderModelSelect(groups) {
+            const select = document.getElementById('ai-usage-model');
+            if (!groups.length) {
+                select.innerHTML = '<option value="">暂无模型</option>';
+                select.disabled = true;
+                aiUsageState.selectedModel = '';
+                return null;
+            }
+            select.disabled = false;
+            const exists = groups.some(group => group.key === aiUsageState.selectedModel);
+            if (!exists) aiUsageState.selectedModel = groups[0].key;
+            select.innerHTML = groups.map(group => `<option value="${escapeHtml(group.key)}">${escapeHtml(usageGroupLabel(group))}</option>`).join('');
+            select.value = aiUsageState.selectedModel;
+            return groups.find(group => group.key === aiUsageState.selectedModel) || groups[0];
+        }
+
+        function renderTokenStackChart(data, group) {
+            hideTokenTooltip();
+            const chart = document.getElementById('ai-usage-token-chart');
+            const dates = data.dates || [];
+            const title = document.getElementById('ai-usage-chart-title');
+            const subtitle = document.getElementById('ai-usage-chart-subtitle');
+            if (!group || !dates.length) {
+                title.textContent = 'Tokens';
+                subtitle.textContent = '';
+                chart.innerHTML = '<div class="empty-state"><p>暂无 LLM 用量记录</p></div>';
                 return;
             }
-            box.innerHTML = items.map(item => `
-                <div class="db-stat db-stat-wide">
-                    <div class="db-stat-label">${escapeHtml(AI_TASK_META[item.task_key]?.title || item.task_key)} · ${escapeHtml(item.model || 'unknown')}</div>
-                    <div class="db-stat-value">${escapeHtml(item.total_tokens || 0)} tokens</div>
-                    <div class="field-hint">调用 ${escapeHtml(item.call_count || 0)} 次 · 输入 ${escapeHtml(item.prompt_tokens || 0)} · 输出 ${escapeHtml(item.completion_tokens || 0)} · 缓存 ${escapeHtml(item.cached_tokens || 0)}</div>
-                </div>
-            `).join('');
+            const points = group.points || [];
+            const totalTokens = Number(group.total_tokens || 0);
+            title.textContent = usageGroupLabel(group);
+            subtitle.textContent = `Tokens ${formatUsageNumber(totalTokens)} · 近 ${data.days || aiUsageState.days} 天`;
+            if (totalTokens <= 0) {
+                chart.innerHTML = '<div class="empty-state"><p>该模型暂无用量记录</p></div>';
+                return;
+            }
+
+            const width = 920, height = 330;
+            const left = 72, right = 26, top = 28, bottom = 42;
+            const plotW = width - left - right;
+            const plotH = height - top - bottom;
+            const parts = points.map(tokenParts);
+            const maxValue = Math.max(1, ...parts.map(part => part.total));
+            const step = plotW / Math.max(dates.length, 1);
+            const barW = Math.max(4, Math.min(22, step * 0.46));
+            const xFor = i => left + step * i + step / 2 - barW / 2;
+            const yFor = v => top + plotH - (plotH * Number(v || 0) / maxValue);
+            const hFor = v => plotH * Number(v || 0) / maxValue;
+
+            let grid = '';
+            for (let i = 0; i <= 4; i++) {
+                const y = top + plotH * i / 4;
+                const value = maxValue * (4 - i) / 4;
+                grid += `<line class="usage-grid-line" x1="${left}" y1="${y}" x2="${width - right}" y2="${y}"></line>`;
+                grid += `<text class="usage-axis-label" x="${left - 10}" y="${y + 4}" text-anchor="end">${escapeHtml(formatUsageNumber(Math.round(value)))}</text>`;
+            }
+            dates.forEach((date, i) => {
+                const x = left + step * i + step / 2;
+                grid += `<line class="usage-grid-line usage-grid-vertical" x1="${x}" y1="${top}" x2="${x}" y2="${top + plotH}"></line>`;
+                if (dates.length <= 10 || i === 0 || i === dates.length - 1 || i === Math.floor(dates.length / 2)) {
+                    grid += `<text class="usage-axis-label" x="${x}" y="${height - 12}" text-anchor="middle">${escapeHtml(date.slice(5))}</text>`;
+                }
+            });
+
+            const bars = parts.map((part, i) => {
+                const x = xFor(i);
+                const cachedH = hFor(part.cached);
+                const uncachedH = hFor(part.uncached);
+                const outputH = hFor(part.output);
+                let y = top + plotH;
+                const outputY = y - outputH; y = outputY;
+                const uncachedY = y - uncachedH; y = uncachedY;
+                const cachedY = y - cachedH;
+                const date = points[i]?.date || dates[i];
+                return `<g class="usage-token-bar" data-date="${escapeHtml(date)}" data-total="${part.total}" data-cached="${part.cached}" data-uncached="${part.uncached}" data-output="${part.output}">
+                    <rect class="usage-token-output" x="${x}" y="${outputY}" width="${barW}" height="${outputH}"></rect>
+                    <rect class="usage-token-cache-miss" x="${x}" y="${uncachedY}" width="${barW}" height="${uncachedH}"></rect>
+                    <rect class="usage-token-cache-hit" x="${x}" y="${cachedY}" width="${barW}" height="${cachedH}"></rect>
+                    <rect class="usage-token-hitbox" x="${x}" y="${top}" width="${barW}" height="${plotH}"></rect>
+                </g>`;
+            }).join('');
+
+            chart.innerHTML = `<svg class="usage-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Tokens 堆叠柱状图">${grid}${bars}</svg>`;
+            bindTokenTooltip(chart);
+        }
+
+        function pieSlicePath(cx, cy, r, startAngle, endAngle) {
+            const startX = cx + r * Math.cos(startAngle);
+            const startY = cy + r * Math.sin(startAngle);
+            const endX = cx + r * Math.cos(endAngle);
+            const endY = cy + r * Math.sin(endAngle);
+            const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
+            return `M ${cx} ${cy} L ${startX} ${startY} A ${r} ${r} 0 ${largeArc} 1 ${endX} ${endY} Z`;
+        }
+
+        function renderModelSharePie(data) {
+            const box = document.getElementById('ai-usage-pie');
+            const subtitle = document.getElementById('ai-usage-pie-subtitle');
+            const groups = (data.groups || []).filter(group => Number(group.total_tokens || 0) > 0);
+            const total = groups.reduce((sum, group) => sum + Number(group.total_tokens || 0), 0);
+            subtitle.textContent = total ? `总计 ${formatUsageNumber(total)} tokens` : '';
+            if (!total) {
+                box.innerHTML = '<div class="empty-state"><p>暂无模型用量占比</p></div>';
+                return;
+            }
+            let angle = -Math.PI / 2;
+            const slices = groups.map((group, idx) => {
+                const value = Number(group.total_tokens || 0);
+                const next = angle + (Math.PI * 2 * value / total);
+                const path = pieSlicePath(90, 90, 76, angle, next);
+                angle = next;
+                return `<path d="${path}" fill="${PIE_COLORS[idx % PIE_COLORS.length]}"><title>${escapeHtml(usageGroupLabel(group))} · ${escapeHtml(formatUsageNumber(value))} · ${escapeHtml(((value / total) * 100).toFixed(1))}%</title></path>`;
+            }).join('');
+            const legend = groups.map((group, idx) => {
+                const value = Number(group.total_tokens || 0);
+                return `<div class="usage-pie-legend-item">
+                    <span><i style="background:${PIE_COLORS[idx % PIE_COLORS.length]}"></i>${escapeHtml(usageGroupLabel(group))}</span>
+                    <strong>${escapeHtml(formatUsageNumber(value))}</strong>
+                    <em>${escapeHtml(((value / total) * 100).toFixed(1))}%</em>
+                </div>`;
+            }).join('');
+            box.innerHTML = `<svg class="usage-pie-svg" viewBox="0 0 180 180" role="img" aria-label="模型 Tokens 占比">${slices}<circle cx="90" cy="90" r="38" fill="#fff"></circle></svg><div class="usage-pie-legend">${legend}</div>`;
+        }
+
+        function renderAiUsage(data) {
+            data = data || {};
+            const groups = data.groups || [];
+            const selectedGroup = renderModelSelect(groups);
+            renderTokenStackChart(data, selectedGroup);
+            renderModelSharePie(data);
         }
 
         /* ---- Provider Management ---- */
@@ -801,7 +1067,7 @@
 
         const DEFAULT_QUESTIONS = ['这篇论文试图解决什么问题？','有哪些相关研究？','论文如何解决这个问题？','论文做了哪些实验？','有什么可以进一步探索的点？','总结一下论文的主要内容'];
 
-        function parseQuestionsFromPrompt(prompt) { const questions = []; const regex = /### Q\d+:\s*(.*?)(?:\\n|\n)/g; let m; while ((m = regex.exec(prompt)) !== null) questions.push(m[1].trim()); renderQuestions(questions.length === 0 ? DEFAULT_QUESTIONS : questions); }
+        function parseQuestionsFromPrompt(prompt) { const questions = []; const normalized = String(prompt || '').replace(/\\n/g, '\n'); const regex = /### Q\d+:\s*([^\n]+)/g; let m; while ((m = regex.exec(normalized)) !== null) questions.push(m[1].trim()); renderQuestions(questions.length === 0 ? DEFAULT_QUESTIONS : questions); }
 
         function renderQuestions(questions) { const list = document.getElementById('qa-questions-list'); let html = ''; questions.forEach((q, i) => { html += `<div class="qa-q-item"><span class="qa-q-label">Q${i+1}</span><input type="text" class="qa-q-input" value="${escapeHtml(q)}" data-index="${i}"><button class="btn-sm btn-delete" onclick="removeQuestion(${i})">✕</button></div>`; }); list.innerHTML = html; }
         function getQuestionsFromUI() { return Array.from(document.querySelectorAll('.qa-q-input')).map(el => el.value.trim()).filter(v => v); }
@@ -810,8 +1076,9 @@
         function resetQuestions() { renderQuestions(DEFAULT_QUESTIONS); }
 
         function buildPromptWithQuestions(questions) {
-            let qaBlock = questions.map((q, i) => `### Q${i+1}: ${q}\\n\\n（请详细回答 Q${i+1}，至少3-5个完整段落）`).join('\\n\\n');
-            return `请对论文内容进行深度阅读分析，只生成 Q&A 深度阅读内容。\n\n请严格返回合法 JSON，不要返回额外解释：\n\n{\n  "qa_analysis": "${qaBlock}"\n}\n\n重要要求：\n1. qa_analysis 中每个 Q&A 使用 Markdown 标题格式（### Qn: 问题）\n2. 每个回答应当详尽充分，优先覆盖方法、实验、局限和可复现细节\n3. 除 qa_analysis 外不要返回其他字段\n4. qa_analysis 中的换行必须用 \\\\n 转义`;
+            let questionList = questions.map((q, i) => `${i+1}. ${q}`).join('\n');
+            let qaBlock = questions.map((q, i) => `### Q${i+1}: ${q}\\n\\n（这里完整回答 Q${i+1}）`).join('\\n\\n');
+            return `请对论文内容进行深度阅读分析，只生成 Q&A 深度阅读内容。\n\n必须按顺序完整回答以下 ${questions.length} 个问题，每个问题都要保留对应的 Markdown 标题，不得省略、合并或只回答最后的总结问题：\n${questionList}\n\n请严格返回合法 JSON，不要返回额外解释：\n\n{\n  "qa_analysis": "${qaBlock}"\n}\n\n重要要求：\n1. qa_analysis 中每个 Q&A 使用 Markdown 标题格式（### Qn: 问题）\n2. 每个回答应当详尽充分，优先覆盖方法、实验、局限和可复现细节\n3. 必须输出 Q1 到 Q${questions.length} 的全部条目，即使某个问题论文信息不足，也要说明“不足之处”而不是跳过\n4. 除 qa_analysis 外不要返回其他字段\n5. qa_analysis 中的换行必须用 \\\\n 转义`;
         }
 
         async function applyQuestionsToPrompt() {

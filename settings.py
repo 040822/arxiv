@@ -207,11 +207,18 @@ DEFAULT_DEEP_READING_QUESTIONS = [
 
 def _build_deep_reading_instruction(questions=None):
     questions = questions or DEFAULT_DEEP_READING_QUESTIONS
+    question_list = "\n".join(
+        f"{i}. {question}"
+        for i, question in enumerate(questions, start=1)
+    )
     qa_block = "\\n\\n".join(
-        f"### Q{i}: {question}\\n\\n详细回答..."
+        f"### Q{i}: {question}\\n\\n（这里完整回答 Q{i}）"
         for i, question in enumerate(questions, start=1)
     )
     return f"""请对论文内容进行深度阅读分析，只生成 Q&A 深度阅读内容。
+
+必须按顺序完整回答以下 {len(questions)} 个问题，每个问题都要保留对应的 Markdown 标题，不得省略、合并或只回答最后的总结问题：
+{question_list}
 
 请严格返回合法 JSON，不要返回额外解释：
 
@@ -222,8 +229,9 @@ def _build_deep_reading_instruction(questions=None):
 重要要求：
 1. qa_analysis 中每个 Q&A 使用 Markdown 标题格式（### Qn: 问题）
 2. 每个回答应当详尽充分，优先覆盖方法、实验、局限和可复现细节
-3. 除 qa_analysis 外不要返回其他字段
-4. qa_analysis 中的换行必须用 \\n 转义
+3. 必须输出 Q1 到 Q{len(questions)} 的全部条目，即使某个问题论文信息不足，也要说明“不足之处”而不是跳过
+4. 除 qa_analysis 外不要返回其他字段
+5. qa_analysis 中的换行必须用 \\n 转义
 """
 
 
@@ -434,7 +442,8 @@ def _normalize_ai_tasks(ai_tasks, active_provider, providers):
 def _extract_deep_reading_questions(instruction):
     """从旧版深度阅读 prompt 中提取 Q&A 问题，提取失败时使用默认问题。"""
     questions = []
-    for match in re.finditer(r"### Q\d+:\s*(.*?)(?:\\n|\n)", instruction or ""):
+    text = (instruction or "").replace("\\n", "\n")
+    for match in re.finditer(r"### Q\d+:\s*([^\n]+)", text):
         question = match.group(1).strip()
         if question:
             questions.append(question)
@@ -463,9 +472,20 @@ def _is_legacy_deep_reading_instruction(instruction):
     return "qa_analysis" in text and has_base_fields and has_old_template_shape and has_old_guidance
 
 
+def _is_weak_qa_only_deep_reading_instruction(instruction):
+    """判断是否为上一版 Q&A-only 但约束过弱的自动生成 prompt。"""
+    text = instruction or ""
+    return (
+        "请对论文内容进行深度阅读分析，只生成 Q&A 深度阅读内容" in text
+        and "qa_analysis" in text
+        and "详细回答..." in text
+        and "必须按顺序完整回答以下" not in text
+    )
+
+
 def _migrate_deep_reading_instruction(instruction):
     """仅迁移旧默认/旧问题模板；明显自定义的 prompt 原样保留。"""
-    if _is_legacy_deep_reading_instruction(instruction):
+    if _is_legacy_deep_reading_instruction(instruction) or _is_weak_qa_only_deep_reading_instruction(instruction):
         return _build_deep_reading_instruction(_extract_deep_reading_questions(instruction))
     return instruction
 

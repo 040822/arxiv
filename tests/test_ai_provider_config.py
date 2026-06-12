@@ -233,6 +233,30 @@ class AiTaskSettingsTests(unittest.TestCase):
 
         self.assertEqual(profiles["deep_reading"]["instruction"], custom_prompt)
 
+    def test_weak_qa_only_prompt_migrates_to_strict_all_questions_prompt(self):
+        import settings
+
+        weak_prompt = """请对论文内容进行深度阅读分析，只生成 Q&A 深度阅读内容。
+
+请严格返回合法 JSON，不要返回额外解释：
+
+{
+  "qa_analysis": "### Q1: 问题一？\\n\\n详细回答...\\n\\n### Q2: 问题二？\\n\\n详细回答..."
+}
+
+重要要求：
+1. qa_analysis 中每个 Q&A 使用 Markdown 标题格式（### Qn: 问题）
+"""
+        profiles = settings._normalize_prompt_profiles({
+            "deep_reading": {"system": "s", "instruction": weak_prompt}
+        })
+        instruction = profiles["deep_reading"]["instruction"]
+
+        self.assertIn("必须按顺序完整回答以下 2 个问题", instruction)
+        self.assertIn("问题一？", instruction)
+        self.assertIn("问题二？", instruction)
+        self.assertIn("必须输出 Q1 到 Q2 的全部条目", instruction)
+
 
 class DummyOpenAI:
     models_response = types.SimpleNamespace(data=[])
@@ -783,7 +807,19 @@ class PromptAndReportSafetyTests(unittest.TestCase):
                 "total_tokens": 120,
                 "cached_tokens": 50,
             })
+            database.record_ai_usage({
+                "task_key": "deep_reading",
+                "provider_key": "smart",
+                "provider_name": "Smart",
+                "model": "smart-model",
+                "arxiv_id": "2601.00002",
+                "prompt_tokens": 50,
+                "completion_tokens": 30,
+                "total_tokens": 80,
+                "cached_tokens": 80,
+            })
             summary = database.get_ai_usage_summary(days=7)
+            summary_by_model = database.get_ai_usage_summary(days=7, group_by="model")
 
         database.DB_DIR = original_dir
         database.DB_PATH = original_path
@@ -791,6 +827,17 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         self.assertEqual(summary["items"][0]["task_key"], "basic_analysis")
         self.assertEqual(summary["items"][0]["total_tokens"], 120)
         self.assertEqual(summary["items"][0]["cached_tokens"], 50)
+        self.assertEqual(summary["group_by"], "task")
+        self.assertEqual(len(summary["dates"]), 7)
+        self.assertEqual(summary["totals"]["total_tokens"], 200)
+        self.assertEqual(summary["groups"][0]["key"], "basic_analysis")
+        self.assertEqual(len(summary["groups"][0]["points"]), 7)
+        self.assertTrue(any(point["total_tokens"] == 120 for point in summary["groups"][0]["points"]))
+        self.assertEqual(summary_by_model["group_by"], "model")
+        self.assertEqual(summary_by_model["groups"][0]["key"], "cheap-model")
+        self.assertEqual(len(summary_by_model["groups"]), 2)
+        self.assertEqual(sum(group["total_tokens"] for group in summary_by_model["groups"]), 200)
+        self.assertTrue(any(group["key"] == "smart-model" and group["cached_tokens"] == 80 for group in summary_by_model["groups"]))
 
 
 class FetchBatchTests(unittest.TestCase):

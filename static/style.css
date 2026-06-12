@@ -1210,6 +1210,239 @@ footer {
     font-size: 1em;
 }
 
+.usage-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 14px 0 16px;
+}
+
+.usage-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85em;
+    color: #666;
+}
+
+.usage-control select {
+    padding: 7px 10px;
+    border: 1px solid #d0d7de;
+    border-radius: 8px;
+    background: #fff;
+    color: #333;
+}
+
+.usage-chart-card {
+    border: 1px solid #e5eaf2;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #fff 0%, #fbfcfe 100%);
+    padding: 14px;
+    margin-top: 14px;
+    position: relative;
+}
+
+.usage-chart-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+    color: #333;
+    font-weight: 700;
+}
+
+.usage-chart-title span:last-child {
+    color: #8a94a6;
+    font-size: 0.82em;
+    font-weight: 500;
+}
+
+.usage-chart {
+    width: 100%;
+    min-height: 300px;
+}
+
+.usage-chart-svg {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+.usage-grid-line {
+    stroke: #e6ebf2;
+    stroke-width: 1;
+}
+
+.usage-grid-vertical {
+    stroke-dasharray: 4 8;
+}
+
+.usage-axis-label {
+    fill: #98a2b3;
+    font-size: 11px;
+}
+
+.usage-token-bar rect {
+    shape-rendering: crispEdges;
+}
+
+.usage-token-bar {
+    cursor: crosshair;
+}
+
+.usage-token-hitbox {
+    fill: transparent;
+    pointer-events: all;
+}
+
+.usage-token-cache-hit,
+.usage-color-cache-hit {
+    fill: #9bd7ff;
+    background: #9bd7ff;
+}
+
+.usage-token-cache-miss,
+.usage-color-cache-miss {
+    fill: #1677ff;
+    background: #1677ff;
+}
+
+.usage-token-output,
+.usage-color-output {
+    fill: #0b3f9c;
+    background: #0b3f9c;
+}
+
+.usage-token-tooltip {
+    position: absolute;
+    z-index: 20;
+    width: min(330px, calc(100% - 16px));
+    padding: 13px 16px 14px;
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
+    color: #1f2937;
+    pointer-events: none;
+}
+
+.usage-tooltip-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 8px;
+    color: #111827;
+    font-size: 1.05em;
+    line-height: 1.25;
+}
+
+.usage-tooltip-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 10px;
+    margin-top: 7px;
+    color: #6b7280;
+    line-height: 1.25;
+}
+
+.usage-tooltip-row strong {
+    color: #5b6472;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.usage-tooltip-swatch {
+    width: 13px;
+    height: 13px;
+    border-radius: 3px;
+    display: inline-block;
+}
+
+.usage-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    margin-top: 10px;
+    color: #5f6b7a;
+    font-size: 0.84em;
+}
+
+.usage-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.usage-legend-item i,
+.usage-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.usage-pie-card {
+    margin-top: 16px;
+}
+
+.usage-pie-layout {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+    min-height: 210px;
+}
+
+.usage-pie-svg {
+    width: 190px;
+    height: 190px;
+    flex: 0 0 190px;
+}
+
+.usage-pie-legend {
+    display: grid;
+    gap: 8px;
+    flex: 1;
+    min-width: 220px;
+}
+
+.usage-pie-legend-item {
+    display: grid;
+    grid-template-columns: minmax(140px, 1fr) auto auto;
+    gap: 12px;
+    align-items: center;
+    color: #334155;
+    font-size: 0.88em;
+}
+
+.usage-pie-legend-item span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.usage-pie-legend-item i {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    flex: 0 0 auto;
+}
+
+.usage-pie-legend-item strong {
+    font-weight: 600;
+    color: #1f2937;
+}
+
+.usage-pie-legend-item em {
+    color: #8a94a6;
+    font-style: normal;
+}
+
 .db-path-item {
     padding: 10px 14px;
     font-size: 0.9em;

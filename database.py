@@ -27,7 +27,7 @@ import json
 import os
 import logging
 import html as html_module
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from config import DB_PATH, DB_DIR
 
 logger = logging.getLogger(__name__)
@@ -1322,9 +1322,28 @@ def record_ai_usage(usage):
     conn.close()
 
 
-def get_ai_usage_summary(days=7):
-    """按任务/模型汇总最近 N 天 token 用量。"""
+def _usage_dates(days):
+    end_date = datetime.now(timezone.utc).date()
+    start_date = end_date - timedelta(days=days - 1)
+    return [(start_date + timedelta(days=i)).isoformat() for i in range(days)]
+
+
+def _empty_usage_point(day):
+    return {
+        "date": day,
+        "call_count": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cached_tokens": 0,
+    }
+
+
+def get_ai_usage_summary(days=7, group_by="task"):
+    """按任务/模型汇总最近 N 天 token 用量，并返回按天分桶的时间序列。"""
     days = max(1, min(365, _safe_int(days) or 7))
+    group_by = group_by if group_by in {"task", "model"} else "task"
+    dates = _usage_dates(days)
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -1344,9 +1363,82 @@ def get_ai_usage_summary(days=7):
         ORDER BY total_tokens DESC, call_count DESC
     """, (f"-{days} days",))
     rows = cursor.fetchall()
+
+    if group_by == "model":
+        cursor.execute("""
+            SELECT
+                date(created_at) AS usage_date,
+                COALESCE(NULLIF(model, ''), 'unknown') AS group_key,
+                COALESCE(NULLIF(model, ''), 'unknown') AS label,
+                COUNT(*) AS call_count,
+                SUM(prompt_tokens) AS prompt_tokens,
+                SUM(completion_tokens) AS completion_tokens,
+                SUM(total_tokens) AS total_tokens,
+                SUM(cached_tokens) AS cached_tokens
+            FROM ai_usage_logs
+            WHERE created_at >= datetime('now', ?)
+            GROUP BY usage_date, group_key
+            ORDER BY usage_date, group_key
+        """, (f"-{days} days",))
+    else:
+        cursor.execute("""
+            SELECT
+                date(created_at) AS usage_date,
+                COALESCE(NULLIF(task_key, ''), 'unknown') AS group_key,
+                COALESCE(NULLIF(task_key, ''), 'unknown') AS label,
+                COUNT(*) AS call_count,
+                SUM(prompt_tokens) AS prompt_tokens,
+                SUM(completion_tokens) AS completion_tokens,
+                SUM(total_tokens) AS total_tokens,
+                SUM(cached_tokens) AS cached_tokens
+            FROM ai_usage_logs
+            WHERE created_at >= datetime('now', ?)
+            GROUP BY usage_date, group_key
+            ORDER BY usage_date, group_key
+        """, (f"-{days} days",))
+    series_rows = cursor.fetchall()
     conn.close()
+
+    groups = {}
+    for row in series_rows:
+        item = dict(row)
+        key = item["group_key"]
+        if key not in groups:
+            groups[key] = {
+                "key": key,
+                "label": item["label"],
+                "call_count": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cached_tokens": 0,
+                "points": {day: _empty_usage_point(day) for day in dates},
+            }
+        point = groups[key]["points"].setdefault(item["usage_date"], _empty_usage_point(item["usage_date"]))
+        for field in ("call_count", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens"):
+            value = _safe_int(item.get(field))
+            point[field] = value
+            groups[key][field] += value
+
+    group_items = []
+    for group in groups.values():
+        group["points"] = [group["points"].get(day, _empty_usage_point(day)) for day in dates]
+        group_items.append(group)
+    group_items.sort(key=lambda item: (item["total_tokens"], item["call_count"]), reverse=True)
+
+    totals = {
+        "call_count": sum(_safe_int(row["call_count"]) for row in rows),
+        "prompt_tokens": sum(_safe_int(row["prompt_tokens"]) for row in rows),
+        "completion_tokens": sum(_safe_int(row["completion_tokens"]) for row in rows),
+        "total_tokens": sum(_safe_int(row["total_tokens"]) for row in rows),
+        "cached_tokens": sum(_safe_int(row["cached_tokens"]) for row in rows),
+    }
     return {
         "days": days,
+        "group_by": group_by,
+        "dates": dates,
+        "totals": totals,
+        "groups": group_items,
         "items": [dict(row) for row in rows],
     }
 
