@@ -35,7 +35,7 @@
                 {% if paper.pdf_url %}
                 <span class="meta-item">📥 <a href="{{ paper.pdf_url }}" target="_blank" class="meta-link">下载 PDF</a></span>
                 {% endif %}
-                <span class="meta-item">📌 <a href="javascript:void(0)" class="meta-link" id="todo-toggle" onclick="toggleTodo({{ paper.arxiv_id | tojson }})">加入阅读清单</a></span>
+                <span class="meta-item">📌 <a href="javascript:void(0)" class="meta-link" id="todo-toggle" onclick='toggleTodo({{ paper.arxiv_id | tojson }})'>加入阅读清单</a></span>
                 {% if paper.hidden %}
                 <span class="meta-item" style="color:#dc3545;">🚫 已隐藏</span>
                 {% endif %}
@@ -86,11 +86,11 @@
                         {% if analysis and analysis.tags %}
                             {% if analysis.tags is string %}
                                 {% for t in analysis.tags.split(",") %}
-                                <span class="tag-small">{{ t.strip() }} <a onclick="removeTag({{ t.strip() | tojson }})" class="tag-remove">✕</a></span>
+                                <span class="tag-small">{{ t.strip() }} <a onclick='removeTag({{ t.strip() | tojson }})' class="tag-remove">✕</a></span>
                                 {% endfor %}
                             {% else %}
                                 {% for t in analysis.tags %}
-                                <span class="tag-small">{{ t }} <a onclick="removeTag({{ t | tojson }})" class="tag-remove">✕</a></span>
+                                <span class="tag-small">{{ t }} <a onclick='removeTag({{ t | tojson }})' class="tag-remove">✕</a></span>
                                 {% endfor %}
                             {% endif %}
                         {% endif %}
@@ -239,6 +239,16 @@
                 .replace(/\n/g, '\\n'));
         }
 
+        function handleAuthRequired(resp, data) {
+            if (resp.status === 401 || data.auth_required) {
+                if (confirm('需要登录后才能修改阅读清单。现在去登录？')) {
+                    window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+                }
+                return true;
+            }
+            return false;
+        }
+
         async function checkTodoStatus() {
             try {
                 const resp = await fetch(`/api/paper/${ARXIV_ID}/todo/status`);
@@ -259,6 +269,7 @@
                     method: isAdded ? 'DELETE' : 'POST'
                 });
                 const data = await resp.json();
+                if (handleAuthRequired(resp, data)) return;
                 if (data.status === 'ok') {
                     if (isAdded) {
                         el.textContent = '加入阅读清单';

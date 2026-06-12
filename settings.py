@@ -22,7 +22,14 @@ import json
 import os
 import logging
 from string import Formatter
-from config import DB_DIR, SCHEDULE_HOUR, SCHEDULE_MINUTE
+from config import (
+    DB_DIR,
+    FETCH_BATCH_DAYS,
+    FETCH_BATCH_DELAY,
+    FETCH_REQUEST_DELAY,
+    SCHEDULE_HOUR,
+    SCHEDULE_MINUTE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +206,19 @@ def _normalize_schedule(schedule):
         "enabled": _as_bool(schedule.get("enabled"), True),
         "hour": max(0, min(23, hour)),
         "minute": max(0, min(59, minute)),
+    }
+
+
+def _normalize_fetch_config(fetch):
+    """补齐并约束 arXiv 抓取配置。"""
+    fetch = dict(fetch or {})
+    request_delay = _as_float(fetch.get("request_delay"), FETCH_REQUEST_DELAY)
+    batch_days = _as_int(fetch.get("batch_days"), FETCH_BATCH_DAYS)
+    batch_delay = _as_float(fetch.get("batch_delay"), FETCH_BATCH_DELAY)
+    return {
+        "request_delay": max(3.0, min(300.0, request_delay)),
+        "batch_days": max(1, min(365, batch_days)),
+        "batch_delay": max(1.0, min(1800.0, batch_delay)),
     }
 
 
@@ -515,7 +535,7 @@ def load_settings():
         if "proxy" in migrated:
             merged["proxy"] = migrated["proxy"]
         if "fetch" in migrated:
-            merged["fetch"] = migrated["fetch"]
+            merged["fetch"] = _normalize_fetch_config(migrated["fetch"])
         if "admin_password" in migrated:
             merged["admin_password"] = migrated["admin_password"]
         if "prompts" in migrated:
@@ -636,13 +656,7 @@ def get_fetch_config():
         dict: 包含 request_delay/batch_days/batch_delay 的配置字典
     """
     settings = load_settings()
-    fetch = settings.get("fetch", {})
-    from config import FETCH_REQUEST_DELAY, FETCH_BATCH_DAYS, FETCH_BATCH_DELAY
-    return {
-        "request_delay": fetch.get("request_delay", FETCH_REQUEST_DELAY),
-        "batch_days": fetch.get("batch_days", FETCH_BATCH_DAYS),
-        "batch_delay": fetch.get("batch_delay", FETCH_BATCH_DELAY),
-    }
+    return _normalize_fetch_config(settings.get("fetch", {}))
 
 
 def get_schedule_config():
@@ -682,7 +696,7 @@ def save_fetch_config(fetch_config):
         bool: 保存是否成功
     """
     settings = load_settings()
-    settings["fetch"] = fetch_config
+    settings["fetch"] = _normalize_fetch_config(fetch_config)
     return save_settings(settings)
 
 

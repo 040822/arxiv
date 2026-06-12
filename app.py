@@ -100,6 +100,11 @@ PUBLIC_GET_ENDPOINTS = {
     "login_page",
     "api_auth_status",
 }
+PUBLIC_WRITE_ENDPOINTS = {
+    # 阅读清单的加入/移除是轻量个人操作，不要求管理密码。
+    "api_add_todo",
+    "api_remove_todo",
+}
 AUTH_ENDPOINTS = {"login_page", "api_auth_login", "api_auth_logout", "api_auth_status"}
 
 
@@ -132,6 +137,8 @@ def require_auth_for_protected_routes():
     if not has_admin_password():
         return None
     if request.method == "GET" and endpoint in PUBLIC_GET_ENDPOINTS:
+        return None
+    if endpoint in PUBLIC_WRITE_ENDPOINTS:
         return None
     if is_authenticated():
         return None
@@ -510,7 +517,10 @@ def api_papers():
     tag = request.args.get("tag", None)
     date = request.args.get("date", None)
     min_rating = request.args.get("min_rating", None, type=int)
-    per_page = 20
+    per_page_param = request.args.get("per_page", None, type=int)
+    per_page = get_per_page()
+    if per_page_param and per_page_param in (5, 10, 20, 50, 100):
+        per_page = per_page_param
 
     papers = get_papers_with_analysis(
         date=date, tag=tag, min_rating=min_rating,

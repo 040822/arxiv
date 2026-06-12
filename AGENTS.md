@@ -305,7 +305,7 @@ if "new_column" not in columns:
 
 调用模型时必须通过 `build_chat_completion_kwargs()` 构建参数，不要在业务代码中直接固定传 `temperature` 或 `max_tokens`。
 
-管理密码设置后，`/settings`、`/tasks`、所有写接口和敏感设置读取接口都需要登录；`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
+管理密码设置后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用。`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
 
 ### 7.4 修改 Prompt
 - prompt 存储在 `data/settings.json` 的 `prompts` 字段

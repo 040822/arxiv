@@ -36,6 +36,8 @@
 
 未设置管理密码时，系统保持本地免登录兼容。设置管理密码后，`/settings`、`/tasks`、所有 `POST/PUT/DELETE` 写接口、设置读取接口、任务日志接口都需要登录。
 
+例外：阅读清单的加入/移除接口 `POST/DELETE /api/paper/<arxiv_id>/todo` 为公开轻量操作，不要求管理密码；标记已读/未读仍需要登录。
+
 ```
 GET  /api/auth/status
 POST /api/auth/login
@@ -309,7 +311,7 @@ Body (JSON)：
 POST /api/paper/<arxiv_id>/todo
 ```
 
-已在清单中则返回 ok（不重复添加）。
+公开接口，不要求登录。已在清单中则返回 ok（不重复添加）。
 
 ### 检查清单状态
 
@@ -325,12 +327,16 @@ GET /api/paper/<arxiv_id>/todo/status
 DELETE /api/paper/<arxiv_id>/todo
 ```
 
+公开接口，不要求登录。
+
 ### 标记已读/未读
 
 ```
 POST /api/paper/<arxiv_id>/todo/read
 POST /api/paper/<arxiv_id>/todo/unread
 ```
+
+需要登录。
 
 ### 获取清单
 

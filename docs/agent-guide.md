@@ -97,7 +97,7 @@ if "new_field" in migrated:
 
 ### 2. 认证与敏感字段
 
-- 设置管理密码后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录
+- 设置管理密码后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用
 - `GET /api/providers` 只能返回 `api_key_masked`，不要返回完整 `api_key`
 - 用户/AI/数据库内容进入 HTML 前必须转义，报告页的 `|safe` 只用于后端生成且已转义的 HTML
 ### 3. arXiv API 注意事项

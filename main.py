@@ -51,6 +51,7 @@ def run_full_pipeline():
     from fetcher import fetch_latest_papers
     from analyzer import analyze_pending_papers
     from markdown_gen import generate_all_markdown
+    from settings import get_concurrency
 
     # 流程开始日志
     logger.info("=" * 60)
@@ -68,7 +69,8 @@ def run_full_pipeline():
 
     # 步骤 3: AI 分析论文（默认最多 100 篇）
     logger.info("[3/4] Analyzing papers with AI...")
-    analyzed_count = analyze_pending_papers(limit=100)
+    concurrency = get_concurrency()
+    analyzed_count = analyze_pending_papers(limit=100, concurrency=concurrency)
     logger.info(f"Analyzed {analyzed_count} papers.")
 
     # 步骤 4: 生成 Markdown 报告
@@ -108,10 +110,12 @@ def run_analyze_only():
     """
     from database import init_db
     from analyzer import analyze_pending_papers
+    from settings import get_concurrency
 
     logger.info("Analyzing pending papers only...")
     init_db()
-    analyzed_count = analyze_pending_papers(limit=100)
+    concurrency = get_concurrency()
+    analyzed_count = analyze_pending_papers(limit=100, concurrency=concurrency)
     logger.info(f"Analyzed {analyzed_count} papers.")
 
 

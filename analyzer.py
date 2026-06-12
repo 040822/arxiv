@@ -17,8 +17,8 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
-from config import TAG_CANDIDATES, RATING_CRITERIA, ANALYSIS_CONCURRENCY
-from settings import build_chat_completion_kwargs, get_ai_config, get_prompts
+from config import TAG_CANDIDATES, RATING_CRITERIA
+from settings import build_chat_completion_kwargs, get_ai_config, get_prompts, get_concurrency
 from database import insert_analysis, get_unanalyzed_papers
 from pdf_reader import get_paper_full_text
 
@@ -297,9 +297,9 @@ def analyze_papers(papers, concurrency=None, progress_callback=None):
         logger.info("No unanalyzed papers found.")
         return 0
 
-    # 确定并发数：未指定时使用配置文件中的默认值
+    # 确定并发数：未指定时使用运行时设置
     if concurrency is None:
-        concurrency = ANALYSIS_CONCURRENCY
+        concurrency = get_concurrency()
 
     # 初始化统计计数器
     total = len(papers)

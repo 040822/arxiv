@@ -288,6 +288,16 @@
             window.location.href = url.toString();
         }
 
+        function handleAuthRequired(resp, data) {
+            if (resp.status === 401 || data.auth_required) {
+                if (confirm('需要登录后才能修改阅读清单。现在去登录？')) {
+                    window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+                }
+                return true;
+            }
+            return false;
+        }
+
         function getSelectedIds() {
             return Array.from(document.querySelectorAll('.paper-checkbox:checked')).map(cb => cb.value);
         }
@@ -416,6 +426,7 @@
                     method: isAdded ? 'DELETE' : 'POST'
                 });
                 const data = await resp.json();
+                if (handleAuthRequired(resp, data)) return;
                 if (data.status === 'ok') {
                     if (isAdded) {
                         el.classList.remove('todo-added');

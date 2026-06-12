@@ -22,6 +22,7 @@ import logging
 import requests
 import fitz  # PyMuPDF
 from config import DB_DIR, PDF_DOWNLOAD_RATE, PDF_DOWNLOAD_CAPACITY
+from settings import get_proxy_config
 
 # 模块日志记录器
 logger = logging.getLogger(__name__)
@@ -114,6 +115,19 @@ def _ensure_cache_dir():
     os.makedirs(PDF_CACHE_DIR, exist_ok=True)
 
 
+def _get_proxy_dict():
+    """读取运行时代理配置，供 PDF 下载请求使用。"""
+    proxy = get_proxy_config()
+    if not proxy.get("enabled"):
+        return None
+    proxies = {}
+    if proxy.get("http"):
+        proxies["http"] = proxy["http"]
+    if proxy.get("https"):
+        proxies["https"] = proxy["https"]
+    return proxies or None
+
+
 def download_pdf(pdf_url, arxiv_id):
     """
     下载论文 PDF 文件
@@ -150,7 +164,7 @@ def download_pdf(pdf_url, arxiv_id):
     try:
         # 设置请求头，模拟浏览器访问
         headers = {"User-Agent": "Mozilla/5.0 (compatible; ArxivPaperDB/1.0)"}
-        resp = requests.get(pdf_url, headers=headers, timeout=60)
+        resp = requests.get(pdf_url, headers=headers, proxies=_get_proxy_dict(), timeout=60)
         resp.raise_for_status()  # 如果状态码不是 2xx 则抛出异常
         
         # 将下载内容写入缓存文件

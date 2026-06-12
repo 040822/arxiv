@@ -55,11 +55,24 @@ def _apply_proxy():
         os.environ.pop("https_proxy", None)
 
 
+def _is_rate_limit_error(error):
+    """识别 arXiv/HTTP 客户端返回的限流错误。"""
+    text = str(error).lower()
+    return "429" in text or "too many requests" in text or "rate limit" in text
+
+
+def _format_fetch_error(category, error):
+    """生成给 Web/API 展示的抓取错误信息。"""
+    if _is_rate_limit_error(error):
+        return f"{category}: arXiv 请求被限流（429），请稍后重试或增大请求间隔"
+    return f"{category}: {error}"
+
+
 # ============================================================
 # 核心抓取逻辑
 # ============================================================
 
-def _fetch_date_range(categories, start_date, end_date, request_delay=3.0):
+def _fetch_date_range(categories, start_date, end_date, request_delay=None):
     """
     抓取指定日期范围内的论文（内部函数）。
 
@@ -71,7 +84,7 @@ def _fetch_date_range(categories, start_date, end_date, request_delay=3.0):
         categories (list): arXiv 分类列表，如 ['cs.RO', 'cs.AI']
         start_date (datetime): 起始日期（含），必须是带时区的 datetime
         end_date (datetime): 结束日期（不含），必须是带时区的 datetime
-        request_delay (float): 请求间隔秒数，避免触发 arXiv API 限流
+        request_delay (float | None): 请求间隔秒数；None 时使用运行时抓取配置
 
     返回:
         list[dict]: 新抓取的论文数据列表，每个元素为论文字典
@@ -79,13 +92,15 @@ def _fetch_date_range(categories, start_date, end_date, request_delay=3.0):
     # 应用代理配置
     _apply_proxy()
 
-    # 从配置文件读取请求延迟（如果未指定则使用配置默认值）
+    # 从配置文件读取请求延迟（如果未指定则使用运行时配置）
     fetch_cfg = get_fetch_config()
-    delay = request_delay or fetch_cfg["request_delay"]
+    delay = fetch_cfg["request_delay"] if request_delay is None else request_delay
 
     all_papers = []
     # 内存去重集合：避免同一批次中出现重复论文
     seen_ids = set()
+    successful_categories = 0
+    errors = []
 
     # 遍历每个 arXiv 分类进行抓取
     for category in categories:
@@ -178,11 +193,16 @@ def _fetch_date_range(categories, start_date, end_date, request_delay=3.0):
                     count += 1
 
             logger.info(f"  {category}: {count} new papers")
+            successful_categories += 1
 
         except Exception as e:
             # 单个分类抓取失败不影响其他分类
+            errors.append(_format_fetch_error(category, e))
             logger.error(f"Error fetching {category}: {e}")
             continue
+
+    if errors and successful_categories == 0:
+        raise RuntimeError("arXiv 抓取失败：" + "；".join(errors))
 
     return all_papers
 
@@ -223,6 +243,8 @@ def fetch_latest_papers(categories=None, max_results=None, days=None):
     all_papers = []
     # 内存去重集合
     seen_ids = set()
+    successful_categories = 0
+    errors = []
 
     # 按分类逐个抓取
     for category in categories:
@@ -297,8 +319,13 @@ def fetch_latest_papers(categories=None, max_results=None, days=None):
 
         except Exception as e:
             # 单个分类失败不影响整体
+            errors.append(_format_fetch_error(category, e))
             logger.error(f"Error fetching category {category}: {e}")
             continue
+        successful_categories += 1
+
+    if errors and successful_categories == 0:
+        raise RuntimeError("arXiv 抓取失败：" + "；".join(errors))
 
     logger.info(f"Total new papers fetched: {len(all_papers)}")
     return all_papers
@@ -315,8 +342,8 @@ def fetch_batch(categories=None, total_days=30, batch_days=30, batch_delay=5.0, 
     将大的日期范围拆分为多个小批次依次抓取，每批次之间有延迟，
     避免一次性请求过多数据导致超时或被限流。
 
-    智能检测：如果数据库中已有某个分类的历史数据，会自动调整
-    抓取范围，只抓取缺失的部分。
+    数据库去重在底层抓取函数中完成；这里始终按用户指定的最近 N 天窗口抓取，
+    避免把较早历史数据误判为最近日期已经完整覆盖。
 
     参数:
         categories (list, optional): arXiv 分类列表
@@ -331,9 +358,6 @@ def fetch_batch(categories=None, total_days=30, batch_days=30, batch_delay=5.0, 
     if categories is None:
         categories = ARXIV_CATEGORIES
 
-    # 延迟导入，避免循环依赖
-    from database import get_earliest_date
-
     # 读取抓取配置
     fetch_cfg = get_fetch_config()
     batch_days = batch_days or fetch_cfg["batch_days"]
@@ -342,27 +366,6 @@ def fetch_batch(categories=None, total_days=30, batch_days=30, batch_delay=5.0, 
     # 计算日期范围：从今天往回 total_days 天
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=total_days)
-
-    # 智能检测已有数据：如果数据库中已有更早的数据，调整抓取范围
-    for cat in categories:
-        earliest = get_earliest_date(cat)
-        if earliest:
-            # 将字符串日期转为带时区的 datetime 对象
-            earliest_dt = datetime.strptime(earliest, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            if earliest_dt <= start_date:
-                # 已有数据覆盖了整个目标范围，无需抓取
-                logger.info(f"Category {cat}: already have data from {earliest}, skipping")
-                if progress_callback:
-                    progress_callback({
-                        "current": 1, "total": 1, "status": "completed",
-                        "message": f"已有 {cat} 从 {earliest} 开始的数据，无需重复抓取"
-                    })
-                return []
-            elif earliest_dt < end_date:
-                # 已有部分数据，只抓取 start_date 到 earliest_dt 之间的论文
-                logger.info(f"Category {cat}: have data from {earliest}, will fetch older papers only")
-                end_date = earliest_dt
-                break
 
     all_papers = []
     batch_num = 0
@@ -383,10 +386,10 @@ def fetch_batch(categories=None, total_days=30, batch_days=30, batch_delay=5.0, 
                 "current": batch_num,
                 "total": total_batches,
                 "status": "running",
-                "message": f"批次 {batch_num}/{total_batches}: {current_start.strftime('%Y-%m-%d')} ~ {current_end.strftime('%Y-%m-%d')}"
+                "message": f"批次 {batch_num}/{total_batches}: {current_start.strftime('%Y-%m-%d %H:%M UTC')} ~ {current_end.strftime('%Y-%m-%d %H:%M UTC')}"
             })
 
-        logger.info(f"Batch {batch_num}/{total_batches}: {current_start.strftime('%Y-%m-%d')} ~ {current_end.strftime('%Y-%m-%d')}")
+        logger.info(f"Batch {batch_num}/{total_batches}: {current_start.strftime('%Y-%m-%d %H:%M UTC')} ~ {current_end.strftime('%Y-%m-%d %H:%M UTC')}")
 
         # 调用底层抓取函数获取当前批次的论文
         papers = _fetch_date_range(categories, current_start, current_end)
@@ -436,7 +439,7 @@ def fetch_by_date(date_str, categories=None):
 
     # 解析日期字符串
     try:
-        target_date = datetime.strptime(date_str, "%Y-%m-%d")
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except ValueError:
         logger.error(f"Invalid date format: {date_str}")
         return []

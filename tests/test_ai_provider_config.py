@@ -3,9 +3,23 @@ import tempfile
 import sys
 import types
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from settings import build_chat_completion_kwargs, validate_prompt_template
+
+
+class FakeArgs(dict):
+    def get(self, key, default=None, type=None):
+        value = super().get(key, default)
+        if value is None:
+            return default
+        if type is not None:
+            try:
+                return type(value)
+            except (TypeError, ValueError):
+                return default
+        return value
 
 
 class ProviderRequestBuilderTests(unittest.TestCase):
@@ -187,14 +201,14 @@ def install_import_stubs():
 
 
 class FakeRequest:
-    def __init__(self, data=None, endpoint="", method="POST", path="/api/test"):
+    def __init__(self, data=None, endpoint="", method="POST", path="/api/test", args=None):
         self._data = data
         self.endpoint = endpoint
         self.method = method
         self.path = path
         self.full_path = path
         self.query_string = b""
-        self.args = {}
+        self.args = FakeArgs(args or {})
 
     def get_json(self, *args, **kwargs):
         return self._data
@@ -313,6 +327,37 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertTrue(result["auth_required"])
 
+    def test_todo_add_remove_are_public_even_when_password_enabled(self):
+        app_module = self.app_module
+        app_module.session.clear()
+
+        for endpoint, method in (("api_add_todo", "POST"), ("api_remove_todo", "DELETE")):
+            with self.subTest(endpoint=endpoint):
+                app_module.request = FakeRequest(
+                    {},
+                    endpoint=endpoint,
+                    method=method,
+                    path="/api/paper/2601.00001/todo",
+                )
+                with patch.object(app_module, "has_admin_password", return_value=True):
+                    self.assertIsNone(app_module.require_auth_for_protected_routes())
+
+    def test_todo_read_status_changes_still_require_login(self):
+        app_module = self.app_module
+        app_module.session.clear()
+        app_module.request = FakeRequest(
+            {},
+            endpoint="api_mark_read",
+            method="POST",
+            path="/api/paper/2601.00001/todo/read",
+        )
+
+        with patch.object(app_module, "has_admin_password", return_value=True):
+            result, status = app_module.require_auth_for_protected_routes()
+
+        self.assertEqual(status, 401)
+        self.assertTrue(result["auth_required"])
+
     def test_clear_admin_password_requires_current_password(self):
         app_module = self.app_module
         app_module.request = FakeRequest({"current_password": "wrong"})
@@ -406,6 +451,211 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         self.assertIn("&lt;b&gt;bad&lt;/b&gt;", content)
         self.assertNotIn("<script>", content)
         self.assertNotIn("<img", content)
+
+
+class FetchBatchTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        install_import_stubs()
+        import fetcher
+        cls.fetcher = fetcher
+
+    def test_recent_fetch_does_not_skip_because_old_data_exists(self):
+        calls = []
+        progress_messages = []
+
+        def fake_fetch_range(categories, start_date, end_date):
+            calls.append((categories, start_date, end_date))
+            return [{"arxiv_id": "2606.00001"}]
+
+        with patch.object(self.fetcher, "get_fetch_config", return_value={
+            "request_delay": 3,
+            "batch_days": 30,
+            "batch_delay": 0,
+        }), patch.object(self.fetcher, "_fetch_date_range", side_effect=fake_fetch_range):
+            papers = self.fetcher.fetch_batch(
+                categories=["cs.RO"],
+                total_days=1,
+                batch_days=30,
+                batch_delay=0,
+                progress_callback=progress_messages.append,
+            )
+
+        self.assertEqual(papers, [{"arxiv_id": "2606.00001"}])
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("无需重复抓取", " ".join(m.get("message", "") for m in progress_messages))
+
+    def test_fetch_errors_are_reported_instead_of_hidden_as_zero_results(self):
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def results(self, search):
+                raise RuntimeError("HTTP 429 Too Many Requests")
+
+        fake_arxiv = types.SimpleNamespace(
+            Client=FakeClient,
+            Search=lambda **kwargs: kwargs,
+            SortCriterion=types.SimpleNamespace(SubmittedDate="submitted"),
+            SortOrder=types.SimpleNamespace(Descending="descending"),
+        )
+
+        with patch.object(self.fetcher, "arxiv", fake_arxiv), \
+             patch.object(self.fetcher, "get_fetch_config", return_value={"request_delay": 3}), \
+             patch.object(self.fetcher.logger, "error"):
+            with self.assertRaisesRegex(RuntimeError, "429"):
+                self.fetcher._fetch_date_range(
+                    ["cs.RO"],
+                    datetime(2026, 5, 28, tzinfo=timezone.utc),
+                    datetime(2026, 6, 4, tzinfo=timezone.utc),
+                )
+
+    def test_date_range_uses_saved_request_delay_when_not_overridden(self):
+        client_kwargs = []
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                client_kwargs.append(kwargs)
+
+            def results(self, search):
+                return []
+
+        fake_arxiv = types.SimpleNamespace(
+            Client=FakeClient,
+            Search=lambda **kwargs: kwargs,
+            SortCriterion=types.SimpleNamespace(SubmittedDate="submitted"),
+            SortOrder=types.SimpleNamespace(Descending="descending"),
+        )
+
+        with patch.object(self.fetcher, "arxiv", fake_arxiv), \
+             patch.object(self.fetcher, "get_fetch_config", return_value={"request_delay": 30}):
+            self.fetcher._fetch_date_range(
+                ["cs.RO"],
+                datetime(2026, 5, 28, tzinfo=timezone.utc),
+                datetime(2026, 6, 4, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(client_kwargs[0]["delay_seconds"], 30)
+
+    def test_fetch_by_date_uses_utc_date_boundaries(self):
+        with patch.object(self.fetcher, "_fetch_date_range", return_value=[]) as fetch_range:
+            self.fetcher.fetch_by_date("2026-06-01", categories=["cs.RO"])
+
+        _, start_date, end_date = fetch_range.call_args.args
+        self.assertEqual(start_date, datetime(2026, 6, 1, tzinfo=timezone.utc))
+        self.assertEqual(end_date, datetime(2026, 6, 2, tzinfo=timezone.utc))
+
+
+class RuntimeSettingPropagationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        install_import_stubs()
+        import app
+        import analyzer
+        import fetcher
+        import main
+        import pdf_reader
+        import settings
+        cls.app = app
+        cls.analyzer = analyzer
+        cls.fetcher = fetcher
+        cls.main = main
+        cls.pdf_reader = pdf_reader
+        cls.settings = settings
+
+    def test_api_papers_uses_saved_per_page_setting(self):
+        self.app.request = FakeRequest(args={"page": "2"})
+        with patch.object(self.app, "get_per_page", return_value=50), \
+             patch.object(self.app, "get_papers_with_analysis", return_value=[]) as get_papers:
+            result = self.app.api_papers()
+
+        self.assertEqual(result, [])
+        get_papers.assert_called_once()
+        self.assertEqual(get_papers.call_args.kwargs["limit"], 50)
+        self.assertEqual(get_papers.call_args.kwargs["offset"], 50)
+
+    def test_api_papers_allows_request_per_page_override(self):
+        self.app.request = FakeRequest(args={"page": "3", "per_page": "10"})
+        with patch.object(self.app, "get_per_page", return_value=50), \
+             patch.object(self.app, "get_papers_with_analysis", return_value=[]) as get_papers:
+            self.app.api_papers()
+
+        self.assertEqual(get_papers.call_args.kwargs["limit"], 10)
+        self.assertEqual(get_papers.call_args.kwargs["offset"], 20)
+
+    def test_cli_analyze_uses_saved_concurrency(self):
+        with patch("database.init_db"), \
+             patch("settings.get_concurrency", return_value=7), \
+             patch("analyzer.analyze_pending_papers", return_value=3) as analyze, \
+             patch.object(self.main.logger, "info"):
+            self.main.run_analyze_only()
+
+        analyze.assert_called_once_with(limit=100, concurrency=7)
+
+    def test_analyze_papers_fallback_uses_saved_concurrency(self):
+        paper = {"id": 1, "arxiv_id": "2601.00001"}
+        result = {"tags": [], "summary_cn": "", "rating": 0, "value_comment": ""}
+
+        with patch.object(self.analyzer, "get_concurrency", return_value=6), \
+             patch.object(self.analyzer, "analyze_paper_basic", return_value=(paper, result, None)) as analyze_basic, \
+             patch.object(self.analyzer, "insert_analysis", return_value=True), \
+             patch.object(self.analyzer, "ThreadPoolExecutor", wraps=self.analyzer.ThreadPoolExecutor) as executor, \
+             patch.object(self.analyzer.logger, "info"):
+            count = self.analyzer.analyze_papers([paper], concurrency=None)
+
+        self.assertEqual(count, 1)
+        analyze_basic.assert_called_once_with(paper)
+        self.assertEqual(executor.call_args.kwargs["max_workers"], 6)
+
+    def test_pdf_download_uses_proxy_settings(self):
+        class FakeResponse:
+            content = b"%PDF-test"
+
+            def raise_for_status(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(self.pdf_reader, "PDF_CACHE_DIR", tmp), \
+             patch.object(self.pdf_reader._pdf_bucket, "acquire", return_value=0), \
+             patch.object(self.pdf_reader, "get_proxy_config", return_value={
+                 "enabled": True,
+                 "http": "http://proxy.local:7890",
+                 "https": "http://proxy.local:7890",
+             }), \
+             patch.object(self.pdf_reader.requests, "get", return_value=FakeResponse()) as get, \
+             patch.object(self.pdf_reader.logger, "info"):
+            path = self.pdf_reader.download_pdf("https://arxiv.org/pdf/2601.00001", "2601.00001")
+
+        self.assertTrue(path.endswith("2601.00001.pdf"))
+        self.assertEqual(get.call_args.kwargs["proxies"], {
+            "http": "http://proxy.local:7890",
+            "https": "http://proxy.local:7890",
+        })
+
+    def test_fetch_config_is_normalized(self):
+        normalized = self.settings._normalize_fetch_config({
+            "request_delay": "1",
+            "batch_days": "999",
+            "batch_delay": "9999",
+        })
+
+        self.assertEqual(normalized, {
+            "request_delay": 3.0,
+            "batch_days": 365,
+            "batch_delay": 1800.0,
+        })
+
+
+class TemplateSafetyTests(unittest.TestCase):
+    def test_paper_inline_json_handlers_use_single_quoted_attributes(self):
+        with open("templates/paper.html", "r", encoding="utf-8") as f:
+            html = f.read()
+
+        self.assertIn("onclick='toggleTodo({{ paper.arxiv_id | tojson }})'", html)
+        self.assertIn("onclick='removeTag({{ t.strip() | tojson }})'", html)
+        self.assertIn("onclick='removeTag({{ t | tojson }})'", html)
+        self.assertNotIn('onclick="toggleTodo({{ paper.arxiv_id | tojson }})"', html)
+        self.assertNotIn('onclick="removeTag({{ t | tojson }})"', html)
 
 
 if __name__ == "__main__":

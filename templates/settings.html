@@ -131,8 +131,8 @@
                 <div class="form-row">
                     <div class="form-group" style="flex:1;">
                         <label>请求间隔（秒）</label>
-                        <input type="number" id="fetch-request-delay" min="1" max="30" step="0.5" value="3">
-                        <p class="section-desc">每次 API 请求之间的间隔，arXiv 建议 ≥ 3 秒</p>
+                        <input type="number" id="fetch-request-delay" min="3" max="300" step="0.5" value="3">
+                        <p class="section-desc">每次 API 请求之间的间隔，arXiv 要求至少 3 秒；遇到 429 建议 30~60 秒</p>
                     </div>
                     <div class="form-group" style="flex:1;">
                         <label>每批天数</label>
@@ -141,8 +141,8 @@
                     </div>
                     <div class="form-group" style="flex:1;">
                         <label>批次间隔（秒）</label>
-                        <input type="number" id="fetch-batch-delay" min="1" max="60" step="1" value="5">
-                        <p class="section-desc">分批抓取时批次之间的等待时间</p>
+                        <input type="number" id="fetch-batch-delay" min="1" max="1800" step="1" value="5">
+                        <p class="section-desc">分批抓取时批次之间的等待时间；遇到 429 建议 300 秒以上</p>
                     </div>
                 </div>
                 <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveFetchConfig()">💾 保存</button></div>
