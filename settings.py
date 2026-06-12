@@ -21,6 +21,7 @@
 import json
 import os
 import logging
+import re
 from string import Formatter
 from config import (
     DB_DIR,
@@ -94,6 +95,12 @@ THINKING_BUDGETS = {
 }
 OPENAI_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
 REQUIRED_PROMPT_FIELDS = {"title", "authors", "abstract", "tag_candidates", "rating_criteria"}
+AI_TASK_KEYS = ("basic_analysis", "deep_reading", "report_summary")
+AI_TASK_LABELS = {
+    "basic_analysis": "基础分析",
+    "deep_reading": "深度阅读",
+    "report_summary": "报告导读",
+}
 
 DEFAULT_PROVIDER_OPTIONS = {
     "available_models": [],
@@ -109,6 +116,146 @@ DEFAULT_PROVIDER_OPTIONS = {
     "max_tokens_enabled": False,
     "is_thinking": False,
     "thinking_effort": "medium",
+}
+
+DEFAULT_AI_TASK_OPTIONS = {
+    "basic_analysis": {
+        "provider_key": "",
+        "model": "",
+        "temperature": 0.2,
+        "temperature_enabled": True,
+        "top_p": 1.0,
+        "top_p_enabled": False,
+        "presence_penalty": 0.0,
+        "presence_penalty_enabled": False,
+        "frequency_penalty": 0.0,
+        "frequency_penalty_enabled": False,
+        "max_tokens": 1200,
+        "max_tokens_enabled": True,
+        "is_thinking": False,
+        "thinking_effort": "medium",
+    },
+    "deep_reading": {
+        "provider_key": "",
+        "model": "",
+        "temperature": 0.2,
+        "temperature_enabled": False,
+        "top_p": 1.0,
+        "top_p_enabled": False,
+        "presence_penalty": 0.0,
+        "presence_penalty_enabled": False,
+        "frequency_penalty": 0.0,
+        "frequency_penalty_enabled": False,
+        "max_tokens": 6000,
+        "max_tokens_enabled": True,
+        "is_thinking": True,
+        "thinking_effort": "high",
+    },
+    "report_summary": {
+        "provider_key": "",
+        "model": "",
+        "temperature": 0.3,
+        "temperature_enabled": True,
+        "top_p": 1.0,
+        "top_p_enabled": False,
+        "presence_penalty": 0.0,
+        "presence_penalty_enabled": False,
+        "frequency_penalty": 0.0,
+        "frequency_penalty_enabled": False,
+        "max_tokens": 1000,
+        "max_tokens_enabled": True,
+        "is_thinking": False,
+        "thinking_effort": "medium",
+    },
+}
+
+DEFAULT_SYSTEM_PROMPT = (
+    "你是一位AI和机器人领域的资深研究助手，擅长快速阅读论文、提炼核心贡献、"
+    "评估创新性与影响力。请始终返回合法的JSON格式。"
+)
+
+DEFAULT_BASIC_ANALYSIS_INSTRUCTION = """请完成低成本基础论文分析。只基于论文标题、作者和摘要判断，不要编写Q&A深度阅读内容。
+
+请严格返回合法 JSON，不要返回额外解释：
+
+{
+  "tags": ["标签1", "标签2"],
+  "rating": 3,
+  "summary_cn": "将论文摘要完整翻译为中文，要求忠实原文、语句通顺、术语准确。",
+  "value_comment": "对论文价值的简短评价（2-3句话）"
+}
+
+标签选择指南：
+{tag_candidates}
+
+标签精度要求：
+- 避免过于宽泛的标签，例如 Robot Learning、Embodied AI、Transformer、LLM、Agent、Multimodal
+- 优先使用具体技术方法、任务、架构或数据集名称
+
+{rating_criteria}
+"""
+
+DEFAULT_DEEP_READING_QUESTIONS = [
+    "这篇论文试图解决什么问题？",
+    "有哪些相关研究？",
+    "论文如何解决这个问题？",
+    "论文做了哪些实验？",
+    "有什么可以进一步探索的点？",
+    "总结一下论文的主要内容",
+]
+
+
+def _build_deep_reading_instruction(questions=None):
+    questions = questions or DEFAULT_DEEP_READING_QUESTIONS
+    qa_block = "\\n\\n".join(
+        f"### Q{i}: {question}\\n\\n详细回答..."
+        for i, question in enumerate(questions, start=1)
+    )
+    return f"""请对论文内容进行深度阅读分析，只生成 Q&A 深度阅读内容。
+
+请严格返回合法 JSON，不要返回额外解释：
+
+{{
+  "qa_analysis": "{qa_block}"
+}}
+
+重要要求：
+1. qa_analysis 中每个 Q&A 使用 Markdown 标题格式（### Qn: 问题）
+2. 每个回答应当详尽充分，优先覆盖方法、实验、局限和可复现细节
+3. 除 qa_analysis 外不要返回其他字段
+4. qa_analysis 中的换行必须用 \\n 转义
+"""
+
+
+DEFAULT_DEEP_READING_INSTRUCTION = _build_deep_reading_instruction()
+
+DEFAULT_REPORT_SUMMARY_INSTRUCTION = """请根据当天论文列表生成一段中文日报导读，用于报告顶部展示。
+
+请严格返回合法 JSON，不要返回额外解释：
+
+{
+  "summary": "150-300字中文导读，概括当天论文的主要方向、值得关注的高分工作和整体趋势。"
+}
+
+写作要求：
+- 不要逐篇罗列所有论文
+- 优先总结技术趋势、共同主题和最值得读的论文
+- 如果数据不足，请明确说明报告主要基于已有分析结果
+"""
+
+DEFAULT_PROMPT_PROFILES = {
+    "basic_analysis": {
+        "system": DEFAULT_SYSTEM_PROMPT,
+        "instruction": DEFAULT_BASIC_ANALYSIS_INSTRUCTION,
+    },
+    "deep_reading": {
+        "system": DEFAULT_SYSTEM_PROMPT,
+        "instruction": DEFAULT_DEEP_READING_INSTRUCTION,
+    },
+    "report_summary": {
+        "system": DEFAULT_SYSTEM_PROMPT,
+        "instruction": DEFAULT_REPORT_SUMMARY_INSTRUCTION,
+    },
 }
 
 # ============================================================================
@@ -151,9 +298,11 @@ DEFAULT_SETTINGS = {
         }
     },
     "prompts": {
-        "system_prompt": "你是一位AI和机器人领域的资深研究助手，擅长快速阅读论文、提炼核心贡献、评估创新性与影响力。回答应当详尽充分，不吝笔墨。请始终返回合法的JSON格式。",
-        "user_prompt": "请对以下论文进行深度阅读分析，按Q&A格式详细回答每个问题，然后给出标签和评级。\n\n论文标题: {title}\n论文作者: {authors}\n\n论文内容:\n{abstract}\n\n请严格按以下JSON格式返回（不要返回其他内容）:\n\n{{\n    \"qa_analysis\": \"### Q1: 这篇论文试图解决什么问题？\\n\\n详细描述论文要解决的核心问题、研究动机和背景。需要涵盖现有方法的不足之处以及本文的出发点，让读者充分理解问题的重要性和难度。\\n\\n### Q2: 有哪些相关研究？\\n\\n列出关键的相关工作，说明每项工作的核心方法和局限性，以及与本文的关系（本文如何在这些工作基础上改进或有何不同）。需要覆盖该领域的主要技术路线。\\n\\n### Q3: 论文如何解决这个问题？\\n\\n详细描述论文提出的核心方法、技术架构和创新点。包括关键算法流程、模型设计细节、训练策略、损失函数等技术要素，让读者能理解方法的全貌。\\n\\n### Q4: 论文做了哪些实验？\\n\\n详细描述实验设置（使用的数据集、基线方法、评估指标）、主要实验结果和消融实验结论。尽量用具体数字说明关键结果，以便读者评估方法的实际效果。\\n\\n### Q5: 有什么可以进一步探索的点？\\n\\n分析论文的局限性以及未来可能的改进方向，包括技术改进、应用扩展、理论分析等多个方面。\\n\\n### Q6: 总结一下论文的主要内容\\n\\n全面概括论文的核心贡献、技术方案、实验验证和实际价值，让读者能在最短时间内了解论文全貌。\",\n    \"tags\": [\"标签1\", \"标签2\"],\n    \"rating\": 3,\n    \"summary_cn\": \"提取论文摘要部分并完整翻译为中文。如果内容中包含Abstract部分，请提取Abstract的原文并逐句翻译；如果没有明确的Abstract部分，则提取论文开头的概述内容进行翻译。要求忠实原文、语句通顺、术语准确。\",\n    \"value_comment\": \"对论文价值的简短评价（2-3句话）\"\n}}\n\n标签选择指南:\n请从以下标签中选择最相关的2-5个标签，也可以自行创建新标签:\n{tag_candidates}\n\n标签精度要求（重要）:\n- 避免过于宽泛的标签，例如: \"Robot Learning\"、\"Embodied AI\"（领域太大）、\"Transformer\"（架构太通用）、\"LLM\"（太泛）、\"Agent\"（太泛）、\"Multimodal\"（太泛）\n- 优先使用具体的技术方法、特定任务、具体架构名称\n- 好的标签示例: \"VLA\"、\"Diffusion Policy\"、\"Sim-to-Real Transfer\"、\"Dexterous Manipulation\"、\"World Model\"、\"Preference Optimization\"\n- 如果论文的核心贡献可以用更精确的词描述，就不要用泛泛的词\n\n{rating_criteria}\n\n重要要求:\n1. qa_analysis 中每个Q&A用 Markdown 标题格式（### Qn: 问题），每个回答应当详尽充分，至少3-5个完整段落\n2. summary_cn 必须是论文Abstract的完整中文翻译，逐句对应，不得省略概括\n3. tags必须是数组格式\n4. rating必须是0-5的整数\n5. 请确保返回合法的JSON格式，qa_analysis中的换行用\\\\n转义",
-    }
+        "system_prompt": DEFAULT_SYSTEM_PROMPT,
+        "user_prompt": DEFAULT_DEEP_READING_INSTRUCTION,
+    },
+    "prompt_profiles": DEFAULT_PROMPT_PROFILES,
+    "ai_tasks": DEFAULT_AI_TASK_OPTIONS,
 }
 
 
@@ -220,6 +369,137 @@ def _normalize_fetch_config(fetch):
         "batch_days": max(1, min(365, batch_days)),
         "batch_delay": max(1.0, min(1800.0, batch_delay)),
     }
+
+
+def _select_provider_key(provider_key, active_provider, providers):
+    """选择一个存在的供应商 key，用于任务级路由。"""
+    providers = providers or {}
+    provider_key = str(provider_key or "").strip()
+    if provider_key in providers:
+        return provider_key
+    if active_provider in providers:
+        return active_provider
+    return next(iter(providers.keys()), provider_key)
+
+
+def _normalize_ai_task_config(task, task_key, active_provider, providers):
+    """补齐并约束单个 AI 任务的模型和参数配置。"""
+    task = dict(task or {})
+    defaults = DEFAULT_AI_TASK_OPTIONS.get(task_key, DEFAULT_AI_TASK_OPTIONS["basic_analysis"])
+    provider_key = _select_provider_key(
+        task.get("provider_key") or defaults.get("provider_key"),
+        active_provider,
+        providers,
+    )
+    provider = normalize_provider_config((providers or {}).get(provider_key, {}), provider_key)
+
+    model = str(task.get("model") or defaults.get("model") or provider.get("model", "")).strip()
+    thinking_effort = str(task.get("thinking_effort", defaults.get("thinking_effort", "medium"))).lower()
+    if thinking_effort not in THINKING_EFFORTS:
+        thinking_effort = defaults.get("thinking_effort", "medium")
+
+    return {
+        "provider_key": provider_key,
+        "model": model,
+        "temperature": max(0.0, min(2.0, _as_float(task.get("temperature"), defaults["temperature"]))),
+        "temperature_enabled": _as_bool(task.get("temperature_enabled"), defaults["temperature_enabled"]),
+        "top_p": max(0.0, min(1.0, _as_float(task.get("top_p"), defaults["top_p"]))),
+        "top_p_enabled": _as_bool(task.get("top_p_enabled"), defaults["top_p_enabled"]),
+        "presence_penalty": max(-2.0, min(2.0, _as_float(task.get("presence_penalty"), defaults["presence_penalty"]))),
+        "presence_penalty_enabled": _as_bool(
+            task.get("presence_penalty_enabled"),
+            defaults["presence_penalty_enabled"],
+        ),
+        "frequency_penalty": max(-2.0, min(2.0, _as_float(task.get("frequency_penalty"), defaults["frequency_penalty"]))),
+        "frequency_penalty_enabled": _as_bool(
+            task.get("frequency_penalty_enabled"),
+            defaults["frequency_penalty_enabled"],
+        ),
+        "max_tokens": max(1, min(200000, _as_int(task.get("max_tokens"), defaults["max_tokens"]))),
+        "max_tokens_enabled": _as_bool(task.get("max_tokens_enabled"), defaults["max_tokens_enabled"]),
+        "is_thinking": _as_bool(task.get("is_thinking"), defaults["is_thinking"]),
+        "thinking_effort": thinking_effort,
+    }
+
+
+def _normalize_ai_tasks(ai_tasks, active_provider, providers):
+    """补齐全部 AI 任务路由配置。"""
+    ai_tasks = dict(ai_tasks or {})
+    return {
+        task_key: _normalize_ai_task_config(ai_tasks.get(task_key), task_key, active_provider, providers)
+        for task_key in AI_TASK_KEYS
+    }
+
+
+def _extract_deep_reading_questions(instruction):
+    """从旧版深度阅读 prompt 中提取 Q&A 问题，提取失败时使用默认问题。"""
+    questions = []
+    for match in re.finditer(r"### Q\d+:\s*(.*?)(?:\\n|\n)", instruction or ""):
+        question = match.group(1).strip()
+        if question:
+            questions.append(question)
+    return questions or DEFAULT_DEEP_READING_QUESTIONS
+
+
+def _is_legacy_deep_reading_instruction(instruction):
+    """判断是否为旧默认/旧问题编辑器生成的深度阅读 prompt。"""
+    text = instruction or ""
+    has_base_fields = all(
+        marker in text
+        for marker in ('"tags"', '"rating"', '"summary_cn"', '"value_comment"')
+    )
+    has_old_template_shape = any(
+        marker in text
+        for marker in (
+            "然后给出标签、评级、中文摘要和价值评价",
+            "然后给出标签和评级",
+            "论文标题: {title}",
+            "标签精度要求（重要）",
+        )
+    )
+    has_old_guidance = ("标签选择指南" in text or "{tag_candidates}" in text) and (
+        "评级标准" in text or "{rating_criteria}" in text
+    )
+    return "qa_analysis" in text and has_base_fields and has_old_template_shape and has_old_guidance
+
+
+def _migrate_deep_reading_instruction(instruction):
+    """仅迁移旧默认/旧问题模板；明显自定义的 prompt 原样保留。"""
+    if _is_legacy_deep_reading_instruction(instruction):
+        return _build_deep_reading_instruction(_extract_deep_reading_questions(instruction))
+    return instruction
+
+
+def _normalize_prompt_profiles(profiles, legacy_prompts=None):
+    """补齐基础分析、深度阅读、报告导读三套 prompt profile。"""
+    result = json.loads(json.dumps(DEFAULT_PROMPT_PROFILES))
+    profiles = profiles if isinstance(profiles, dict) else {}
+
+    if not profiles and isinstance(legacy_prompts, dict):
+        system = legacy_prompts.get("system_prompt")
+        instruction = legacy_prompts.get("user_prompt")
+        if system or instruction:
+            result["deep_reading"] = {
+                "system": system or result["deep_reading"]["system"],
+                "instruction": _migrate_deep_reading_instruction(
+                    instruction or result["deep_reading"]["instruction"]
+                ),
+            }
+
+    for task_key in AI_TASK_KEYS:
+        profile = profiles.get(task_key)
+        if not isinstance(profile, dict):
+            continue
+        system = profile.get("system")
+        instruction = profile.get("instruction")
+        if system is not None:
+            result[task_key]["system"] = str(system)
+        if instruction is not None:
+            instruction = str(instruction)
+            if task_key == "deep_reading":
+                instruction = _migrate_deep_reading_instruction(instruction)
+            result[task_key]["instruction"] = instruction
+    return result
 
 
 def _model_leaf(model):
@@ -515,8 +795,15 @@ def load_settings():
     """
     _ensure_dir()
     if not os.path.exists(SETTINGS_PATH):
-        save_settings(DEFAULT_SETTINGS)
-        return json.loads(json.dumps(DEFAULT_SETTINGS))
+        default_settings = json.loads(json.dumps(DEFAULT_SETTINGS))
+        default_settings["ai_tasks"] = _normalize_ai_tasks(
+            default_settings.get("ai_tasks", {}),
+            default_settings.get("active_provider", ""),
+            default_settings.get("providers", {}),
+        )
+        default_settings["prompt_profiles"] = _normalize_prompt_profiles(default_settings.get("prompt_profiles", {}))
+        save_settings(default_settings)
+        return default_settings
     try:
         with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
             saved = json.load(f)
@@ -543,6 +830,15 @@ def load_settings():
         # 合并供应商配置，同时补齐新增参数开关
         for k, v in migrated.get("providers", {}).items():
             merged["providers"][k] = normalize_provider_config(v, k)
+        merged["ai_tasks"] = _normalize_ai_tasks(
+            migrated.get("ai_tasks", {}),
+            merged.get("active_provider", ""),
+            merged.get("providers", {}),
+        )
+        merged["prompt_profiles"] = _normalize_prompt_profiles(
+            migrated.get("prompt_profiles", {}),
+            migrated.get("prompts", {}),
+        )
         return merged
     except Exception as e:
         logger.error(f"Failed to load settings: {e}")
@@ -610,6 +906,62 @@ def get_ai_config():
     """
     prov = get_active_provider()
     return normalize_provider_config(prov)
+
+
+def get_ai_tasks():
+    """获取三类 AI 功能的任务级模型与参数配置。"""
+    settings = load_settings()
+    return _normalize_ai_tasks(
+        settings.get("ai_tasks", {}),
+        settings.get("active_provider", ""),
+        settings.get("providers", {}),
+    )
+
+
+def save_ai_tasks(ai_tasks):
+    """保存任务级模型与参数配置。"""
+    settings = load_settings()
+    settings["ai_tasks"] = _normalize_ai_tasks(
+        ai_tasks,
+        settings.get("active_provider", ""),
+        settings.get("providers", {}),
+    )
+    return save_settings(settings)
+
+
+def get_ai_task_config(task_key):
+    """
+    获取某个 AI 功能的实际调用配置。
+
+    任务配置只保存 provider_key/model/参数开关；这里会与供应商 API Key/Base URL 合并，
+    返回值可直接传给 OpenAI 客户端和 build_chat_completion_kwargs()。
+    """
+    settings = load_settings()
+    if task_key not in AI_TASK_KEYS:
+        task_key = "basic_analysis"
+    tasks = _normalize_ai_tasks(
+        settings.get("ai_tasks", {}),
+        settings.get("active_provider", ""),
+        settings.get("providers", {}),
+    )
+    task = tasks[task_key]
+    provider_key = _select_provider_key(
+        task.get("provider_key"),
+        settings.get("active_provider", ""),
+        settings.get("providers", {}),
+    )
+    provider = normalize_provider_config(settings.get("providers", {}).get(provider_key, {}), provider_key)
+    merged = {**provider, **task}
+    merged["provider_key"] = provider_key
+    merged["provider_name"] = provider.get("name", provider_key)
+    merged["task_key"] = task_key
+    if not merged.get("model"):
+        merged["model"] = provider.get("model", "")
+    return normalize_provider_config(merged, provider_key) | {
+        "provider_key": provider_key,
+        "provider_name": provider.get("name", provider_key),
+        "task_key": task_key,
+    }
 
 
 # ============================================================================
@@ -850,6 +1202,55 @@ def update_provider(key, config):
 # Prompt 模板管理
 # ============================================================================
 
+def get_prompt_profiles():
+    """获取基础分析、深度阅读、报告导读三套 prompt profile。"""
+    settings = load_settings()
+    return _normalize_prompt_profiles(
+        settings.get("prompt_profiles", {}),
+        settings.get("prompts", {}),
+    )
+
+
+def get_prompt_profile(task_key):
+    """获取单个任务的 prompt profile。"""
+    profiles = get_prompt_profiles()
+    if task_key not in profiles:
+        task_key = "basic_analysis"
+    return profiles[task_key]
+
+
+def save_prompt_profiles(profiles):
+    """保存全部 prompt profiles。"""
+    settings = load_settings()
+    settings["prompt_profiles"] = _normalize_prompt_profiles(profiles, settings.get("prompts", {}))
+    deep = settings["prompt_profiles"]["deep_reading"]
+    settings["prompts"] = {
+        "system_prompt": deep.get("system", ""),
+        "user_prompt": deep.get("instruction", ""),
+    }
+    return save_settings(settings)
+
+
+def save_prompt_profile(task_key, profile):
+    """保存单个任务的 prompt profile。"""
+    if task_key not in AI_TASK_KEYS:
+        return False
+    settings = load_settings()
+    profiles = _normalize_prompt_profiles(settings.get("prompt_profiles", {}), settings.get("prompts", {}))
+    profile = dict(profile or {})
+    if "system" in profile:
+        profiles[task_key]["system"] = str(profile.get("system") or "")
+    if "instruction" in profile:
+        profiles[task_key]["instruction"] = str(profile.get("instruction") or "")
+    settings["prompt_profiles"] = profiles
+    deep = profiles["deep_reading"]
+    settings["prompts"] = {
+        "system_prompt": deep.get("system", ""),
+        "user_prompt": deep.get("instruction", ""),
+    }
+    return save_settings(settings)
+
+
 def get_prompts():
     """
     获取 AI 分析使用的 Prompt 模板。
@@ -858,16 +1259,17 @@ def get_prompts():
     这样用户只需修改想改的部分，其余保持默认。
 
     返回:
-        dict: 包含 system_prompt 和 user_prompt 的字典
-            - system_prompt: 系统角色设定
-            - user_prompt: 用户消息模板，包含 {title}/{authors}/{abstract}/{tag_candidates}/{rating_criteria} 占位符
+        dict: 包含 system_prompt 和 user_prompt 的旧版兼容字典，并附带 prompt_profiles
+            - system_prompt/user_prompt: 映射到 deep_reading profile
+            - prompt_profiles: 新版按任务拆分的稳定 Prompt 前缀
     """
-    settings = load_settings()
-    default_prompts = DEFAULT_SETTINGS.get("prompts", {})
-    prompts = settings.get("prompts", {})
-    result = default_prompts.copy()
-    result.update(prompts)
-    return result
+    profiles = get_prompt_profiles()
+    deep = profiles.get("deep_reading", DEFAULT_PROMPT_PROFILES["deep_reading"])
+    return {
+        "system_prompt": deep.get("system", ""),
+        "user_prompt": deep.get("instruction", ""),
+        "prompt_profiles": profiles,
+    }
 
 
 def save_prompts(prompts):
@@ -882,16 +1284,37 @@ def save_prompts(prompts):
     """
     settings = load_settings()
     settings["prompts"] = prompts
+    profiles = _normalize_prompt_profiles(settings.get("prompt_profiles", {}), prompts)
+    profiles["deep_reading"] = {
+        "system": prompts.get("system_prompt", profiles["deep_reading"]["system"]),
+        "instruction": prompts.get("user_prompt", profiles["deep_reading"]["instruction"]),
+    }
+    settings["prompt_profiles"] = profiles
     return save_settings(settings)
 
 
-def validate_prompt_template(user_prompt):
+PROFILE_REQUIRED_PROMPT_FIELDS = {
+    "basic_analysis": {"tag_candidates", "rating_criteria"},
+    "deep_reading": set(),
+    "report_summary": set(),
+}
+
+
+def validate_prompt_template(user_prompt, profile_key=None):
     """
     校验用户 Prompt 模板是否能被 str.format 正常渲染。
 
     返回:
         tuple(bool, str): 是否有效，以及错误消息
     """
+    if profile_key in AI_TASK_KEYS:
+        fields = set(re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", user_prompt or ""))
+        required = PROFILE_REQUIRED_PROMPT_FIELDS.get(profile_key, set())
+        missing = sorted(required - fields)
+        if missing:
+            return False, "Prompt 缺少建议变量：" + ", ".join("{" + name + "}" for name in missing)
+        return True, ""
+
     try:
         fields = set()
         for _, field_name, _, _ in Formatter().parse(user_prompt or ""):

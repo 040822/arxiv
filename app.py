@@ -28,19 +28,24 @@ from database import (
     browse_papers, get_all_categories, get_all_dates,
     get_paper_by_arxiv_id, get_analysis_by_paper_id,
     update_analysis, hide_paper, unhide_paper, delete_paper,
+    insert_analysis,
     start_task_log, finish_task_log, get_task_logs, get_task_stats,
     get_running_tasks, clear_task_logs,
     save_report, get_reports, get_report_by_date, get_report_dates,
-    generate_report_content,
+    generate_report_content, get_ai_usage_summary,
     add_to_reading_list, remove_from_reading_list, is_in_reading_list,
     mark_as_read, mark_as_unread, get_reading_list, get_reading_list_count
 )
 from fetcher import fetch_latest_papers, fetch_paper_by_id, parse_arxiv_id
-from analyzer import analyze_pending_papers, analyze_paper_full, analyze_papers
+from analyzer import (
+    analyze_pending_papers, analyze_paper_basic, analyze_paper_full,
+    analyze_papers, generate_report_ai_summary
+)
 from settings import (
     load_settings, save_settings, get_provider_presets, get_all_providers,
     add_provider, remove_provider, switch_provider, update_provider,
     get_prompts, save_prompts, get_concurrency, get_per_page,
+    get_ai_tasks, save_ai_tasks, get_prompt_profiles, save_prompt_profile,
     set_admin_password, verify_admin_password, has_admin_password,
     build_chat_completion_kwargs, get_ai_config, get_thinking_protocol,
     normalize_provider_config, get_schedule_config, save_schedule_config,
@@ -611,7 +616,7 @@ def api_fetch():
 @app.route("/api/analyze", methods=["POST"])
 def api_analyze():
     """
-    AI 分析 API：对未分析的论文进行 AI 深度阅读分析
+    AI 分析 API：对未分析的论文进行低成本基础分析
 
     支持的查询参数：
     - task_id: 任务追踪 ID
@@ -714,20 +719,33 @@ def api_generate():
     log_id = start_task_log("generate", "手动生成报告")
     try:
         from datetime import datetime
+        data = request.get_json(silent=True) or {}
         date_param = request.args.get("date", "").strip()
+        include_ai_summary = str(request.args.get("ai_summary", "")).lower() in {"1", "true", "yes", "on"} \
+            or bool(data.get("ai_summary"))
         if date_param:
             report_date = date_param
         else:
             dates = get_all_dates()
             report_date = dates[0][0] if dates else datetime.now().strftime("%Y-%m-%d")
-        content, paper_count, analyzed_count, avg_rating = generate_report_content(report_date)
+
+        ai_summary = None
+        if include_ai_summary:
+            ai_summary, summary_error = generate_report_ai_summary(report_date)
+            if summary_error:
+                finish_task_log(log_id, "error", f"AI 导读生成失败: {summary_error}")
+                return jsonify({"status": "error", "message": f"AI 导读生成失败: {summary_error}"}), 500
+
+        content, paper_count, analyzed_count, avg_rating = generate_report_content(report_date, ai_summary=ai_summary)
         if content is None:
             finish_task_log(log_id, "error", f"{report_date} 无论文数据")
             return jsonify({"status": "error", "message": f"{report_date} 无论文数据，请先抓取该日论文"}), 400
         save_report(report_date, content, paper_count, analyzed_count, avg_rating)
         msg = f"报告生成成功（{report_date}）：{paper_count} 篇论文，{analyzed_count} 篇已分析，平均评级 {avg_rating}"
+        if ai_summary:
+            msg += "，包含 AI 导读"
         finish_task_log(log_id, "success", msg)
-        return jsonify({"status": "ok", "date": report_date, "message": msg})
+        return jsonify({"status": "ok", "date": report_date, "ai_summary": bool(ai_summary), "message": msg})
     except Exception as e:
         finish_task_log(log_id, "error", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -839,10 +857,8 @@ def api_batch_analyze_papers():
 
 @app.route("/api/paper/<arxiv_id>/reanalyze", methods=["POST"])
 def api_reanalyze_paper(arxiv_id):
-    """重新分析单篇论文：覆盖已有的分析结果"""
+    """重新生成单篇论文的深度阅读 Q&A，不覆盖基础分析字段。"""
     try:
-        from analyzer import analyze_paper_full
-        from database import get_paper_by_arxiv_id, update_analysis
         paper = get_paper_by_arxiv_id(arxiv_id)
         if not paper:
             return jsonify({"status": "error", "message": "论文不存在"}), 404
@@ -857,8 +873,8 @@ def api_reanalyze_paper(arxiv_id):
 
         result_data, result, error = analyze_paper_full(paper_data)
         if result:
-            update_analysis(paper["id"], result)
-            return jsonify({"status": "ok", "message": "报告生成完成", "rating": result.get("rating")})
+            update_analysis(paper["id"], {"qa_analysis": result.get("qa_analysis", "")})
+            return jsonify({"status": "ok", "message": "深度阅读生成完成"})
         return jsonify({"status": "error", "message": f"分析失败: {error}"}), 500
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -885,7 +901,7 @@ def api_add_paper():
             return jsonify({"status": "error", "message": "无法识别的格式，请输入 arXiv 论文编号（如 2603.18336）或链接"}), 400
 
         task_id = data.get("task_id", "add_paper")
-        update_progress(task_id, {"current": 0, "total": 2, "status": "running", "message": f"正在获取论文 {arxiv_id}..."})
+        update_progress(task_id, {"current": 0, "total": 3, "status": "running", "message": f"正在获取论文 {arxiv_id}..."})
 
         # 从 arXiv 获取论文元数据
         paper_data = fetch_paper_by_id(arxiv_id)
@@ -896,7 +912,7 @@ def api_add_paper():
         # 检查论文是否已有分析结果
         already_analyzed = get_analysis_by_paper_id(paper_data.get("id"))
         if already_analyzed:
-            update_progress(task_id, {"current": 2, "total": 2, "status": "completed", "message": "论文已存在且已分析"})
+            update_progress(task_id, {"current": 3, "total": 3, "status": "completed", "message": "论文已存在且已分析"})
             return jsonify({
                 "status": "ok",
                 "message": f"论文已存在且已分析: {paper_data['title'][:50]}...",
@@ -904,7 +920,7 @@ def api_add_paper():
                 "already_exists": True
             })
 
-        update_progress(task_id, {"current": 1, "total": 2, "status": "running", "message": f"正在分析论文 {arxiv_id}..."})
+        update_progress(task_id, {"current": 1, "total": 3, "status": "running", "message": f"正在基础分析论文 {arxiv_id}..."})
 
         # 解析 JSON 字段
         if isinstance(paper_data.get("authors"), str):
@@ -914,23 +930,36 @@ def api_add_paper():
             import json as _json
             paper_data["categories"] = _json.loads(paper_data["categories"])
 
-        # 执行 AI 分析并保存结果
-        result_data, result, error = analyze_paper_full(paper_data)
-        if result:
-            from database import insert_analysis
-            insert_analysis(paper_data["id"], result)
-            update_progress(task_id, {"current": 2, "total": 2, "status": "completed", "message": "添加并分析完成"})
+        # 先用廉价基础分析补齐标签、评级、摘要和价值评价，再用深度阅读补充 Q&A。
+        result_data, basic_result, basic_error = analyze_paper_basic(paper_data)
+        if not basic_result:
+            update_progress(task_id, {"status": "error", "message": f"基础分析失败: {basic_error}"})
+            return jsonify({"status": "ok", "message": f"论文已添加但基础分析失败: {basic_error}", "arxiv_id": paper_data.get("arxiv_id")})
+
+        insert_analysis(paper_data["id"], basic_result)
+        update_progress(task_id, {"current": 2, "total": 3, "status": "running", "message": f"正在生成深度阅读 {arxiv_id}..."})
+
+        result_data, deep_result, deep_error = analyze_paper_full(paper_data)
+        if deep_result:
+            update_analysis(paper_data["id"], {"qa_analysis": deep_result.get("qa_analysis", "")})
+            update_progress(task_id, {"current": 3, "total": 3, "status": "completed", "message": "添加、基础分析和深度阅读完成"})
             return jsonify({
                 "status": "ok",
                 "message": f"添加成功: {paper_data['title'][:50]}...",
                 "arxiv_id": paper_data.get("arxiv_id"),
-                "rating": result.get("rating", 0),
-                "tags": result.get("tags", [])
+                "rating": basic_result.get("rating", 0),
+                "tags": basic_result.get("tags", [])
             })
-        else:
-            # 论文已入库但分析失败（不影响论文存在性）
-            update_progress(task_id, {"status": "error", "message": f"分析失败: {error}"})
-            return jsonify({"status": "ok", "message": f"论文已添加但分析失败: {error}", "arxiv_id": paper_data.get("arxiv_id")})
+
+        update_progress(task_id, {"current": 3, "total": 3, "status": "completed", "message": f"基础分析完成，深度阅读失败: {deep_error}"})
+        return jsonify({
+            "status": "ok",
+            "message": f"论文已添加并完成基础分析，但深度阅读失败: {deep_error}",
+            "arxiv_id": paper_data.get("arxiv_id"),
+            "rating": basic_result.get("rating", 0),
+            "tags": basic_result.get("tags", []),
+            "deep_reading_error": True,
+        })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -1040,6 +1069,36 @@ def api_save_per_page():
         return jsonify({"status": "error", "message": "保存失败"}), 500
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/settings/ai-tasks", methods=["GET"])
+def api_get_ai_tasks():
+    """获取基础分析、深度阅读、报告导读的任务级模型路由。"""
+    return jsonify({
+        "tasks": get_ai_tasks(),
+    })
+
+
+@app.route("/api/settings/ai-tasks", methods=["POST"])
+def api_save_ai_tasks():
+    """保存任务级模型路由和参数配置。"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "无效的请求数据"}), 400
+        tasks = data.get("tasks", data)
+        if save_ai_tasks(tasks):
+            return jsonify({"status": "ok", "message": "AI 功能模型路由已保存", "tasks": get_ai_tasks()})
+        return jsonify({"status": "error", "message": "保存失败"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/settings/ai-usage", methods=["GET"])
+def api_get_ai_usage():
+    """获取近期 LLM token 用量汇总。"""
+    days = request.args.get("days", 7, type=int)
+    return jsonify(get_ai_usage_summary(days=days))
 
 
 # ====================================================================
@@ -1490,11 +1549,23 @@ def api_save_prompts():
         data = request.get_json()
         if not data:
             return jsonify({"status": "error", "message": "无效的请求数据"}), 400
+        if "profile_key" in data:
+            profile_key = data.get("profile_key", "")
+            profile = {
+                "system": data.get("system", ""),
+                "instruction": data.get("instruction", ""),
+            }
+            ok, message = validate_prompt_template(profile["instruction"], profile_key=profile_key)
+            if not ok:
+                return jsonify({"status": "error", "message": message}), 400
+            if save_prompt_profile(profile_key, profile):
+                return jsonify({"status": "ok", "message": "Prompt Profile 已保存", "prompt_profiles": get_prompt_profiles()})
+            return jsonify({"status": "error", "message": "未知的 Prompt Profile"}), 400
         prompts = {
             "system_prompt": data.get("system_prompt", ""),
             "user_prompt": data.get("user_prompt", ""),
         }
-        ok, message = validate_prompt_template(prompts["user_prompt"])
+        ok, message = validate_prompt_template(prompts["user_prompt"], profile_key="deep_reading")
         if not ok:
             return jsonify({"status": "error", "message": message}), 400
         if save_prompts(prompts):

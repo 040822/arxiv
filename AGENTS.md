@@ -12,7 +12,7 @@
 
 ## 1. 项目概述
 
-自动从 arXiv 抓取 AI/机器人领域论文，调用 OpenAI 兼容 API 进行深度阅读分析（Q&A 格式、标签、评级、中文翻译），存入 SQLite 数据库，通过 Flask Web 界面浏览。
+自动从 arXiv 抓取 AI/机器人领域论文，调用 OpenAI 兼容 API 做基础分析（标签、评级、中文摘要）和按需深度阅读（Q&A），存入 SQLite 数据库，通过 Flask Web 界面浏览。
 
 **技术栈:** Python 3.10+ / Flask / SQLite / APScheduler / arxiv-py / OpenAI SDK / PyMuPDF
 
@@ -126,13 +126,20 @@ fetcher.fetch_latest_papers()
 analyzer.analyze_pending_papers(limit, concurrency)
   → get_unanalyzed_papers() 获取未分析论文
   → ThreadPoolExecutor 并发执行 analyze_paper()
-    → get_ai_config() 获取 API 配置
-    → get_prompts() 获取 prompt 模板
-    → get_paper_full_text() 下载PDF提取全文（失败则用摘要）
-    → user_prompt.format(title, authors, abstract, tag_candidates, rating_criteria)
+    → get_ai_task_config("basic_analysis") 获取基础分析模型与参数
+    → get_prompt_profile("basic_analysis") 获取稳定 Prompt 前缀
+    → 论文标题/作者/摘要作为独立 JSON message 放在最后
     → OpenAI chat.completions.create()
-    → 解析 JSON 响应：{qa_analysis, tags, rating, summary_cn, value_comment}
+    → 解析 JSON 响应：{tags, rating, summary_cn, value_comment}
   → insert_analysis() 写入 analysis 表（含重复检查）
+
+analyzer.analyze_paper_full(paper_data)
+  → get_ai_task_config("deep_reading") 获取深度阅读模型与参数
+  → get_paper_full_text(max_chars=None) 下载 PDF 并提取全文（不截断）
+  → 稳定 Prompt 前缀 + 动态论文全文 JSON message
+  → OpenAI chat.completions.create()
+  → 解析 JSON 响应：{qa_analysis}
+  → update_analysis() 仅写入 qa_analysis，不覆盖基础分析字段
 ```
 
 ### 4.3 定时任务流程
@@ -184,6 +191,16 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
   "prompts": {
     "system_prompt": "...",
     "user_prompt": "...{title}...{authors}...{abstract}...{tag_candidates}...{rating_criteria}..."
+  },
+  "prompt_profiles": {
+    "basic_analysis": {"system": "...", "instruction": "...{tag_candidates}...{rating_criteria}..."},
+    "deep_reading": {"system": "...", "instruction": "..."},
+    "report_summary": {"system": "...", "instruction": "..."}
+  },
+  "ai_tasks": {
+    "basic_analysis": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1200},
+    "deep_reading": {"provider_key": "deepseek", "model": "deepseek-reasoner", "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 6000},
+    "report_summary": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1000}
   }
 }
 ```
@@ -191,9 +208,11 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 **settings.py 函数:**
 - `load_settings()` / `save_settings()` — 读写JSON（含自动迁移）
 - `get_ai_config()` — 获取当前激活供应商的 API 配置
+- `get_ai_task_config(task_key)` — 获取某个 AI 功能的实际供应商、模型和参数配置
+- `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存基础分析、深度阅读、报告导读的模型路由
 - `build_chat_completion_kwargs()` — 统一构建 Chat Completions 参数（思考模型会省略采样参数）
 - `normalize_provider_config()` — 补齐供应商配置字段，兼容旧版 settings.json
-- `get_prompts()` — 获取 system/user prompt
+- `get_prompt_profile()` / `get_prompt_profiles()` — 获取任务级 Prompt Profile；`get_prompts()` 保留旧接口兼容
 - `get_concurrency()` — 获取并发数
 - `get_per_page()` — 获取每页论文数
 - `get_schedule_config()` / `save_schedule_config()` — 获取/保存每日定时任务配置
@@ -254,6 +273,8 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 | `/api/test_connection` | POST | 测试API连接 |
 | `/api/detect_thinking` | POST | 检测是否为思考模型 |
 | `/api/prompts` | GET/POST | 读取/保存Prompt |
+| `/api/settings/ai-tasks` | GET/POST | 读取/保存 AI 功能模型路由 |
+| `/api/settings/ai-usage` | GET | 查看近期 LLM token 用量 |
 | `/api/settings/concurrency` | POST | 保存并发数 |
 | `/api/settings/schedule` | GET/POST | 读取/保存每日定时任务配置 |
 | `/api/db/info` | GET | 数据库信息 |
@@ -308,11 +329,11 @@ if "new_column" not in columns:
 管理密码设置后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用。`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
 
 ### 7.4 修改 Prompt
-- prompt 存储在 `data/settings.json` 的 `prompts` 字段
-- Web 设置页可修改，也可直接编辑 JSON 文件
-- 可用变量：`{title}` `{authors}` `{abstract}` `{tag_candidates}` `{rating_criteria}`
-- 保存 Prompt 时会校验上述必需变量；JSON 示例中的普通大括号需要写成 `{{` 和 `}}`
-- 注意：`{abstract}` 实际可能是论文全文（如果 PDF 提取成功）
+- 新版 prompt 主要存储在 `data/settings.json` 的 `prompt_profiles` 字段，按 `basic_analysis`、`deep_reading`、`report_summary` 拆分
+- 旧版 `prompts.system_prompt/user_prompt` 保留为兼容字段，并映射到 `deep_reading`
+- 基础分析 Prompt Profile 可使用 `{tag_candidates}`、`{rating_criteria}`；深度阅读只描述 Q&A 输出；论文标题、作者、摘要、PDF 全文会作为最后一条动态 JSON message 传入
+- 修改 AI 调用逻辑时不要重新把动态论文内容拼回稳定 instruction，否则会降低 prompt cache 命中率
+- 深度阅读按质量优先调用 `get_paper_full_text(max_chars=None)`，不截断 PDF 全文；基础分析只使用摘要以降低成本
 
 ### 7.5 添加新标签
 在 `config.py` 的 `TAG_CANDIDATES` 列表中添加。注意：

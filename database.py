@@ -2,19 +2,20 @@
 database.py - SQLite 数据库操作模块
 
 本模块负责所有数据库相关的操作，包括：
-- 数据库初始化和表结构管理（5 张表）
+- 数据库初始化和表结构管理
 - 论文的增删改查（CRUD）
 - 分析结果的存储和查询
 - 任务日志的记录和查询
 - 报告的生成和存储
 - 阅读清单的管理
 
-数据库结构（5 张表）：
+数据库结构：
 - papers: 论文基本信息
 - analysis: AI 分析结果（与 papers 1:1 关联）
 - task_logs: 定时任务和手动操作的日志
 - reports: 每日 Web 报告
 - reading_list: 用户阅读清单
+- ai_usage_logs: LLM 调用 token 用量账本
 
 依赖：
 - config.py: 数据库路径配置
@@ -174,6 +175,28 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_list_paper ON reading_list(paper_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_list_status ON reading_list(status)")
+
+    # ==================== ai_usage_logs 表：LLM 调用用量账本 ====================
+    # 只记录 token 用量和路由信息，不内置价格表，避免价格变化造成误导
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ai_usage_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_key TEXT NOT NULL,
+            provider_key TEXT,
+            provider_name TEXT,
+            model TEXT,
+            paper_id INTEGER,
+            arxiv_id TEXT,
+            prompt_tokens INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            total_tokens INTEGER DEFAULT 0,
+            cached_tokens INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_task ON ai_usage_logs(task_key)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage_logs(created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_model ON ai_usage_logs(model)")
 
     conn.commit()
     conn.close()
@@ -1264,7 +1287,71 @@ def get_report_dates():
     return [dict(row) for row in rows]
 
 
-def generate_report_content(date):
+# ==================== AI 用量记录 ====================
+
+def _safe_int(value):
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def record_ai_usage(usage):
+    """记录一次 LLM API 调用的 token 用量。"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO ai_usage_logs (
+            task_key, provider_key, provider_name, model, paper_id, arxiv_id,
+            prompt_tokens, completion_tokens, total_tokens, cached_tokens
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        usage.get("task_key", ""),
+        usage.get("provider_key", ""),
+        usage.get("provider_name", ""),
+        usage.get("model", ""),
+        usage.get("paper_id"),
+        usage.get("arxiv_id", ""),
+        _safe_int(usage.get("prompt_tokens")),
+        _safe_int(usage.get("completion_tokens")),
+        _safe_int(usage.get("total_tokens")),
+        _safe_int(usage.get("cached_tokens")),
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_ai_usage_summary(days=7):
+    """按任务/模型汇总最近 N 天 token 用量。"""
+    days = max(1, min(365, _safe_int(days) or 7))
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            task_key,
+            provider_key,
+            provider_name,
+            model,
+            COUNT(*) AS call_count,
+            SUM(prompt_tokens) AS prompt_tokens,
+            SUM(completion_tokens) AS completion_tokens,
+            SUM(total_tokens) AS total_tokens,
+            SUM(cached_tokens) AS cached_tokens
+        FROM ai_usage_logs
+        WHERE created_at >= datetime('now', ?)
+        GROUP BY task_key, provider_key, provider_name, model
+        ORDER BY total_tokens DESC, call_count DESC
+    """, (f"-{days} days",))
+    rows = cursor.fetchall()
+    conn.close()
+    return {
+        "days": days,
+        "items": [dict(row) for row in rows],
+    }
+
+
+def generate_report_content(date, ai_summary=None):
     """生成指定日期的 HTML 报告内容。
     
     报告包含：
@@ -1276,6 +1363,7 @@ def generate_report_content(date):
     
     参数：
         date (str): 报告日期（YYYY-MM-DD）
+        ai_summary (str | None): 可选 AI 导读，默认不生成也不展示
         
     返回：
         tuple: (html_content, total, analyzed, avg_rating)
@@ -1349,6 +1437,10 @@ def generate_report_content(date):
     html += f'<div class="report-stat"><span class="report-stat-val">{analyzed}</span><span class="report-stat-label">已分析</span></div>'
     html += f'<div class="report-stat"><span class="report-stat-val">{avg_rating}</span><span class="report-stat-label">平均评级</span></div>'
     html += f'</div></div>'
+
+    if ai_summary:
+        summary_html = esc(ai_summary).replace("\n", "<br>")
+        html += f'<div class="report-section"><h3>🤖 AI 导读</h3><div class="report-paper-summary">{summary_html}</div></div>'
 
     # 分类分布区块
     if top_categories:

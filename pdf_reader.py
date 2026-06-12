@@ -237,15 +237,15 @@ def get_paper_full_text(pdf_url, arxiv_id, max_chars=6000000):
     Args:
         pdf_url (str): PDF 文件的下载 URL
         arxiv_id (str): 论文的 arXiv ID
-        max_chars (int): 最大字符数限制，默认 6000000（约 6MB 文本）
-                        设置过大会影响 AI 分析的 token 消耗
+        max_chars (int | None): 最大字符数限制，默认 6000000（约 6MB 文本）
+                        传 None 表示不截断，适合高质量深度阅读
         
     Returns:
         str 或 None: 成功返回论文文本，失败返回 None
         
     Note:
         - 如果 PDF 下载失败或文本提取失败，会返回 None
-        - 超长文本会被截断，截断后会在末尾添加提示信息
+        - max_chars 为 None 时不截断；否则超长文本会被截断并添加提示信息
     """
     # 第一步：下载 PDF 文件
     pdf_path = download_pdf(pdf_url, arxiv_id)
@@ -258,7 +258,7 @@ def get_paper_full_text(pdf_url, arxiv_id, max_chars=6000000):
         return None
 
     # 第三步：检查文本长度，必要时截断
-    if len(text) > max_chars:
+    if max_chars is not None and len(text) > max_chars:
         text = text[:max_chars] + "\n\n[... 文本已截断，以上为论文前部分内容 ...]"
         logger.info(f"Truncated paper text for {arxiv_id} to {max_chars} chars")
 

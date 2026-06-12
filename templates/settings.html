@@ -20,6 +20,7 @@
             <button class="tab-btn active" onclick="switchTab('ai')">🤖 AI 设置</button>
             <button class="tab-btn" onclick="switchTab('db')">💾 数据库</button>
             <button class="tab-btn" onclick="switchTab('admin')">🔒 管理</button>
+            <button class="tab-btn" onclick="switchTab('billing')">📊 账单</button>
         </div>
 
         {% if not auth_enabled %}
@@ -41,55 +42,73 @@
             </div>
 
             <div class="settings-section">
-                <h3>➕ 添加新供应商</h3>
-                <p class="section-desc">从预设供应商快速添加，或添加自定义 OpenAI 兼容接口</p>
-                <div class="provider-grid" id="preset-grid"></div>
-                <div id="add-form" class="add-form" style="display:none;">
-                    <h4 id="add-form-title">配置供应商</h4>
-                    <div class="form-group"><label>供应商ID</label><input type="text" id="add-key" placeholder="例如: deepseek"></div>
-                    <div class="form-group"><label>显示名称</label><input type="text" id="add-name" placeholder="例如: DeepSeek"></div>
-                    <div class="form-group"><label>API Key</label><div class="input-group"><input type="password" id="add-api-key" placeholder="输入 API Key" onchange="scheduleModelFetch()"><button class="btn-small" onclick="togglePwd('add-api-key')">👁</button></div></div>
-                    <div class="form-group"><label>Base URL</label><input type="text" id="add-base-url" placeholder="https://api.deepseek.com" onchange="scheduleModelFetch()"></div>
-                    <div class="form-group">
-                        <label>模型</label>
-                        <div class="input-group">
-                            <select id="add-model-select" onchange="selectModelFromList()"><option value="">-- 从模型列表选择 --</option></select>
-                            <button class="btn-small" onclick="fetchModelsForForm()">刷新模型</button>
-                            <input type="text" id="add-model" placeholder="或手动输入模型名称">
-                        </div>
-                        <div id="model-list-status" class="field-hint"></div>
-                    </div>
-                    <div class="form-row">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                    <h3 style="margin:0;">🧭 功能模型路由</h3>
+                    <button class="action-btn" id="ai-task-toggle-btn" onclick="toggleAiTaskRoutes()">展开</button>
+                </div>
+                <div id="ai-task-route-body" style="display:none;margin-top:12px;">
+                    <p class="section-desc">为不同 AI 功能单独选择供应商、模型和参数。基础分析负责标签/评级/摘要，建议廉价模型；深度阅读只补充 Q&A，可使用高智能/高思考模型；报告导读默认只在任务页勾选时调用。</p>
+                    <div id="ai-task-routes"></div>
+                    <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveAiTasks()">💾 保存功能模型路由</button></div>
+                    <div id="ai-task-status" class="action-status"></div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                    <h3 style="margin:0;">➕ 添加新供应商</h3>
+                    <button class="action-btn" id="add-provider-toggle-btn" onclick="toggleAddProviderSection()">展开</button>
+                </div>
+                <div id="add-provider-body" style="display:none;margin-top:12px;">
+                    <p class="section-desc">从预设供应商快速添加，或添加自定义 OpenAI 兼容接口</p>
+                    <div class="provider-grid" id="preset-grid"></div>
+                    <div id="add-form" class="add-form" style="display:none;">
+                        <h4 id="add-form-title">配置供应商</h4>
+                        <div class="form-group"><label>供应商ID</label><input type="text" id="add-key" placeholder="例如: deepseek"></div>
+                        <div class="form-group"><label>显示名称</label><input type="text" id="add-name" placeholder="例如: DeepSeek"></div>
+                        <div class="form-group"><label>API Key</label><div class="input-group"><input type="password" id="add-api-key" placeholder="输入 API Key" onchange="scheduleModelFetch()"><button class="btn-small" onclick="togglePwd('add-api-key')">👁</button></div></div>
+                        <div class="form-group"><label>Base URL</label><input type="text" id="add-base-url" placeholder="https://api.deepseek.com" onchange="scheduleModelFetch()"></div>
                         <div class="form-group">
-                            <label><input type="checkbox" id="add-max-tokens-enabled" onchange="toggleMaxTokensField()" style="margin-right:6px;">限制输出长度</label>
-                            <input type="number" id="add-max-tokens" min="100" max="200000" step="100" value="8192" disabled>
+                            <label>模型</label>
+                            <div class="input-group">
+                                <select id="add-model-select" onchange="selectModelFromList()"><option value="">-- 从模型列表选择 --</option></select>
+                                <button class="btn-small" onclick="fetchModelsForForm()">刷新模型</button>
+                                <input type="text" id="add-model" placeholder="或手动输入模型名称">
+                            </div>
+                            <div id="model-list-status" class="field-hint"></div>
                         </div>
-                        <div class="form-group">
-                            <label><input type="checkbox" id="add-is-thinking" onchange="toggleThinkingFields()" style="margin-right:6px;">🧠 思考模型</label>
-                            <div id="thinking-fields" style="display:none;">
-                                <select id="add-thinking-effort">
-                                    <option value="auto">自动</option>
-                                    <option value="low">低</option>
-                                    <option value="medium" selected>中</option>
-                                    <option value="high">高</option>
-                                    <option value="max">最高</option>
-                                </select>
-                                <p class="section-desc">思考模式下将不发送 temperature/top_p/presence/frequency 等采样参数</p>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label><input type="checkbox" id="add-max-tokens-enabled" onchange="toggleMaxTokensField()" style="margin-right:6px;">限制输出长度</label>
+                                <input type="number" id="add-max-tokens" min="100" max="200000" step="100" value="8192" disabled>
+                            </div>
+                            <div class="form-group">
+                                <label><input type="checkbox" id="add-is-thinking" onchange="toggleThinkingFields()" style="margin-right:6px;">🧠 思考模型</label>
+                                <div id="thinking-fields" style="display:none;">
+                                    <select id="add-thinking-effort">
+                                        <option value="auto">自动</option>
+                                        <option value="low">低</option>
+                                        <option value="medium" selected>中</option>
+                                        <option value="high">高</option>
+                                        <option value="max">最高</option>
+                                    </select>
+                                    <p class="section-desc">思考模式下将不发送 temperature/top_p/presence/frequency 等采样参数</p>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    <div class="advanced-box" id="sampling-section">
-                        <h5>高级采样参数</h5>
-                        <div class="form-row">
-                            <div class="form-group"><label><input type="checkbox" id="add-temperature-enabled" onchange="toggleSamplingField('temperature')" checked> Temperature</label><input type="number" id="add-temperature" min="0" max="2" step="0.1" value="0.3"></div>
-                            <div class="form-group"><label><input type="checkbox" id="add-top-p-enabled" onchange="toggleSamplingField('top-p')"> Top P</label><input type="number" id="add-top-p" min="0" max="1" step="0.05" value="1" disabled></div>
+                        <div class="advanced-box" id="sampling-section">
+                            <h5>高级采样参数</h5>
+                            <div class="form-row">
+                                <div class="form-group"><label><input type="checkbox" id="add-temperature-enabled" onchange="toggleSamplingField('temperature')" checked> Temperature</label><input type="number" id="add-temperature" min="0" max="2" step="0.1" value="0.3"></div>
+                                <div class="form-group"><label><input type="checkbox" id="add-top-p-enabled" onchange="toggleSamplingField('top-p')"> Top P</label><input type="number" id="add-top-p" min="0" max="1" step="0.05" value="1" disabled></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label><input type="checkbox" id="add-presence-penalty-enabled" onchange="toggleSamplingField('presence-penalty')"> Presence Penalty</label><input type="number" id="add-presence-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
+                                <div class="form-group"><label><input type="checkbox" id="add-frequency-penalty-enabled" onchange="toggleSamplingField('frequency-penalty')"> Frequency Penalty</label><input type="number" id="add-frequency-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
+                            </div>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group"><label><input type="checkbox" id="add-presence-penalty-enabled" onchange="toggleSamplingField('presence-penalty')"> Presence Penalty</label><input type="number" id="add-presence-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
-                            <div class="form-group"><label><input type="checkbox" id="add-frequency-penalty-enabled" onchange="toggleSamplingField('frequency-penalty')"> Frequency Penalty</label><input type="number" id="add-frequency-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
-                        </div>
+                        <div class="settings-actions"><button class="action-btn btn-primary" onclick="submitAdd()">💾 保存供应商</button><button class="action-btn" onclick="cancelAdd()">取消</button></div>
                     </div>
-                    <div class="settings-actions"><button class="action-btn btn-primary" onclick="submitAdd()">💾 保存供应商</button><button class="action-btn" onclick="cancelAdd()">取消</button></div>
                 </div>
             </div>
 
@@ -151,9 +170,17 @@
 
             <div class="settings-section">
                 <h3>📝 Prompt 设置</h3>
-                <p class="section-desc">自定义 AI 分析的提示词模板。可用变量: <code>{title}</code> <code>{authors}</code> <code>{abstract}</code> <code>{tag_candidates}</code> <code>{rating_criteria}</code></p>
+                <p class="section-desc">按功能维护稳定 Prompt 前缀。论文标题、摘要、PDF 全文等动态内容会作为独立 JSON 消息放在最后，以提高缓存命中率；基础分析可使用 <code>{tag_candidates}</code> <code>{rating_criteria}</code>，深度阅读只需描述 Q&A 输出。</p>
+                <div class="form-group" style="max-width:280px;">
+                    <label>Prompt Profile</label>
+                    <select id="prompt-profile-select" onchange="switchPromptProfile()">
+                        <option value="basic_analysis">基础分析</option>
+                        <option value="deep_reading" selected>深度阅读</option>
+                        <option value="report_summary">报告导读</option>
+                    </select>
+                </div>
                 <div class="form-group"><label>System Prompt</label><textarea id="system-prompt" rows="4"></textarea></div>
-                <div class="form-group"><label>User Prompt</label><textarea id="user-prompt" rows="16"></textarea></div>
+                <div class="form-group"><label>Instruction Prompt</label><textarea id="user-prompt" rows="16"></textarea></div>
                 <div class="settings-actions"><button class="action-btn btn-primary" onclick="savePrompts()">💾 保存</button><button class="action-btn" onclick="resetPrompts()">🔄 恢复默认</button></div>
                 <div id="prompt-status" class="action-status"></div>
             </div>
@@ -206,6 +233,15 @@
             </div>
         </div>
 
+        <!-- ============ Tab 4: 账单 ============ -->
+        <div id="tab-billing" class="tab-panel">
+            <div class="settings-section">
+                <h3>📊 LLM 用量账本</h3>
+                <p class="section-desc">近 7 天按任务和模型统计的 token 用量；这里只记录 token，不内置价格表。</p>
+                <div id="ai-usage-summary" class="db-info-grid"></div>
+            </div>
+        </div>
+
         <footer><p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p></footer>
     </div>
 
@@ -213,6 +249,9 @@
     <script>
         let presets = {};
         let providerData = {};
+        let aiTaskData = {};
+        let promptProfiles = {};
+        let currentPromptProfile = 'deep_reading';
         let modelFetchTimer = null;
 
         function escapeHtml(value) {
@@ -242,10 +281,11 @@
         }
 
         async function init() {
-            const [provResp, presetResp, promptResp, statsResp, proxyResp, fetchResp] = await Promise.all([
+            const [provResp, presetResp, promptResp, statsResp, proxyResp, fetchResp, taskResp, usageResp] = await Promise.all([
                 fetch('/api/providers'), fetch('/api/providers/presets'),
                 fetch('/api/prompts'), fetch('/api/stats'), fetch('/api/settings/proxy'),
-                fetch('/api/settings/fetch')
+                fetch('/api/settings/fetch'), fetch('/api/settings/ai-tasks'),
+                fetch('/api/settings/ai-usage?days=7')
             ]);
             providerData = await provResp.json();
             presets = await presetResp.json();
@@ -253,9 +293,13 @@
             const statsData = await statsResp.json();
             const proxyData = await proxyResp.json();
             const fetchData = await fetchResp.json();
+            aiTaskData = await taskResp.json();
+            const usageData = await usageResp.json();
 
             renderProviderList();
             renderPresetGrid();
+            renderAiTasks(aiTaskData.tasks || {});
+            renderAiUsage(usageData);
             renderPrompts(promptData);
             if (statsData.concurrency !== undefined) document.getElementById('concurrency').value = statsData.concurrency;
 
@@ -267,6 +311,144 @@
             document.getElementById('fetch-request-delay').value = fetchData.request_delay || 3;
             document.getElementById('fetch-batch-days').value = fetchData.batch_days || 30;
             document.getElementById('fetch-batch-delay').value = fetchData.batch_delay || 5;
+        }
+
+        /* ---- AI Task Routing ---- */
+        const AI_TASK_META = {
+            basic_analysis: {title: '基础分析', desc: '批量/自动分析使用，生成标签、评级、中文摘要和简评。建议廉价模型，默认不使用思考。'},
+            deep_reading: {title: '深度阅读', desc: '单篇生成/刷新 Q&A 深度阅读使用，不覆盖基础分析字段。可使用高智能模型和 high 思考。'},
+            report_summary: {title: '报告导读', desc: '仅在任务页勾选“生成 AI 导读”时调用。建议廉价模型。'},
+        };
+
+        function taskFieldId(taskKey, name) {
+            return `task-${taskKey}-${name}`;
+        }
+
+        function toggleAiTaskRoutes() {
+            const body = document.getElementById('ai-task-route-body');
+            const btn = document.getElementById('ai-task-toggle-btn');
+            const collapsed = body.style.display === 'none';
+            body.style.display = collapsed ? 'block' : 'none';
+            btn.textContent = collapsed ? '收起' : '展开';
+        }
+
+        function providerSelectHtml(selected) {
+            const providers = providerData.providers || {};
+            let html = '';
+            for (const [key, prov] of Object.entries(providers)) {
+                html += `<option value="${escapeHtml(key)}" ${key === selected ? 'selected' : ''}>${escapeHtml(prov.name || key)}</option>`;
+            }
+            return html;
+        }
+
+        function renderAiTasks(tasks) {
+            const box = document.getElementById('ai-task-routes');
+            let html = '';
+            for (const taskKey of Object.keys(AI_TASK_META)) {
+                const meta = AI_TASK_META[taskKey];
+                const cfg = tasks[taskKey] || {};
+                const providerKey = cfg.provider_key || providerData.active_provider || '';
+                html += `<div class="advanced-box" style="margin-bottom:14px;">
+                    <h5>${escapeHtml(meta.title)}</h5>
+                    <p class="section-desc">${escapeHtml(meta.desc)}</p>
+                    <div class="form-row">
+                        <div class="form-group"><label>供应商</label><select id="${taskFieldId(taskKey, 'provider')}">${providerSelectHtml(providerKey)}</select></div>
+                        <div class="form-group"><label>模型</label><input type="text" id="${taskFieldId(taskKey, 'model')}" value="${escapeHtml(cfg.model || '')}" placeholder="模型名称"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'max-tokens-enabled')}" onchange="toggleTaskMaxTokens('${taskKey}')" ${cfg.max_tokens_enabled ? 'checked' : ''}> 限制输出长度</label><input type="number" id="${taskFieldId(taskKey, 'max-tokens')}" min="1" max="200000" step="100" value="${escapeHtml(cfg.max_tokens || 1000)}"></div>
+                        <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'thinking')}" onchange="toggleTaskThinking('${taskKey}')" ${cfg.is_thinking ? 'checked' : ''}> 思考模型</label><select id="${taskFieldId(taskKey, 'thinking-effort')}"><option value="auto">自动</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="max">最高</option></select></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'temperature-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'temperature')" ${cfg.temperature_enabled ? 'checked' : ''}> Temperature</label><input type="number" id="${taskFieldId(taskKey, 'temperature')}" min="0" max="2" step="0.1" value="${escapeHtml(cfg.temperature ?? 0.3)}"></div>
+                        <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'top-p-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'top-p')" ${cfg.top_p_enabled ? 'checked' : ''}> Top P</label><input type="number" id="${taskFieldId(taskKey, 'top-p')}" min="0" max="1" step="0.05" value="${escapeHtml(cfg.top_p ?? 1)}"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'presence-penalty-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'presence-penalty')" ${cfg.presence_penalty_enabled ? 'checked' : ''}> Presence Penalty</label><input type="number" id="${taskFieldId(taskKey, 'presence-penalty')}" min="-2" max="2" step="0.1" value="${escapeHtml(cfg.presence_penalty ?? 0)}"></div>
+                        <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'frequency-penalty-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'frequency-penalty')" ${cfg.frequency_penalty_enabled ? 'checked' : ''}> Frequency Penalty</label><input type="number" id="${taskFieldId(taskKey, 'frequency-penalty')}" min="-2" max="2" step="0.1" value="${escapeHtml(cfg.frequency_penalty ?? 0)}"></div>
+                    </div>
+                </div>`;
+            }
+            box.innerHTML = html;
+            for (const [taskKey, cfg] of Object.entries(tasks)) {
+                const effortEl = document.getElementById(taskFieldId(taskKey, 'thinking-effort'));
+                if (effortEl) effortEl.value = cfg.thinking_effort || 'medium';
+                toggleTaskMaxTokens(taskKey);
+                toggleTaskThinking(taskKey);
+            }
+        }
+
+        function toggleTaskMaxTokens(taskKey) {
+            const enabled = document.getElementById(taskFieldId(taskKey, 'max-tokens-enabled')).checked;
+            document.getElementById(taskFieldId(taskKey, 'max-tokens')).disabled = !enabled;
+        }
+
+        function toggleTaskSampling(taskKey, name) {
+            const thinking = document.getElementById(taskFieldId(taskKey, 'thinking')).checked;
+            const enabled = document.getElementById(taskFieldId(taskKey, `${name}-enabled`)).checked;
+            document.getElementById(taskFieldId(taskKey, name)).disabled = thinking || !enabled;
+        }
+
+        function toggleTaskThinking(taskKey) {
+            const thinking = document.getElementById(taskFieldId(taskKey, 'thinking')).checked;
+            for (const name of ['temperature', 'top-p', 'presence-penalty', 'frequency-penalty']) {
+                document.getElementById(taskFieldId(taskKey, `${name}-enabled`)).disabled = thinking;
+                toggleTaskSampling(taskKey, name);
+            }
+        }
+
+        function readTaskConfig(taskKey) {
+            return {
+                provider_key: document.getElementById(taskFieldId(taskKey, 'provider')).value,
+                model: document.getElementById(taskFieldId(taskKey, 'model')).value.trim(),
+                max_tokens_enabled: document.getElementById(taskFieldId(taskKey, 'max-tokens-enabled')).checked,
+                max_tokens: parseInt(document.getElementById(taskFieldId(taskKey, 'max-tokens')).value) || 1000,
+                is_thinking: document.getElementById(taskFieldId(taskKey, 'thinking')).checked,
+                thinking_effort: document.getElementById(taskFieldId(taskKey, 'thinking-effort')).value,
+                temperature_enabled: document.getElementById(taskFieldId(taskKey, 'temperature-enabled')).checked,
+                temperature: parseFloat(document.getElementById(taskFieldId(taskKey, 'temperature')).value) || 0,
+                top_p_enabled: document.getElementById(taskFieldId(taskKey, 'top-p-enabled')).checked,
+                top_p: parseFloat(document.getElementById(taskFieldId(taskKey, 'top-p')).value) || 1,
+                presence_penalty_enabled: document.getElementById(taskFieldId(taskKey, 'presence-penalty-enabled')).checked,
+                presence_penalty: parseFloat(document.getElementById(taskFieldId(taskKey, 'presence-penalty')).value) || 0,
+                frequency_penalty_enabled: document.getElementById(taskFieldId(taskKey, 'frequency-penalty-enabled')).checked,
+                frequency_penalty: parseFloat(document.getElementById(taskFieldId(taskKey, 'frequency-penalty')).value) || 0,
+            };
+        }
+
+        async function saveAiTasks() {
+            const statusEl = document.getElementById('ai-task-status');
+            const tasks = {};
+            for (const taskKey of Object.keys(AI_TASK_META)) tasks[taskKey] = readTaskConfig(taskKey);
+            try {
+                const resp = await fetch('/api/settings/ai-tasks', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({tasks})});
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+                if (result.status === 'ok') {
+                    aiTaskData.tasks = result.tasks || tasks;
+                    renderAiTasks(aiTaskData.tasks);
+                }
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            }
+        }
+
+        function renderAiUsage(data) {
+            const box = document.getElementById('ai-usage-summary');
+            const items = data.items || [];
+            if (!items.length) {
+                box.innerHTML = '<div class="empty-state"><p>暂无 LLM 用量记录</p></div>';
+                return;
+            }
+            box.innerHTML = items.map(item => `
+                <div class="db-stat db-stat-wide">
+                    <div class="db-stat-label">${escapeHtml(AI_TASK_META[item.task_key]?.title || item.task_key)} · ${escapeHtml(item.model || 'unknown')}</div>
+                    <div class="db-stat-value">${escapeHtml(item.total_tokens || 0)} tokens</div>
+                    <div class="field-hint">调用 ${escapeHtml(item.call_count || 0)} 次 · 输入 ${escapeHtml(item.prompt_tokens || 0)} · 输出 ${escapeHtml(item.completion_tokens || 0)} · 缓存 ${escapeHtml(item.cached_tokens || 0)}</div>
+                </div>
+            `).join('');
         }
 
         /* ---- Provider Management ---- */
@@ -309,6 +491,18 @@
                 html += `<div class="preset-card ${exists ? 'exists' : ''}" onclick="${exists ? '' : `showAddForm('${jsString(key)}')`}"><div class="preset-name">${escapeHtml(preset.name)}</div>${exists ? '<div class="preset-exists">已添加</div>' : ''}</div>`;
             }
             grid.innerHTML = html;
+        }
+
+        function setAddProviderSection(expanded) {
+            const body = document.getElementById('add-provider-body');
+            const btn = document.getElementById('add-provider-toggle-btn');
+            body.style.display = expanded ? 'block' : 'none';
+            btn.textContent = expanded ? '收起' : '展开';
+        }
+
+        function toggleAddProviderSection() {
+            const body = document.getElementById('add-provider-body');
+            setAddProviderSection(body.style.display === 'none');
         }
 
         function getModelOptionsFromSelect() {
@@ -408,6 +602,7 @@
         }
 
         function showAddForm(presetKey) {
+            setAddProviderSection(true);
             const preset = presets[presetKey] || {};
             document.getElementById('add-key').value = presetKey;
             document.getElementById('add-key').readOnly = !!presetKey;
@@ -480,6 +675,7 @@
         }
 
         function editProvider(key) {
+            setAddProviderSection(true);
             const prov = providerData.providers[key]; if (!prov) return;
             const preset = presets[key] || {};
             document.getElementById('add-key').value = key; document.getElementById('add-key').readOnly = true;
@@ -581,7 +777,27 @@
         }
 
         /* ---- Prompt Management ---- */
-        function renderPrompts(data) { document.getElementById('system-prompt').value = data.system_prompt || ''; document.getElementById('user-prompt').value = data.user_prompt || ''; parseQuestionsFromPrompt(data.user_prompt || ''); }
+        function renderPrompts(data) {
+            promptProfiles = data.prompt_profiles || {
+                deep_reading: {system: data.system_prompt || '', instruction: data.user_prompt || ''}
+            };
+            currentPromptProfile = document.getElementById('prompt-profile-select').value || 'deep_reading';
+            renderCurrentPromptProfile();
+        }
+
+        function renderCurrentPromptProfile() {
+            const profile = promptProfiles[currentPromptProfile] || {system: '', instruction: ''};
+            document.getElementById('system-prompt').value = profile.system || '';
+            document.getElementById('user-prompt').value = profile.instruction || '';
+            if (currentPromptProfile === 'deep_reading') {
+                parseQuestionsFromPrompt(profile.instruction || '');
+            }
+        }
+
+        function switchPromptProfile() {
+            currentPromptProfile = document.getElementById('prompt-profile-select').value || 'deep_reading';
+            renderCurrentPromptProfile();
+        }
 
         const DEFAULT_QUESTIONS = ['这篇论文试图解决什么问题？','有哪些相关研究？','论文如何解决这个问题？','论文做了哪些实验？','有什么可以进一步探索的点？','总结一下论文的主要内容'];
 
@@ -595,29 +811,33 @@
 
         function buildPromptWithQuestions(questions) {
             let qaBlock = questions.map((q, i) => `### Q${i+1}: ${q}\\n\\n（请详细回答 Q${i+1}，至少3-5个完整段落）`).join('\\n\\n');
-            return `请对以下论文进行深度阅读分析，按Q&A格式详细回答每个问题，然后给出标签和评级。\n\n论文标题: {title}\n论文作者: {authors}\n论文摘要: {abstract}\n\n请严格按以下JSON格式返回（不要返回其他内容）:\n\n{{\n    "qa_analysis": "${qaBlock}",\n    "tags": ["标签1", "标签2"],\n    "rating": 3,\n    "summary_cn": "将论文摘要完整翻译为中文，要求忠实原文、语句通顺、术语准确，不得遗漏或概括任何信息，必须是逐句的完整翻译。",\n    "value_comment": "对论文价值的简短评价（2-3句话）"\n}}\n\n标签选择指南:\n请从以下标签中选择最相关的2-5个标签，也可以自行创建新标签:\n{tag_candidates}\n\n标签精度要求（重要）:\n- 避免过于宽泛的标签，例如: "Robot Learning"、"Embodied AI"（领域太大）、"Transformer"（架构太通用）、"LLM"（太泛）、"Agent"（太泛）、"Multimodal"（太泛）\n- 优先使用具体的技术方法、特定任务、具体架构名称\n- 好的标签示例: "VLA"、"Diffusion Policy"、"Sim-to-Real Transfer"、"Dexterous Manipulation"、"World Model"、"Preference Optimization"\n\n{rating_criteria}\n\n重要要求:\n1. qa_analysis 中每个Q&A用 Markdown 标题格式（### Qn: 问题），每个回答应当详尽充分，至少3-5个完整段落\n2. summary_cn 必须是论文摘要的完整中文翻译，逐句对应，不得省略概括\n3. tags必须是数组格式\n4. rating必须是0-5的整数\n5. 请确保返回合法的JSON格式，qa_analysis中的换行用\\\\n转义`;
+            return `请对论文内容进行深度阅读分析，只生成 Q&A 深度阅读内容。\n\n请严格返回合法 JSON，不要返回额外解释：\n\n{\n  "qa_analysis": "${qaBlock}"\n}\n\n重要要求：\n1. qa_analysis 中每个 Q&A 使用 Markdown 标题格式（### Qn: 问题）\n2. 每个回答应当详尽充分，优先覆盖方法、实验、局限和可复现细节\n3. 除 qa_analysis 外不要返回其他字段\n4. qa_analysis 中的换行必须用 \\\\n 转义`;
         }
 
         async function applyQuestionsToPrompt() {
             const statusEl = document.getElementById('qa-status'); const questions = getQuestionsFromUI();
             if (questions.length === 0) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ 至少需要一个问题'; return; }
+            currentPromptProfile = 'deep_reading';
+            document.getElementById('prompt-profile-select').value = 'deep_reading';
             const newPrompt = buildPromptWithQuestions(questions); document.getElementById('user-prompt').value = newPrompt;
-            try { const resp = await fetch('/api/prompts', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({system_prompt: document.getElementById('system-prompt').value, user_prompt: newPrompt}) });
+            try { const resp = await fetch('/api/prompts', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({profile_key: 'deep_reading', system: document.getElementById('system-prompt').value, instruction: newPrompt}) });
                 const result = await resp.json(); statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = result.status === 'ok' ? `✅ 已应用 ${questions.length} 个问题并保存` : '❌ ' + result.message;
+                if (result.prompt_profiles) promptProfiles = result.prompt_profiles;
             } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
         }
 
         async function savePrompts() {
             const statusEl = document.getElementById('prompt-status');
-            try { const resp = await fetch('/api/prompts', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({system_prompt: document.getElementById('system-prompt').value, user_prompt: document.getElementById('user-prompt').value}) });
+            try { const resp = await fetch('/api/prompts', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({profile_key: currentPromptProfile, system: document.getElementById('system-prompt').value, instruction: document.getElementById('user-prompt').value}) });
                 const result = await resp.json(); statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+                if (result.prompt_profiles) promptProfiles = result.prompt_profiles;
             } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
         }
 
         async function resetPrompts() {
             if (!confirm('确定恢复默认 Prompt？')) return;
             const statusEl = document.getElementById('prompt-status');
-            try { const resp = await fetch('/api/prompts'); const data = await resp.json(); document.getElementById('system-prompt').value = data.system_prompt || ''; document.getElementById('user-prompt').value = data.user_prompt || ''; statusEl.className = 'action-status info'; statusEl.textContent = '已恢复为当前保存的 Prompt';
+            try { const resp = await fetch('/api/prompts'); const data = await resp.json(); renderPrompts(data); statusEl.className = 'action-status info'; statusEl.textContent = '已恢复为当前保存的 Prompt';
             } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
         }
 

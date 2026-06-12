@@ -9,7 +9,7 @@
 这是一个**AI 论文数据库**系统，核心功能：
 
 1. 从 arXiv 抓取论文（cs.RO 等分类）
-2. 调用 AI 生成标签、评级、中文摘要、Q&A 深度阅读
+2. 调用 AI 生成标签、评级、中文摘要，并按需补充 Q&A 深度阅读
 3. 存入 SQLite 数据库
 4. 提供 Web 界面浏览、搜索、筛选
 
@@ -58,13 +58,14 @@ analyzer.analyze_pending_papers(limit, concurrency)
   → insert_analysis() 写入 analysis 表
 ```
 
-### 3. 完整分析流程（单篇）
+### 3. 深度阅读流程（单篇）
 
 ```
 analyzer.analyze_paper_full(paper_data)
   → get_paper_full_text() 下载 PDF 提取全文
-  → 调用 OpenAI API（含 Q&A 问题）
-  → 解析 JSON：{qa_analysis, tags, rating, summary_cn, value_comment}
+  → 调用 OpenAI API（只生成 Q&A）
+  → 解析 JSON：{qa_analysis}
+  → update_analysis() 仅更新 qa_analysis
 ```
 
 ### 4. 定时任务流程
@@ -130,8 +131,10 @@ if "new_column" not in columns:
 
 | 模式 | 函数 | PDF | Q&A | 使用场景 |
 |------|------|-----|-----|----------|
-| 基础 | `analyze_paper_basic()` | ❌ | ❌ | 批量分析、定时任务 |
-| 完整 | `analyze_paper_full()` | ✅ | ✅ | 单篇论文详情页 |
+| 基础 | `analyze_paper_basic()` | ❌ | ❌ | 批量分析、定时任务；使用 `basic_analysis` 任务模型 |
+| 深度阅读 | `analyze_paper_full()` | ✅ | ✅ | 单篇论文详情页；使用 `deep_reading` 任务模型且不截断 PDF 全文，只补充 Q&A |
+
+Prompt 已拆为 `prompt_profiles`。稳定 instruction 放在前缀，论文标题、摘要、PDF 全文等动态内容作为最后一条 JSON message 传入，以提高 prompt cache 命中率。
 
 ---
 
@@ -161,7 +164,7 @@ if "new_column" not in columns:
 ### 场景 4：修改 AI 分析逻辑
 
 1. 基础分析：修改 `analyzer.py` 的 `analyze_paper_basic()`
-2. 完整分析：修改 `analyze_paper_full()`
+2. 深度阅读：修改 `analyze_paper_full()`
 3. Prompt：在 `settings.py` 的 `DEFAULT_SETTINGS` 中修改默认值，或通过 Web 设置页修改
 
 ### 场景 5：添加新的筛选条件

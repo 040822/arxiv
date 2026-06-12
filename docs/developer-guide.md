@@ -193,7 +193,9 @@ CREATE TABLE reading_list (
 |--------|------|
 | `active_provider` | 当前激活的 AI 供应商 |
 | `providers` | 供应商配置（API key、model、参数开关、思考模式、模型缓存等） |
-| `prompts` | system/user prompt 模板 |
+| `ai_tasks` | 基础分析、深度阅读、报告导读的任务级供应商/模型/参数路由 |
+| `prompt_profiles` | 按 AI 功能拆分的稳定 system/instruction prompt |
+| `prompts` | 旧版 system/user prompt 兼容字段，映射到 `deep_reading` |
 | `concurrency` | AI 分析并发数 |
 | `per_page` | 首页每页论文数 |
 | `schedule` | 每日定时任务启用状态和执行时间 |
@@ -203,7 +205,7 @@ CREATE TABLE reading_list (
 
 > **⚠️ 重要：** 在 `load_settings()` 中添加新字段时，必须在合并逻辑中显式添加 `if "key" in migrated: merged["key"] = migrated["key"]`，否则新字段在读取时会丢失！
 
-AI 调用参数统一由 `settings.build_chat_completion_kwargs()` 生成。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，否则会破坏不同供应商的兼容性。
+AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要绕过任务级模型路由。
 
 设置管理密码后，写接口和敏感设置读取接口需要登录；供应商列表接口只能返回脱敏后的 `api_key_masked`。
 

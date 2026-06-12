@@ -78,6 +78,7 @@
                 <label>分析数量上限</label>
                 <input type="number" id="analyze-limit" min="1" max="10000" value="50">
             </div>
+            <p class="section-desc">超过 20 篇时请留意 API 账单；基础分析会使用设置页中的“基础分析”任务模型。</p>
             <div class="settings-actions">
                 <button class="action-btn btn-primary" onclick="runAnalyze(this)">🤖 开始分析</button>
             </div>
@@ -102,6 +103,10 @@
                 <div class="form-group" style="flex:1;">
                     <label>指定日期（留空则生成最新日期的报告）</label>
                     <input type="date" id="report-date">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label><input type="checkbox" id="report-ai-summary" style="margin-right:6px;">生成 AI 导读</label>
+                    <p class="section-desc">默认不调用 LLM；勾选后使用“报告导读”任务模型额外生成一段摘要。</p>
                 </div>
             </div>
             <div class="action-buttons">
@@ -308,7 +313,8 @@
             btn.disabled = true;
             btn.textContent = '⏳ 分析中...';
             statusEl.className = 'action-status info';
-            statusEl.textContent = '正在分析...';
+            const limitNum = parseInt(limit) || 0;
+            statusEl.textContent = limitNum > 20 ? '正在分析... 数量较大，请留意 API 用量' : '正在分析...';
 
             const taskId = 'analyze_' + Date.now();
             const eventSource = new EventSource('/api/progress/' + taskId);
@@ -354,6 +360,7 @@
             try {
                 const params = new URLSearchParams();
                 if (date) params.set('date', date);
+                if (document.getElementById('report-ai-summary').checked) params.set('ai_summary', '1');
                 const resp = await fetch('/api/generate?' + params.toString(), { method: 'POST' });
                 const data = await resp.json();
                 statusEl.className = data.status === 'ok' ? 'action-status success' : 'action-status error';

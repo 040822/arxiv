@@ -150,6 +150,7 @@ POST /api/generate
 | 参数（Query） | 类型 | 说明 |
 |---------------|------|------|
 | `date` | string | 指定日期（留空使用最新日期） |
+| `ai_summary` | bool | 传 `1/true` 时使用 `report_summary` 任务模型生成 AI 导读；默认不调用 LLM |
 
 ### 一键执行
 
@@ -262,13 +263,13 @@ DELETE /api/paper/<arxiv_id>
 
 级联删除关联的 analysis 和 reading_list 记录。
 
-### 重新分析（完整模式）
+### 重新生成深度阅读
 
 ```
 POST /api/paper/<arxiv_id>/reanalyze
 ```
 
-下载 PDF，进行完整 AI 分析（含 Q&A 深度阅读）。
+下载 PDF，生成/刷新 Q&A 深度阅读；不会覆盖已有标签、评级、中文摘要和简评。
 
 ### 添加指定论文
 
@@ -284,7 +285,7 @@ Body (JSON)：
 }
 ```
 
-支持 arXiv ID、PDF 链接、摘要页面链接。自动获取论文信息并进行完整分析。
+支持 arXiv ID、PDF 链接、摘要页面链接。自动获取论文信息，先做基础分析，再补充 Q&A 深度阅读。
 
 ### 批量操作
 
@@ -405,13 +406,28 @@ GET  /api/prompts                # 获取 prompt
 POST /api/prompts                # 保存 prompt
 ```
 
-保存时会校验用户 Prompt 是否包含 `{title}`、`{authors}`、`{abstract}`、`{tag_candidates}`、`{rating_criteria}`。JSON 示例中的普通大括号需要写成 `{{` 和 `}}`。
+`GET /api/prompts` 会返回旧版兼容字段 `system_prompt/user_prompt`，以及新版 `prompt_profiles`。
+
+新版保存单个 Prompt Profile：
+
+```json
+{
+  "profile_key": "deep_reading",
+  "system": "...",
+  "instruction": "...{tag_candidates}...{rating_criteria}..."
+}
+```
+
+旧版 `system_prompt/user_prompt` 保存仍可用，会映射到 `deep_reading`，并继续校验 `{title}`、`{authors}`、`{abstract}`、`{tag_candidates}`、`{rating_criteria}`。新版 Profile 中论文动态内容不写入 instruction，而是由后端作为最后一条 JSON message 传入。
 
 ### 配置管理
 
 ```
 POST /api/settings/concurrency   # 保存并发数（1-20）
 POST /api/settings/per_page      # 保存每页数量（5-100）
+GET  /api/settings/ai-tasks      # 获取 AI 功能模型路由
+POST /api/settings/ai-tasks      # 保存 AI 功能模型路由
+GET  /api/settings/ai-usage      # 获取近期 LLM token 用量汇总
 GET  /api/settings/schedule      # 获取每日定时任务配置
 POST /api/settings/schedule      # 保存每日定时任务配置并重建 APScheduler job
 GET  /api/settings/proxy         # 获取代理配置
@@ -431,6 +447,14 @@ POST /api/settings/fetch         # 保存抓取配置
 ```
 
 保存后会立即重建 APScheduler 中的每日任务。未设置 `data/settings.json.schedule` 时，首次默认值来自 `config.py` 的 `SCHEDULE_HOUR/SCHEDULE_MINUTE`。
+
+`GET/POST /api/settings/ai-tasks` 的任务 key 固定为：
+
+- `basic_analysis`：批量/自动基础分析，建议廉价模型
+- `deep_reading`：单篇 Q&A 深度阅读，默认可启用 high 思考，不覆盖基础分析字段
+- `report_summary`：报告 AI 导读，只在生成报告时显式启用
+
+每个任务支持独立的 `provider_key`、`model`、`is_thinking`、`thinking_effort`、`max_tokens_enabled/max_tokens`、`temperature/top_p/presence_penalty/frequency_penalty` 及其启用开关。
 
 ### 数据库信息
 

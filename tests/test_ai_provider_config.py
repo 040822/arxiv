@@ -1,4 +1,5 @@
 import os
+import json
 import tempfile
 import sys
 import types
@@ -101,6 +102,136 @@ class ProviderRequestBuilderTests(unittest.TestCase):
 
         self.assertNotIn("extra_body", kwargs)
         self.assertNotIn("temperature", kwargs)
+
+
+class AiTaskSettingsTests(unittest.TestCase):
+    def test_legacy_settings_get_default_task_routes_and_profiles(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            settings.DB_DIR = tmp
+            settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+            with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump({
+                    "active_provider": "cheap",
+                    "providers": {
+                        "cheap": {
+                            "name": "Cheap",
+                            "api_key": "sk-cheap",
+                            "base_url": "https://api.example.com/v1",
+                            "model": "cheap-model",
+                        }
+                    },
+                    "prompts": {
+                        "system_prompt": "legacy system",
+                        "user_prompt": "legacy user {title} {authors} {abstract} {tag_candidates} {rating_criteria}",
+                    },
+                }, f)
+
+            loaded = settings.load_settings()
+
+        settings.DB_DIR = original_dir
+        settings.SETTINGS_PATH = original_path
+
+        self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["provider_key"], "cheap")
+        self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["max_tokens"], 1200)
+        self.assertFalse(loaded["ai_tasks"]["basic_analysis"]["is_thinking"])
+        self.assertEqual(loaded["ai_tasks"]["deep_reading"]["thinking_effort"], "high")
+        self.assertTrue(loaded["ai_tasks"]["deep_reading"]["is_thinking"])
+        self.assertEqual(loaded["prompt_profiles"]["deep_reading"]["system"], "legacy system")
+
+    def test_task_config_merges_provider_credentials_and_task_overrides(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            settings.DB_DIR = tmp
+            settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+            with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump({
+                    "active_provider": "cheap",
+                    "providers": {
+                        "cheap": {
+                            "name": "Cheap",
+                            "api_key": "sk-cheap",
+                            "base_url": "https://api.example.com/v1",
+                            "model": "cheap-model",
+                        },
+                        "smart": {
+                            "name": "Smart",
+                            "api_key": "sk-smart",
+                            "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                            "model": "qwen3-smart",
+                        },
+                    },
+                    "ai_tasks": {
+                        "deep_reading": {
+                            "provider_key": "smart",
+                            "model": "qwen3-smart",
+                            "is_thinking": True,
+                            "thinking_effort": "high",
+                            "temperature_enabled": True,
+                            "max_tokens_enabled": True,
+                            "max_tokens": 6000,
+                        }
+                    },
+                }, f)
+
+            cfg = settings.get_ai_task_config("deep_reading")
+
+        settings.DB_DIR = original_dir
+        settings.SETTINGS_PATH = original_path
+
+        self.assertEqual(cfg["api_key"], "sk-smart")
+        self.assertEqual(cfg["provider_key"], "smart")
+        self.assertEqual(cfg["model"], "qwen3-smart")
+        kwargs = build_chat_completion_kwargs(cfg, [{"role": "user", "content": "hi"}])
+        self.assertNotIn("temperature", kwargs)
+        self.assertEqual(kwargs["extra_body"]["thinking_budget"], 8192)
+        self.assertEqual(kwargs["max_tokens"], 6000)
+
+    def test_legacy_deep_reading_prompt_migrates_to_qa_only(self):
+        import settings
+
+        legacy_prompt = """请对论文内容进行深度阅读分析，按 Q&A 格式详细回答每个问题，然后给出标签、评级、中文摘要和价值评价。
+
+请严格返回合法 JSON，不要返回额外解释：
+
+{
+  "qa_analysis": "### Q1: 自定义问题？\\n\\n详细回答...",
+  "tags": ["标签1", "标签2"],
+  "rating": 3,
+  "summary_cn": "中文摘要",
+  "value_comment": "价值评价"
+}
+
+标签选择指南：
+{tag_candidates}
+
+{rating_criteria}
+"""
+        profiles = settings._normalize_prompt_profiles({
+            "deep_reading": {"system": "s", "instruction": legacy_prompt}
+        })
+        instruction = profiles["deep_reading"]["instruction"]
+
+        self.assertIn("自定义问题？", instruction)
+        self.assertIn('"qa_analysis"', instruction)
+        for text in ('"tags"', '"rating"', '"summary_cn"', '"value_comment"', "{tag_candidates}", "{rating_criteria}"):
+            self.assertNotIn(text, instruction)
+
+    def test_custom_deep_reading_prompt_is_preserved(self):
+        import settings
+
+        custom_prompt = '请按我自己的结构返回 {"qa_analysis": "详细内容"}，并重点分析机器人实验。'
+        profiles = settings._normalize_prompt_profiles({
+            "deep_reading": {"system": "s", "instruction": custom_prompt}
+        })
+
+        self.assertEqual(profiles["deep_reading"]["instruction"], custom_prompt)
 
 
 class DummyOpenAI:
@@ -400,6 +531,178 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         configure_daily_job.assert_called_once_with(schedule)
 
+    def test_generate_report_default_does_not_call_ai_summary(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest({}, endpoint="api_generate", method="POST", path="/api/generate")
+
+        with patch.object(app_module, "start_task_log", return_value=1), \
+             patch.object(app_module, "finish_task_log"), \
+             patch.object(app_module, "get_all_dates", return_value=[("2026-01-01",)]), \
+             patch.object(app_module, "generate_report_ai_summary") as ai_summary, \
+             patch.object(app_module, "generate_report_content", return_value=("html", 2, 1, 4.0)) as report_content, \
+             patch.object(app_module, "save_report") as save_report:
+            result = app_module.api_generate()
+
+        self.assertEqual(result["status"], "ok")
+        ai_summary.assert_not_called()
+        report_content.assert_called_once_with("2026-01-01", ai_summary=None)
+        save_report.assert_called_once()
+
+    def test_generate_report_with_ai_summary_calls_report_task(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest(
+            {},
+            endpoint="api_generate",
+            method="POST",
+            path="/api/generate",
+            args={"date": "2026-01-01", "ai_summary": "1"},
+        )
+
+        with patch.object(app_module, "start_task_log", return_value=1), \
+             patch.object(app_module, "finish_task_log"), \
+             patch.object(app_module, "generate_report_ai_summary", return_value=("导读", None)) as ai_summary, \
+             patch.object(app_module, "generate_report_content", return_value=("html", 2, 1, 4.0)) as report_content, \
+             patch.object(app_module, "save_report"):
+            result = app_module.api_generate()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["ai_summary"])
+        ai_summary.assert_called_once_with("2026-01-01")
+        report_content.assert_called_once_with("2026-01-01", ai_summary="导读")
+
+    def test_reanalyze_updates_only_qa_analysis(self):
+        app_module = self.app_module
+        paper = {
+            "id": 9,
+            "arxiv_id": "2601.00009",
+            "authors": "[]",
+            "categories": "[]",
+        }
+        deep_result = {
+            "qa_analysis": "### Q1: deep",
+            "tags": ["should-not-write"],
+            "rating": 1,
+            "summary_cn": "should-not-write",
+            "value_comment": "should-not-write",
+        }
+
+        with patch.object(app_module, "get_paper_by_arxiv_id", return_value=paper), \
+             patch.object(app_module, "analyze_paper_full", return_value=(paper, deep_result, None)), \
+             patch.object(app_module, "update_analysis") as update_analysis:
+            result = app_module.api_reanalyze_paper("2601.00009")
+
+        self.assertEqual(result["status"], "ok")
+        update_analysis.assert_called_once_with(9, {"qa_analysis": "### Q1: deep"})
+
+    def test_add_paper_runs_basic_then_deep_reading(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest({"input": "2601.00010", "task_id": "t1"})
+        paper = {
+            "id": 10,
+            "arxiv_id": "2601.00010",
+            "title": "New Paper",
+            "authors": '["Alice"]',
+            "categories": '["cs.RO"]',
+            "abstract": "Abstract",
+            "pdf_url": "https://arxiv.org/pdf/2601.00010",
+        }
+        basic_result = {"tags": ["VLA"], "summary_cn": "摘要", "summary_en": "", "rating": 4, "value_comment": "有价值"}
+        deep_result = {"qa_analysis": "### Q1: deep"}
+        events = []
+
+        def fake_basic(paper_data):
+            events.append("basic")
+            return paper_data, basic_result, None
+
+        def fake_insert(paper_id, result):
+            events.append("insert")
+            self.assertEqual(paper_id, 10)
+            self.assertEqual(result, basic_result)
+            return 1
+
+        def fake_deep(paper_data):
+            events.append("deep")
+            return paper_data, deep_result, None
+
+        def fake_update(paper_id, result):
+            events.append("update")
+            self.assertEqual(paper_id, 10)
+            self.assertEqual(result, {"qa_analysis": "### Q1: deep"})
+            return True
+
+        with patch.object(app_module, "parse_arxiv_id", return_value="2601.00010"), \
+             patch.object(app_module, "fetch_paper_by_id", return_value=paper), \
+             patch.object(app_module, "get_analysis_by_paper_id", return_value=None), \
+             patch.object(app_module, "analyze_paper_basic", side_effect=fake_basic), \
+             patch.object(app_module, "insert_analysis", side_effect=fake_insert), \
+             patch.object(app_module, "analyze_paper_full", side_effect=fake_deep), \
+             patch.object(app_module, "update_analysis", side_effect=fake_update):
+            result = app_module.api_add_paper()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["rating"], 4)
+        self.assertEqual(result["tags"], ["VLA"])
+        self.assertEqual(events, ["basic", "insert", "deep", "update"])
+
+
+class AiCallRoutingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        install_import_stubs()
+        import analyzer
+        cls.analyzer = analyzer
+
+    def test_basic_analysis_uses_short_profile_without_qa(self):
+        paper = {
+            "id": 1,
+            "arxiv_id": "2601.00001",
+            "title": "A Robot Paper",
+            "authors": ["Alice", "Bob"],
+            "abstract": "This is the abstract.",
+        }
+        fake_result = {"tags": ["VLA"], "rating": 4, "summary_cn": "摘要", "value_comment": "有价值"}
+
+        with patch.object(self.analyzer, "_call_ai", return_value=(fake_result, None)) as call:
+            _, result, error = self.analyzer.analyze_paper_basic(paper)
+
+        self.assertIsNone(error)
+        self.assertEqual(result["tags"], ["VLA"])
+        messages, _, task_key = call.call_args.args
+        self.assertEqual(task_key, "basic_analysis")
+        self.assertNotIn("qa_analysis", messages[1]["content"])
+        self.assertIn('"abstract": "This is the abstract."', messages[2]["content"])
+
+    def test_deep_reading_uses_full_pdf_without_text_limit(self):
+        paper = {
+            "id": 1,
+            "arxiv_id": "2601.00001",
+            "title": "A Robot Paper",
+            "authors": ["Alice"],
+            "abstract": "Abstract",
+            "pdf_url": "https://arxiv.org/pdf/2601.00001",
+        }
+        fake_result = {
+            "qa_analysis": "### Q1: ...",
+            "tags": ["Robot"],
+            "rating": 5,
+            "summary_cn": "摘要",
+            "value_comment": "很强",
+        }
+
+        with patch.object(self.analyzer, "get_paper_full_text", return_value="FULL PDF TEXT") as full_text, \
+             patch.object(self.analyzer, "_call_ai", return_value=(fake_result, None)) as call:
+            _, result, error = self.analyzer.analyze_paper_full(paper)
+
+        self.assertIsNone(error)
+        self.assertIn("qa_analysis", result)
+        self.assertEqual(set(result.keys()), {"qa_analysis"})
+        full_text.assert_called_once_with("https://arxiv.org/pdf/2601.00001", "2601.00001", max_chars=None)
+        messages, _, task_key = call.call_args.args
+        self.assertEqual(task_key, "deep_reading")
+        for text in ('"tags"', '"rating"', '"summary_cn"', '"value_comment"', "{tag_candidates}", "{rating_criteria}"):
+            self.assertNotIn(text, messages[1]["content"])
+        self.assertIn('"paper_text": "FULL PDF TEXT"', messages[2]["content"])
+
 
 class PromptAndReportSafetyTests(unittest.TestCase):
     def test_prompt_validation_rejects_missing_required_field(self):
@@ -411,6 +714,14 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         ok, message = validate_prompt_template("{title}\n{\"rating\": 3}\n{authors}\n{abstract}\n{tag_candidates}\n{rating_criteria}")
         self.assertFalse(ok)
         self.assertIn("Prompt", message)
+
+    def test_profile_prompt_validation_allows_deep_reading_without_basic_fields(self):
+        ok, message = validate_prompt_template('{"qa_analysis": "### Q1: answer"}', profile_key="deep_reading")
+        self.assertTrue(ok, message)
+
+        ok, message = validate_prompt_template("只做基础分析", profile_key="basic_analysis")
+        self.assertFalse(ok)
+        self.assertIn("{tag_candidates}", message)
 
     def test_report_generation_escapes_database_content(self):
         import database
@@ -451,6 +762,35 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         self.assertIn("&lt;b&gt;bad&lt;/b&gt;", content)
         self.assertNotIn("<script>", content)
         self.assertNotIn("<img", content)
+
+    def test_ai_usage_log_records_and_summarizes_tokens(self):
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            database.DB_DIR = tmp
+            database.DB_PATH = os.path.join(tmp, "papers.db")
+            database.init_db()
+            database.record_ai_usage({
+                "task_key": "basic_analysis",
+                "provider_key": "cheap",
+                "provider_name": "Cheap",
+                "model": "cheap-model",
+                "arxiv_id": "2601.00001",
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "total_tokens": 120,
+                "cached_tokens": 50,
+            })
+            summary = database.get_ai_usage_summary(days=7)
+
+        database.DB_DIR = original_dir
+        database.DB_PATH = original_path
+
+        self.assertEqual(summary["items"][0]["task_key"], "basic_analysis")
+        self.assertEqual(summary["items"][0]["total_tokens"], 120)
+        self.assertEqual(summary["items"][0]["cached_tokens"], 50)
 
 
 class FetchBatchTests(unittest.TestCase):

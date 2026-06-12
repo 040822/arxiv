@@ -4,11 +4,11 @@ AI 论文分析模块
 本模块负责调用 OpenAI 兼容 API 对 arXiv 论文进行深度阅读分析。
 支持两种分析模式：
   - 基础分析（basic）：仅使用论文摘要，生成标签、评级和中文翻译，不含 Q&A 深度阅读
-  - 完整分析（full）：下载 PDF 提取全文，生成包含 Q&A 深度阅读的完整分析报告
+  - 深度阅读（full）：下载 PDF 提取全文，只生成 Q&A 深度阅读，不覆盖基础分析字段
 
 核心流程：
   1. 从数据库获取未分析的论文
-  2. 构建 prompt（系统提示 + 用户提示，包含论文信息和标签候选）
+  2. 构建 prompt（稳定任务说明 + 动态论文 JSON）
   3. 并发调用 AI API 进行分析
   4. 解析 JSON 响应并写入数据库
 """
@@ -18,8 +18,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 from config import TAG_CANDIDATES, RATING_CRITERIA
-from settings import build_chat_completion_kwargs, get_ai_config, get_prompts, get_concurrency
-from database import insert_analysis, get_unanalyzed_papers
+from settings import build_chat_completion_kwargs, get_ai_config, get_ai_task_config, get_prompt_profile, get_concurrency
+from database import get_connection, insert_analysis, get_unanalyzed_papers, record_ai_usage
 from pdf_reader import get_paper_full_text
 
 # 模块级日志记录器
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # 客户端初始化
 # ============================================================
 
-def get_openai_client():
+def get_openai_client(cfg=None):
     """
     创建并返回 OpenAI 客户端实例。
 
@@ -41,7 +41,7 @@ def get_openai_client():
     Returns:
         OpenAI: 配置好的 OpenAI 客户端实例
     """
-    cfg = get_ai_config()
+    cfg = cfg or get_ai_config()
     return OpenAI(
         api_key=cfg["api_key"],
         base_url=cfg["base_url"],
@@ -93,9 +93,112 @@ def _clean_json_content(content):
     return content
 
 
-def _call_ai(system_prompt, user_prompt, paper_data, include_qa=False):
+def _value(obj, key, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _int_value(obj, key):
+    try:
+        return int(_value(obj, key, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _extract_usage(response):
+    """从 OpenAI SDK 响应中提取 token 用量，兼容 dict 和对象响应。"""
+    usage = _value(response, "usage", {}) or {}
+    prompt_tokens = _int_value(usage, "prompt_tokens")
+    completion_tokens = _int_value(usage, "completion_tokens")
+    total_tokens = _int_value(usage, "total_tokens")
+    details = _value(usage, "prompt_tokens_details", None) or _value(usage, "input_tokens_details", None) or {}
+    cached_tokens = _int_value(details, "cached_tokens") or _int_value(details, "cache_read_input_tokens")
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "cached_tokens": cached_tokens,
+    }
+
+
+def _record_usage(task_key, cfg, paper_data, response):
+    """记录一次 AI 调用的 token 用量；失败不影响主流程。"""
+    try:
+        usage = _extract_usage(response)
+        record_ai_usage({
+            "task_key": task_key,
+            "provider_key": cfg.get("provider_key", ""),
+            "provider_name": cfg.get("provider_name", ""),
+            "model": cfg.get("model", ""),
+            "paper_id": paper_data.get("id"),
+            "arxiv_id": paper_data.get("arxiv_id", ""),
+            **usage,
+        })
+    except Exception as e:
+        logger.debug(f"Failed to record AI usage: {e}")
+
+
+def _authors_text(paper_data):
+    authors = paper_data.get("authors", "")
+    if isinstance(authors, list):
+        return ", ".join(authors)
+    return authors
+
+
+def _render_instruction(instruction):
+    """渲染稳定 prompt 前缀；论文动态数据会放在单独 message 中。"""
+    return (instruction or "").replace(
+        "{tag_candidates}",
+        ", ".join(TAG_CANDIDATES[:30]),
+    ).replace(
+        "{rating_criteria}",
+        RATING_CRITERIA,
+    )
+
+
+def _build_task_messages(task_key, payload):
+    profile = get_prompt_profile(task_key)
+    return [
+        {"role": "system", "content": profile.get("system", "")},
+        {"role": "user", "content": _render_instruction(profile.get("instruction", ""))},
+        {
+            "role": "user",
+            "content": "动态输入数据（JSON，固定字段顺序）：\n" + json.dumps(payload, ensure_ascii=False, indent=2),
+        },
+    ]
+
+
+def _normalise_analysis_result(result):
+    """校验并补齐基础分析结果字段。"""
+    if "tags" not in result or not isinstance(result["tags"], list):
+        result["tags"] = ["Unknown"]
+    if "summary_cn" not in result:
+        result["summary_cn"] = ""
+    if "summary_en" not in result:
+        result["summary_en"] = ""
+    if "rating" not in result or not isinstance(result["rating"], int):
+        result["rating"] = 0
+    if "value_comment" not in result:
+        result["value_comment"] = ""
+    result["rating"] = max(0, min(5, result["rating"]))
+    result.pop("qa_analysis", None)
+    return result
+
+
+def _normalise_deep_reading_result(result):
+    """深度阅读只保留 Q&A，避免覆盖基础分析字段。"""
+    qa_analysis = ""
+    if isinstance(result, dict):
+        qa_analysis = result.get("qa_analysis", "")
+    if not isinstance(qa_analysis, str):
+        qa_analysis = json.dumps(qa_analysis, ensure_ascii=False)
+    return {"qa_analysis": qa_analysis.strip()}
+
+
+def _call_ai(messages, paper_data, task_key):
     """
-    核心 AI 调用函数：发送 prompt 到 AI API 并解析返回的 JSON 结果。
+    核心 AI 调用函数：按任务配置发送 messages 到 AI API 并解析 JSON。
 
     该函数是所有分析模式的底层实现，负责：
       1. 构建 API 请求参数（模型、消息、温度、最大 token 数）
@@ -105,64 +208,36 @@ def _call_ai(system_prompt, user_prompt, paper_data, include_qa=False):
       5. 根据分析模式决定是否保留 Q&A 内容
 
     Args:
-        system_prompt (str): 系统提示，定义 AI 的角色和输出格式要求
-        user_prompt (str): 用户提示，包含论文的具体信息（标题、作者、摘要/全文等）
+        messages (list): OpenAI Chat Completions 消息列表
         paper_data (dict): 论文数据字典，至少包含 'arxiv_id' 和 'id' 字段
-        include_qa (bool): 是否保留 Q&A 深度阅读内容。基础分析为 False，完整分析为 True
+        task_key (str): basic_analysis/deep_reading/report_summary
 
     Returns:
         tuple: (result, error)
-            - result (dict | None): 成功时返回解析后的分析结果，包含字段：
-                tags, summary_cn, summary_en, rating, value_comment, qa_analysis
+            - result (dict | None): 成功时返回解析后的 JSON 字典
             - error (str | None): 失败时返回错误信息字符串
     """
-    # 获取 OpenAI 客户端和当前供应商配置
-    client = get_openai_client()
-    cfg = get_ai_config()
+    cfg = get_ai_task_config(task_key)
+    client = get_openai_client(cfg)
 
     try:
-        messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-        ]
         kwargs = build_chat_completion_kwargs(cfg, messages)
 
         # 调用 AI API：请求参数由 settings.build_chat_completion_kwargs 统一处理
         response = client.chat.completions.create(**kwargs)
+        _record_usage(task_key, cfg, paper_data, response)
 
-        # 提取响应文本内容并去除首尾空白
-        content = (response.choices[0].message.content or "").strip()
+        # 提取响应文本内容并去除首尾空白，兼容 SDK 对象和测试中的 dict
+        choices = _value(response, "choices", []) or []
+        first_choice = choices[0] if choices else {}
+        message = _value(first_choice, "message", {}) or {}
+        content = (_value(message, "content", "") or "").strip()
 
         # 清理 AI 返回的 JSON 内容
         content = _clean_json_content(content)
 
         # 解析 JSON 响应
         result = json.loads(content)
-
-        # ---- 字段校验与默认值补全 ----
-        # 确保 tags 字段存在且为列表，否则标记为 Unknown
-        if "tags" not in result or not isinstance(result["tags"], list):
-            result["tags"] = ["Unknown"]
-        # 确保中文翻译字段存在
-        if "summary_cn" not in result:
-            result["summary_cn"] = ""
-        # 确保英文摘要字段存在
-        if "summary_en" not in result:
-            result["summary_en"] = ""
-        # 确保评级字段存在且为整数
-        if "rating" not in result or not isinstance(result["rating"], int):
-            result["rating"] = 0
-        # 确保价值评价字段存在
-        if "value_comment" not in result:
-            result["value_comment"] = ""
-
-        # 评级范围限制：强制约束在 0-5 星之间
-        result["rating"] = max(0, min(5, result["rating"]))
-
-        # 基础分析模式下移除 Q&A 内容（基础分析不需要深度阅读）
-        if not include_qa:
-            result.pop("qa_analysis", None)
-
         return result, None
 
     # JSON 解析失败：AI 返回的内容不是有效 JSON
@@ -176,7 +251,7 @@ def _call_ai(system_prompt, user_prompt, paper_data, include_qa=False):
 
 
 # ============================================================
-# 分析模式：基础分析与完整分析
+# 分析模式：基础分析与深度阅读
 # ============================================================
 
 def analyze_paper_basic(paper_data):
@@ -194,39 +269,25 @@ def analyze_paper_basic(paper_data):
     Returns:
         tuple: (paper_data, result, error) — 原始论文数据透传
     """
-    # 获取 prompt 模板
-    prompts = get_prompts()
-    system_prompt = prompts.get("system_prompt", "")
-    user_prompt = prompts.get("user_prompt", "")
-
-    # 处理作者字段：如果是列表则转为逗号分隔的字符串
-    authors = paper_data["authors"]
-    if isinstance(authors, list):
-        authors = ", ".join(authors)
-
-    # 基础分析仅使用摘要
-    abstract = paper_data.get("abstract", "")
-
-    # 格式化用户提示：填充论文信息、标签候选（取前30个）和评级标准
-    formatted_user = user_prompt.format(
-        title=paper_data["title"],
-        authors=authors,
-        abstract=abstract,
-        tag_candidates=", ".join(TAG_CANDIDATES[:30]),
-        rating_criteria=RATING_CRITERIA,
-    )
-
-    # 调用 AI，不包含 Q&A 深度阅读
-    result, error = _call_ai(system_prompt, formatted_user, paper_data, include_qa=False)
+    payload = {
+        "arxiv_id": paper_data.get("arxiv_id", ""),
+        "title": paper_data.get("title", ""),
+        "authors": _authors_text(paper_data),
+        "abstract": paper_data.get("abstract", ""),
+    }
+    messages = _build_task_messages("basic_analysis", payload)
+    result, error = _call_ai(messages, paper_data, "basic_analysis")
+    if result:
+        result = _normalise_analysis_result(result)
     return paper_data, result, error
 
 
 def analyze_paper_full(paper_data):
     """
-    完整分析模式：下载 PDF 并提取全文进行深度 AI 分析。
+    深度阅读模式：下载 PDF 并提取全文进行 Q&A 分析。
 
     该模式会尝试下载论文 PDF 并提取全文内容。如果 PDF 下载或提取失败，
-    自动回退到使用摘要进行分析。分析结果包含完整的 Q&A 深度阅读。
+    自动回退到使用摘要进行分析。分析结果只包含 Q&A 深度阅读。
 
     Args:
         paper_data (dict): 论文数据字典，需包含：
@@ -235,17 +296,12 @@ def analyze_paper_full(paper_data):
     Returns:
         tuple: (paper_data, result, error) — 原始论文数据透传
     """
-    # 获取 prompt 模板
-    prompts = get_prompts()
-    system_prompt = prompts.get("system_prompt", "")
-    user_prompt = prompts.get("user_prompt", "")
-
     # 尝试下载 PDF 并提取全文
     pdf_url = paper_data.get("pdf_url", "")
     arxiv_id = paper_data.get("arxiv_id", "")
     full_text = None
     if pdf_url and arxiv_id:
-        full_text = get_paper_full_text(pdf_url, arxiv_id)
+        full_text = get_paper_full_text(pdf_url, arxiv_id, max_chars=None)
 
     # 优先使用 PDF 全文，提取失败时回退到摘要
     if full_text:
@@ -253,23 +309,78 @@ def analyze_paper_full(paper_data):
     else:
         abstract_or_text = paper_data.get("abstract", "")
 
-    # 处理作者字段
-    authors = paper_data["authors"]
-    if isinstance(authors, list):
-        authors = ", ".join(authors)
-
-    # 格式化用户提示（变量名虽为 abstract，实际可能是论文全文）
-    formatted_user = user_prompt.format(
-        title=paper_data["title"],
-        authors=authors,
-        abstract=abstract_or_text,
-        tag_candidates=", ".join(TAG_CANDIDATES[:30]),
-        rating_criteria=RATING_CRITERIA,
-    )
-
-    # 调用 AI，包含 Q&A 深度阅读
-    result, error = _call_ai(system_prompt, formatted_user, paper_data, include_qa=True)
+    payload = {
+        "arxiv_id": paper_data.get("arxiv_id", ""),
+        "title": paper_data.get("title", ""),
+        "authors": _authors_text(paper_data),
+        "abstract": paper_data.get("abstract", ""),
+        "paper_text": abstract_or_text,
+        "used_pdf_full_text": bool(full_text),
+    }
+    messages = _build_task_messages("deep_reading", payload)
+    result, error = _call_ai(messages, paper_data, "deep_reading")
+    if result:
+        result = _normalise_deep_reading_result(result)
     return paper_data, result, error
+
+
+def _get_report_summary_context(report_date, limit=30):
+    """读取报告导读所需的轻量论文上下文，避免把全文再次送给模型。"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT p.arxiv_id, p.title, p.authors, p.categories, a.tags, a.rating, a.value_comment, a.summary_cn
+        FROM papers p
+        LEFT JOIN analysis a ON p.id = a.paper_id
+        WHERE p.published_date = ?
+        ORDER BY COALESCE(a.rating, 0) DESC, p.arxiv_id
+        LIMIT ?
+    """, (report_date, limit))
+    rows = cursor.fetchall()
+    conn.close()
+
+    papers = []
+    for row in rows:
+        item = dict(row)
+        for field in ("authors", "categories", "tags"):
+            if item.get(field) and isinstance(item[field], str):
+                try:
+                    item[field] = json.loads(item[field])
+                except json.JSONDecodeError:
+                    item[field] = []
+        papers.append({
+            "arxiv_id": item.get("arxiv_id", ""),
+            "title": item.get("title", ""),
+            "authors": item.get("authors") or [],
+            "categories": item.get("categories") or [],
+            "tags": item.get("tags") or [],
+            "rating": item.get("rating") or 0,
+            "value_comment": item.get("value_comment") or "",
+            "summary_cn": item.get("summary_cn") or "",
+        })
+    return papers
+
+
+def generate_report_ai_summary(report_date):
+    """使用 report_summary 任务模型生成一段可选的日报导读。"""
+    papers = _get_report_summary_context(report_date)
+    if not papers:
+        return None, "无论文数据"
+
+    payload = {
+        "report_date": report_date,
+        "paper_count": len(papers),
+        "papers": papers,
+    }
+    paper_data = {"id": None, "arxiv_id": f"report:{report_date}"}
+    messages = _build_task_messages("report_summary", payload)
+    result, error = _call_ai(messages, paper_data, "report_summary")
+    if error:
+        return None, error
+    summary = (result or {}).get("summary", "")
+    if not summary:
+        return None, "模型未返回 summary 字段"
+    return summary.strip(), None
 
 
 # ============================================================

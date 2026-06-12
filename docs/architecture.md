@@ -77,14 +77,14 @@
   → insert_analysis() 写入 analysis 表
 ```
 
-#### 完整分析（单篇）
+#### 深度阅读（单篇）
 
 ```
 用户点击"生成报告" → app.py /api/paper/<id>/reanalyze → analyzer.py
   → analyze_paper_full(paper_data)
   → pdf_reader.download_pdf() + extract_text()
-  → OpenAI API 调用（含 Q&A）
-  → update_analysis() 更新 analysis 表
+  → OpenAI API 调用（只生成 Q&A）
+  → update_analysis() 仅更新 qa_analysis
 ```
 
 ### 3. 报告生成流
@@ -137,7 +137,7 @@ app.py
 **原因：**
 - 批量分析时下载 PDF 会很慢且容易触发 arXiv 限速
 - 基础分析只用摘要，速度快，适合批量处理
-- 完整分析在用户主动请求时执行，单篇不会太慢
+- 深度阅读在用户主动请求时执行，单篇不会太慢，且不会覆盖基础分析字段
 
 ### 2. SQLite + WAL 模式
 
