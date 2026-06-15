@@ -1189,6 +1189,10 @@ footer {
     margin-bottom: 4px;
 }
 
+.db-stat-value.danger {
+    color: #b42318;
+}
+
 .db-stat-label {
     font-size: 0.8em;
     color: #888;
@@ -1208,6 +1212,10 @@ footer {
 
 .db-stat-wide .db-stat-value {
     font-size: 1em;
+}
+
+.webdav-status-grid {
+    margin-top: 14px;
 }
 
 .usage-toolbar {
@@ -2030,8 +2038,17 @@ footer {
     margin-bottom: 24px;
 }
 
-.report-header h2 {
+.report-header-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
     margin-bottom: 8px;
+}
+
+.report-header h2 {
+    margin-bottom: 0;
 }
 
 .report-meta {

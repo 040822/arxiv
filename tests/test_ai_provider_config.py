@@ -1,9 +1,11 @@
 import os
 import json
+import sqlite3
 import tempfile
 import sys
 import types
 import unittest
+import zipfile
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -140,7 +142,157 @@ class AiTaskSettingsTests(unittest.TestCase):
         self.assertFalse(loaded["ai_tasks"]["basic_analysis"]["is_thinking"])
         self.assertEqual(loaded["ai_tasks"]["deep_reading"]["thinking_effort"], "high")
         self.assertTrue(loaded["ai_tasks"]["deep_reading"]["is_thinking"])
+        self.assertEqual(loaded["ai_tasks"]["recommendation"]["provider_key"], "cheap")
+        self.assertEqual(loaded["ai_tasks"]["recommendation"]["max_tokens"], 500)
         self.assertEqual(loaded["prompt_profiles"]["deep_reading"]["system"], "legacy system")
+        self.assertNotIn('"rating"', loaded["prompt_profiles"]["basic_analysis"]["instruction"])
+        self.assertNotIn("{rating_criteria}", loaded["prompt_profiles"]["basic_analysis"]["instruction"])
+        self.assertIn("recommendation_score", loaded["prompt_profiles"]["recommendation"]["instruction"])
+        self.assertEqual(loaded["personalization"]["research_interests"], "")
+
+    def test_load_settings_preserves_session_secret(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump({"session_secret": "stable-secret"}, f)
+
+                loaded = settings.load_settings()
+
+            self.assertEqual(loaded["session_secret"], "stable-secret")
+        finally:
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
+
+    def test_get_session_secret_generates_and_persists_secret(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+
+                secret = settings.get_session_secret()
+                with open(settings.SETTINGS_PATH, "r", encoding="utf-8") as f:
+                    saved = json.load(f)
+
+            self.assertGreaterEqual(len(secret), 32)
+            self.assertEqual(saved["session_secret"], secret)
+        finally:
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
+
+    def test_personalization_config_is_trimmed_and_preserved(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "personalization": {"research_interests": "  robot learning  "},
+                    }, f)
+
+                loaded = settings.load_settings()
+                interest_hash = settings.get_research_interest_hash(loaded["personalization"]["research_interests"])
+
+            self.assertEqual(loaded["personalization"]["research_interests"], "robot learning")
+            self.assertEqual(len(interest_hash), 64)
+        finally:
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
+
+    def test_webdav_backup_config_is_preserved_and_masked(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "webdav_backup": {
+                            "enabled": True,
+                            "url": " https://dav.example.com/root/ ",
+                            "username": "alice",
+                            "password": "secret",
+                            "remote_dir": " backups/arxiv/ ",
+                            "history_days": "3",
+                        },
+                    }, f)
+
+                loaded = settings.load_settings()
+                masked = settings.get_webdav_backup_config(mask_password=True)
+
+            self.assertTrue(loaded["webdav_backup"]["enabled"])
+            self.assertEqual(loaded["webdav_backup"]["url"], "https://dav.example.com/root/")
+            self.assertEqual(loaded["webdav_backup"]["password"], "secret")
+            self.assertEqual(loaded["webdav_backup"]["remote_dir"], "backups/arxiv")
+            self.assertEqual(loaded["webdav_backup"]["history_days"], 3)
+            self.assertNotIn("password", masked)
+            self.assertEqual(masked["password_masked"], "******")
+        finally:
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
+
+    def test_save_webdav_backup_config_preserves_existing_password_when_blank(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "webdav_backup": {
+                            "enabled": True,
+                            "url": "https://dav.example.com",
+                            "username": "alice",
+                            "password": "old-secret",
+                            "remote_dir": "old",
+                            "history_days": 3,
+                            "last_status": "success",
+                            "last_success_at": "2026-06-15 12:00:00",
+                            "last_uploaded_file": "arxiv-backup-old.zip",
+                        },
+                    }, f)
+
+                self.assertTrue(settings.save_webdav_backup_config({
+                    "enabled": False,
+                    "url": "https://dav.example.com/new",
+                    "username": "bob",
+                    "password": "",
+                    "remote_dir": "new",
+                    "history_days": 5,
+                }))
+                saved = settings.load_settings()["webdav_backup"]
+
+            self.assertFalse(saved["enabled"])
+            self.assertEqual(saved["url"], "https://dav.example.com/new")
+            self.assertEqual(saved["username"], "bob")
+            self.assertEqual(saved["password"], "old-secret")
+            self.assertEqual(saved["remote_dir"], "new")
+            self.assertEqual(saved["history_days"], 5)
+            self.assertEqual(saved["last_status"], "success")
+            self.assertEqual(saved["last_success_at"], "2026-06-15 12:00:00")
+            self.assertEqual(saved["last_uploaded_file"], "arxiv-backup-old.zip")
+        finally:
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
 
     def test_task_config_merges_provider_credentials_and_task_overrides(self):
         import settings
@@ -192,6 +344,52 @@ class AiTaskSettingsTests(unittest.TestCase):
         self.assertNotIn("temperature", kwargs)
         self.assertEqual(kwargs["extra_body"]["thinking_budget"], 8192)
         self.assertEqual(kwargs["max_tokens"], 6000)
+
+    def test_recommendation_task_config_is_independent_route(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            settings.DB_DIR = tmp
+            settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+            with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump({
+                    "active_provider": "cheap",
+                    "providers": {
+                        "cheap": {
+                            "name": "Cheap",
+                            "api_key": "sk-cheap",
+                            "base_url": "https://api.example.com/v1",
+                            "model": "cheap-model",
+                        },
+                        "rec": {
+                            "name": "Rec",
+                            "api_key": "sk-rec",
+                            "base_url": "https://api.rec.example/v1",
+                            "model": "rec-default",
+                        },
+                    },
+                    "ai_tasks": {
+                        "recommendation": {
+                            "provider_key": "rec",
+                            "model": "rec-model",
+                            "max_tokens_enabled": True,
+                            "max_tokens": 321,
+                        }
+                    },
+                }, f)
+
+            cfg = settings.get_ai_task_config("recommendation")
+
+        settings.DB_DIR = original_dir
+        settings.SETTINGS_PATH = original_path
+
+        self.assertEqual(cfg["task_key"], "recommendation")
+        self.assertEqual(cfg["provider_key"], "rec")
+        self.assertEqual(cfg["api_key"], "sk-rec")
+        self.assertEqual(cfg["model"], "rec-model")
+        self.assertEqual(cfg["max_tokens"], 321)
 
     def test_legacy_deep_reading_prompt_migrates_to_qa_only(self):
         import settings
@@ -282,11 +480,13 @@ class DummyOpenAI:
 
 
 def install_import_stubs():
+    os.environ.setdefault("FLASK_SECRET_KEY", "test-secret-key")
     flask_mod = types.ModuleType("flask")
 
     class FakeFlask:
         def __init__(self, *args, **kwargs):
             self.secret_key = None
+            self.config = {}
 
         def route(self, *args, **kwargs):
             def decorator(func):
@@ -311,12 +511,19 @@ def install_import_stubs():
             return args[0]
         return list(args)
 
+    class FakeSession(dict):
+        permanent = False
+
+        def clear(self):
+            self.permanent = False
+            super().clear()
+
     flask_mod.Flask = FakeFlask
     flask_mod.render_template = lambda *args, **kwargs: ""
     flask_mod.request = types.SimpleNamespace(args={}, get_json=lambda: {})
     flask_mod.jsonify = jsonify
     flask_mod.Response = lambda *args, **kwargs: types.SimpleNamespace(args=args, kwargs=kwargs)
-    flask_mod.session = {}
+    flask_mod.session = FakeSession()
     flask_mod.redirect = lambda target: {"redirect": target}
     flask_mod.url_for = lambda endpoint, **kwargs: "/" + endpoint
     sys.modules.setdefault("flask", flask_mod)
@@ -482,6 +689,68 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertTrue(result["auth_required"])
 
+    def test_auth_login_sets_permanent_session_and_token(self):
+        app_module = self.app_module
+        app_module.session.clear()
+        app_module.request = FakeRequest({"password": "secret"})
+
+        with patch.object(app_module, "verify_admin_password", return_value=True), \
+             patch.object(app_module, "get_admin_password", return_value="hash-v1"):
+            result = app_module.api_auth_login()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(app_module.session.permanent)
+        self.assertTrue(app_module.session["admin_authenticated"])
+        self.assertEqual(
+            app_module.session["admin_auth_token"],
+            app_module._admin_auth_token("hash-v1"),
+        )
+
+    def test_auth_rejects_legacy_session_without_password_token(self):
+        app_module = self.app_module
+        app_module.session.clear()
+        app_module.session["admin_authenticated"] = True
+
+        with patch.object(app_module, "has_admin_password", return_value=True), \
+             patch.object(app_module, "get_admin_password", return_value="hash-v1"):
+            self.assertFalse(app_module.is_authenticated())
+
+    def test_auth_rejects_session_after_password_hash_changes(self):
+        app_module = self.app_module
+        app_module.session.clear()
+        app_module.session["admin_authenticated"] = True
+        app_module.session["admin_auth_token"] = app_module._admin_auth_token("hash-v1")
+
+        with patch.object(app_module, "has_admin_password", return_value=True), \
+             patch.object(app_module, "get_admin_password", return_value="hash-v2"):
+            self.assertFalse(app_module.is_authenticated())
+
+    def test_set_admin_password_refreshes_current_session_token(self):
+        app_module = self.app_module
+        app_module.session.clear()
+        app_module.session.permanent = True
+        app_module.session["admin_authenticated"] = True
+        app_module.session["admin_auth_token"] = app_module._admin_auth_token("old-hash")
+        app_module.request = FakeRequest({
+            "current_password": "old-secret",
+            "new_password": "new-secret",
+        })
+
+        with patch.object(app_module, "has_admin_password", return_value=True), \
+             patch.object(app_module, "verify_admin_password", return_value=True), \
+             patch.object(app_module, "set_admin_password") as set_password, \
+             patch.object(app_module, "get_admin_password", return_value="new-hash"):
+            result = app_module.api_set_admin_password()
+
+        self.assertEqual(result["status"], "ok")
+        set_password.assert_called_once_with("new-secret")
+        self.assertTrue(app_module.session.permanent)
+        self.assertTrue(app_module.session["admin_authenticated"])
+        self.assertEqual(
+            app_module.session["admin_auth_token"],
+            app_module._admin_auth_token("new-hash"),
+        )
+
     def test_todo_add_remove_are_public_even_when_password_enabled(self):
         app_module = self.app_module
         app_module.session.clear()
@@ -555,6 +824,124 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         configure_daily_job.assert_called_once_with(schedule)
 
+    def test_get_webdav_backup_endpoint_masks_password(self):
+        app_module = self.app_module
+
+        with patch.object(app_module, "get_webdav_backup_config", return_value={
+            "enabled": True,
+            "url": "https://dav.example.com",
+            "username": "alice",
+            "password_masked": "******",
+        }) as get_config:
+            result = app_module.api_get_webdav_backup()
+
+        get_config.assert_called_once_with(mask_password=True)
+        self.assertEqual(result["password_masked"], "******")
+        self.assertNotIn("password", result)
+
+    def test_save_webdav_backup_endpoint_saves_config(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest({
+            "enabled": True,
+            "url": "https://dav.example.com",
+            "username": "alice",
+            "password": "",
+            "remote_dir": "arxiv",
+            "history_days": "3",
+        })
+
+        with patch.object(app_module, "save_webdav_backup_config", return_value=True) as save_config, \
+             patch.object(app_module, "get_webdav_backup_config", return_value={"password_masked": "******"}):
+            result = app_module.api_save_webdav_backup()
+
+        self.assertEqual(result["status"], "ok")
+        save_config.assert_called_once_with({
+            "enabled": True,
+            "url": "https://dav.example.com",
+            "username": "alice",
+            "password": "",
+            "remote_dir": "arxiv",
+            "history_days": 3,
+        })
+
+    def test_manual_webdav_backup_endpoint_logs_task(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest({}, endpoint="api_run_webdav_backup", method="POST", path="/api/backup/webdav/run")
+        result_payload = {
+            "status": "ok",
+            "message": "WebDAV 备份完成",
+            "uploaded_files": ["arxiv-backup-20260615-120000.zip", "arxiv-backup-latest.zip"],
+            "deleted_files": [],
+            "archive_size": "1.0 KB",
+            "db_size": "2.0 KB",
+            "last_uploaded_file": "arxiv-backup-20260615-120000.zip",
+        }
+
+        with patch.object(app_module, "start_task_log", return_value=7) as start_log, \
+             patch.object(app_module, "finish_task_log") as finish_log, \
+             patch.object(app_module, "run_webdav_backup", return_value=result_payload) as backup:
+            result = app_module.api_run_webdav_backup()
+
+        self.assertEqual(result["status"], "ok")
+        backup.assert_called_once_with(force=True)
+        start_log.assert_called_once_with("webdav_backup", "WebDAV 云同步备份")
+        self.assertEqual(finish_log.call_args.args[1], "success")
+
+    def test_daily_pipeline_backup_failure_does_not_fail_pipeline(self):
+        app_module = self.app_module
+
+        with patch.object(app_module, "start_task_log", return_value=1), \
+             patch.object(app_module, "finish_task_log") as finish_log, \
+             patch.object(app_module, "fetch_latest_papers", return_value=[]), \
+             patch.object(app_module, "get_concurrency", return_value=2), \
+             patch.object(app_module, "analyze_pending_papers", return_value=0), \
+             patch.object(app_module, "get_all_dates", return_value=[("2026-06-15",)]), \
+             patch.object(app_module, "recommend_pending_papers", return_value=0), \
+             patch.object(app_module, "generate_report_content", return_value=("html", 1, 1, 0.0)), \
+             patch.object(app_module, "save_report"), \
+             patch.object(app_module, "get_webdav_backup_config", return_value={"enabled": True}), \
+             patch.object(app_module, "_run_webdav_backup_task", side_effect=RuntimeError("dav down")):
+            app_module.daily_pipeline()
+
+        self.assertEqual(finish_log.call_args.args[1], "success")
+        self.assertIn("云备份失败", finish_log.call_args.args[2])
+
+    def test_save_personalization_saves_interest_without_recommendation_call(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest({"research_interests": "robotics"})
+
+        with patch.object(app_module, "save_personalization_config", return_value=True) as save_personalization, \
+             patch.object(app_module, "get_personalization_config", return_value={"research_interests": "robotics"}), \
+             patch.object(app_module, "recommend_pending_papers") as recommend:
+            result = app_module.api_save_personalization()
+
+        self.assertEqual(result["status"], "ok")
+        save_personalization.assert_called_once_with({"research_interests": "robotics"})
+        recommend.assert_not_called()
+
+    def test_recalculate_recommendations_calls_recommendation_task(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest(
+            {"limit": 5},
+            endpoint="api_recalculate_recommendations",
+            method="POST",
+            path="/api/recommendations/recalculate",
+            args={"task_id": "rec-task"},
+        )
+
+        with patch.object(app_module, "start_task_log", return_value=1), \
+             patch.object(app_module, "finish_task_log"), \
+             patch.object(app_module, "get_personalization_config", return_value={"research_interests": "robotics"}), \
+             patch.object(app_module, "get_concurrency", return_value=2), \
+             patch.object(app_module, "recommend_pending_papers", return_value=3) as recommend:
+            result = app_module.api_recalculate_recommendations()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["count"], 3)
+        self.assertEqual(recommend.call_args.kwargs["limit"], 5)
+        self.assertEqual(recommend.call_args.kwargs["concurrency"], 2)
+        self.assertIsNone(recommend.call_args.kwargs["date"])
+
     def test_generate_report_default_does_not_call_ai_summary(self):
         app_module = self.app_module
         app_module.request = FakeRequest({}, endpoint="api_generate", method="POST", path="/api/generate")
@@ -562,6 +949,8 @@ class ProviderEndpointTests(unittest.TestCase):
         with patch.object(app_module, "start_task_log", return_value=1), \
              patch.object(app_module, "finish_task_log"), \
              patch.object(app_module, "get_all_dates", return_value=[("2026-01-01",)]), \
+             patch.object(app_module, "get_concurrency", return_value=2), \
+             patch.object(app_module, "recommend_pending_papers", return_value=1) as recommend, \
              patch.object(app_module, "generate_report_ai_summary") as ai_summary, \
              patch.object(app_module, "generate_report_content", return_value=("html", 2, 1, 4.0)) as report_content, \
              patch.object(app_module, "save_report") as save_report:
@@ -569,8 +958,30 @@ class ProviderEndpointTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         ai_summary.assert_not_called()
+        recommend.assert_called_once_with(limit=1000, date="2026-01-01", concurrency=2)
         report_content.assert_called_once_with("2026-01-01", ai_summary=None)
         save_report.assert_called_once()
+
+    def test_generate_report_recommend_zero_skips_recommendation(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest(
+            {},
+            endpoint="api_generate",
+            method="POST",
+            path="/api/generate",
+            args={"date": "2026-01-01", "recommend": "0"},
+        )
+
+        with patch.object(app_module, "start_task_log", return_value=1), \
+             patch.object(app_module, "finish_task_log"), \
+             patch.object(app_module, "recommend_pending_papers") as recommend, \
+             patch.object(app_module, "generate_report_content", return_value=("html", 2, 1, 4.0)) as report_content, \
+             patch.object(app_module, "save_report"):
+            result = app_module.api_generate()
+
+        self.assertEqual(result["status"], "ok")
+        recommend.assert_not_called()
+        report_content.assert_called_once_with("2026-01-01", ai_summary=None)
 
     def test_generate_report_with_ai_summary_calls_report_task(self):
         app_module = self.app_module
@@ -584,6 +995,8 @@ class ProviderEndpointTests(unittest.TestCase):
 
         with patch.object(app_module, "start_task_log", return_value=1), \
              patch.object(app_module, "finish_task_log"), \
+             patch.object(app_module, "get_concurrency", return_value=2), \
+             patch.object(app_module, "recommend_pending_papers", return_value=0), \
              patch.object(app_module, "generate_report_ai_summary", return_value=("导读", None)) as ai_summary, \
              patch.object(app_module, "generate_report_content", return_value=("html", 2, 1, 4.0)) as report_content, \
              patch.object(app_module, "save_report"):
@@ -664,9 +1077,38 @@ class ProviderEndpointTests(unittest.TestCase):
             result = app_module.api_add_paper()
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["rating"], 4)
+        self.assertEqual(result["rating"], 0)
         self.assertEqual(result["tags"], ["VLA"])
         self.assertEqual(events, ["basic", "insert", "deep", "update"])
+
+    def test_add_paper_with_manual_rating_only_still_runs_basic_analysis(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest({"input": "2601.00011", "task_id": "t1"})
+        paper = {
+            "id": 11,
+            "arxiv_id": "2601.00011",
+            "title": "Manual Rating Only",
+            "authors": '["Alice"]',
+            "categories": '["cs.RO"]',
+            "abstract": "Abstract",
+            "pdf_url": "https://arxiv.org/pdf/2601.00011",
+        }
+        basic_result = {"tags": ["VLA"], "summary_cn": "摘要", "summary_en": "", "rating": 4, "value_comment": "有价值"}
+        deep_result = {"qa_analysis": "### Q1: deep"}
+
+        with patch.object(app_module, "parse_arxiv_id", return_value="2601.00011"), \
+             patch.object(app_module, "fetch_paper_by_id", return_value=paper), \
+             patch.object(app_module, "get_analysis_by_paper_id", return_value={"rating": 4, "tags": [], "summary_cn": "", "value_comment": ""}), \
+             patch.object(app_module, "analyze_paper_basic", return_value=(paper, basic_result, None)) as basic, \
+             patch.object(app_module, "insert_analysis", return_value=None) as insert, \
+             patch.object(app_module, "analyze_paper_full", return_value=(paper, deep_result, None)), \
+             patch.object(app_module, "update_analysis", return_value=True):
+            result = app_module.api_add_paper()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["rating"], 0)
+        basic.assert_called_once()
+        insert.assert_called_once()
 
 
 class AiCallRoutingTests(unittest.TestCase):
@@ -691,9 +1133,12 @@ class AiCallRoutingTests(unittest.TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(result["tags"], ["VLA"])
+        self.assertEqual(result["rating"], 0)
         messages, _, task_key = call.call_args.args
         self.assertEqual(task_key, "basic_analysis")
         self.assertNotIn("qa_analysis", messages[1]["content"])
+        self.assertNotIn('"rating"', messages[1]["content"])
+        self.assertNotIn("{rating_criteria}", messages[1]["content"])
         self.assertIn('"abstract": "This is the abstract."', messages[2]["content"])
 
     def test_deep_reading_uses_full_pdf_without_text_limit(self):
@@ -727,6 +1172,38 @@ class AiCallRoutingTests(unittest.TestCase):
             self.assertNotIn(text, messages[1]["content"])
         self.assertIn('"paper_text": "FULL PDF TEXT"', messages[2]["content"])
 
+    def test_recommendation_uses_recommendation_task_and_interest_payload(self):
+        paper = {
+            "id": 1,
+            "arxiv_id": "2601.00001",
+            "title": "A Robot Paper",
+            "authors": ["Alice"],
+            "abstract": "Abstract",
+            "categories": ["cs.RO"],
+            "tags": ["VLA"],
+            "rating": 4,
+            "summary_cn": "摘要",
+        }
+        fake_result = {
+            "recommendation_score": 88,
+            "recommendation_reason": "与 VLA 研究兴趣高度相关。",
+        }
+
+        with patch.object(self.analyzer, "_call_ai", return_value=(fake_result, None)) as call:
+            _, result, error = self.analyzer.analyze_paper_recommendation(
+                paper,
+                research_interests="VLA and robot learning",
+                interest_hash="hash-v1",
+            )
+
+        self.assertIsNone(error)
+        self.assertEqual(result["recommendation_score"], 88)
+        self.assertEqual(result["recommendation_interest_hash"], "hash-v1")
+        messages, _, task_key = call.call_args.args
+        self.assertEqual(task_key, "recommendation")
+        self.assertIn('"research_interests": "VLA and robot learning"', messages[2]["content"])
+        self.assertIn('"tags": [', messages[2]["content"])
+
 
 class PromptAndReportSafetyTests(unittest.TestCase):
     def test_prompt_validation_rejects_missing_required_field(self):
@@ -741,6 +1218,9 @@ class PromptAndReportSafetyTests(unittest.TestCase):
 
     def test_profile_prompt_validation_allows_deep_reading_without_basic_fields(self):
         ok, message = validate_prompt_template('{"qa_analysis": "### Q1: answer"}', profile_key="deep_reading")
+        self.assertTrue(ok, message)
+
+        ok, message = validate_prompt_template('{"recommendation_score": 80}', profile_key="recommendation")
         self.assertTrue(ok, message)
 
         ok, message = validate_prompt_template("只做基础分析", profile_key="basic_analysis")
@@ -776,16 +1256,326 @@ class PromptAndReportSafetyTests(unittest.TestCase):
                 "value_comment": "<b>bad</b>",
                 "qa_analysis": "",
             })
+            database.update_recommendation_result(paper_id, 95, "<i>rec</i>", "hash-v1")
 
-            content, _, _, _ = database.generate_report_content("2026-01-01")
+            with patch("settings.get_personalization_config", return_value={"research_interests": "机器人基础模型\nVLA"}), \
+                 patch("settings.get_research_interest_hash", return_value="hash-v1"):
+                content, _, _, _ = database.generate_report_content("2026-01-01")
 
         database.DB_DIR = original_dir
         database.DB_PATH = original_path
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", content)
         self.assertIn("&lt;img src=x onerror=alert(1)&gt;", content)
         self.assertIn("&lt;b&gt;bad&lt;/b&gt;", content)
+        self.assertIn("&lt;i&gt;rec&lt;/i&gt;", content)
         self.assertNotIn("<script>", content)
         self.assertNotIn("<img", content)
+        self.assertNotIn("<i>", content)
+
+    def test_rating_migration_backs_up_legacy_ai_rating_once(self):
+        import sqlite3
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            database.DB_DIR = tmp
+            database.DB_PATH = os.path.join(tmp, "papers.db")
+            conn = sqlite3.connect(database.DB_PATH)
+            conn.execute("""
+                CREATE TABLE analysis (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    paper_id INTEGER NOT NULL,
+                    tags TEXT,
+                    summary_cn TEXT,
+                    summary_en TEXT,
+                    rating INTEGER DEFAULT 0,
+                    value_comment TEXT,
+                    analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("INSERT INTO analysis (paper_id, rating) VALUES (1, 3)")
+            conn.execute("INSERT INTO analysis (paper_id, rating) VALUES (2, 5)")
+            conn.commit()
+            conn.close()
+
+            database.init_db()
+            conn = sqlite3.connect(database.DB_PATH)
+            rows = conn.execute("SELECT id, rating, legacy_ai_rating FROM analysis ORDER BY id").fetchall()
+            self.assertEqual(rows, [(1, 0, 3), (2, 0, 5)])
+
+            conn.execute("UPDATE analysis SET rating = 4 WHERE id = 1")
+            conn.commit()
+            conn.close()
+
+            database.init_db()
+            conn = sqlite3.connect(database.DB_PATH)
+            rows = conn.execute("SELECT id, rating, legacy_ai_rating FROM analysis ORDER BY id").fetchall()
+            conn.close()
+
+        database.DB_DIR = original_dir
+        database.DB_PATH = original_path
+        self.assertEqual(rows, [(1, 4, 3), (2, 0, 5)])
+
+    def test_new_analysis_defaults_to_zero_manual_rating_without_legacy_backup(self):
+        import sqlite3
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            database.DB_DIR = tmp
+            database.DB_PATH = os.path.join(tmp, "papers.db")
+            database.init_db()
+            paper_id = database.insert_paper({
+                "arxiv_id": "2601.00000",
+                "title": "Manual Rating Paper",
+                "authors": ["Alice"],
+                "abstract": "abstract",
+                "categories": ["cs.RO"],
+                "primary_category": "cs.RO",
+                "url": "https://arxiv.org/abs/2601.00000",
+                "pdf_url": "https://arxiv.org/pdf/2601.00000",
+                "published_date": "2026-01-01",
+                "updated_date": "2026-01-01",
+            })
+            database.insert_analysis(paper_id, {
+                "tags": ["Robot"],
+                "summary_cn": "摘要",
+                "summary_en": "",
+                "value_comment": "评价",
+                "qa_analysis": "",
+            })
+            conn = sqlite3.connect(database.DB_PATH)
+            row = conn.execute("SELECT rating, legacy_ai_rating FROM analysis WHERE paper_id = ?", (paper_id,)).fetchone()
+            conn.close()
+
+        database.DB_DIR = original_dir
+        database.DB_PATH = original_path
+        self.assertEqual(row, (0, None))
+
+    def test_manual_rating_only_record_is_still_pending_basic_analysis(self):
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            database.DB_DIR = tmp
+            database.DB_PATH = os.path.join(tmp, "papers.db")
+            database.init_db()
+            paper_id = database.insert_paper({
+                "arxiv_id": "2601.00007",
+                "title": "Manual Rated Pending",
+                "authors": ["Alice"],
+                "abstract": "abstract",
+                "categories": ["cs.RO"],
+                "primary_category": "cs.RO",
+                "url": "https://arxiv.org/abs/2601.00007",
+                "pdf_url": "https://arxiv.org/pdf/2601.00007",
+                "published_date": "2026-01-01",
+                "updated_date": "2026-01-01",
+            })
+            database.update_analysis(paper_id, {"rating": 4})
+            pending = database.get_unanalyzed_papers(limit=10)
+            pending_count = database.get_unanalyzed_count()
+            analyzed_count = database.get_analyzed_count()
+
+        database.DB_DIR = original_dir
+        database.DB_PATH = original_path
+        self.assertEqual([p["arxiv_id"] for p in pending], ["2601.00007"])
+        self.assertEqual(pending_count, 1)
+        self.assertEqual(analyzed_count, 0)
+
+    def test_recommendation_columns_update_and_report_sorting(self):
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            database.DB_DIR = tmp
+            database.DB_PATH = os.path.join(tmp, "papers.db")
+            database.init_db()
+            high_rating_id = database.insert_paper({
+                "arxiv_id": "2601.00001",
+                "title": "High Rating Low Interest",
+                "authors": ["Alice"],
+                "abstract": "abstract",
+                "categories": ["cs.RO"],
+                "primary_category": "cs.RO",
+                "url": "https://arxiv.org/abs/2601.00001",
+                "pdf_url": "https://arxiv.org/pdf/2601.00001",
+                "published_date": "2026-01-01",
+                "updated_date": "2026-01-01",
+            })
+            high_interest_id = database.insert_paper({
+                "arxiv_id": "2601.00002",
+                "title": "Lower Rating High Interest",
+                "authors": ["Bob"],
+                "abstract": "abstract",
+                "categories": ["cs.RO"],
+                "primary_category": "cs.RO",
+                "url": "https://arxiv.org/abs/2601.00002",
+                "pdf_url": "https://arxiv.org/pdf/2601.00002",
+                "published_date": "2026-01-01",
+                "updated_date": "2026-01-01",
+            })
+            database.insert_analysis(high_rating_id, {
+                "tags": ["Robot"],
+                "summary_cn": "摘要",
+                "summary_en": "",
+                "rating": 5,
+                "value_comment": "高分",
+                "qa_analysis": "",
+            })
+            database.insert_analysis(high_interest_id, {
+                "tags": ["VLA"],
+                "summary_cn": "高兴趣中文摘要",
+                "summary_en": "",
+                "rating": 3,
+                "value_comment": "相关",
+                "qa_analysis": "",
+            })
+            self.assertTrue(database.update_recommendation_result(high_rating_id, 20, "弱相关", "hash-v1"))
+            self.assertTrue(database.update_recommendation_result(high_interest_id, 95, "强相关", "hash-v1"))
+
+            with patch("settings.get_personalization_config", return_value={"research_interests": "机器人基础模型\nVLA"}), \
+                 patch("settings.get_research_interest_hash", return_value="hash-v1"):
+                content, _, _, _ = database.generate_report_content("2026-01-01")
+
+        database.DB_DIR = original_dir
+        database.DB_PATH = original_path
+        self.assertIn("个性化推荐", content)
+        self.assertIn("<strong>研究兴趣:</strong><br>机器人基础模型<br>VLA", content)
+        self.assertIn("推荐 95/100", content)
+        self.assertIn("<strong>中文摘要:</strong> 高兴趣中文摘要", content)
+        self.assertIn("<strong>推荐语:</strong> 强相关", content)
+        self.assertIn("<strong>评价:</strong> 相关", content)
+        self.assertNotIn("高分论文", content)
+        self.assertLess(content.index("Lower Rating High Interest"), content.index("High Rating Low Interest"))
+
+    def test_daily_markdown_recommendation_and_all_papers(self):
+        import database
+        import markdown_gen
+
+        original_db_dir = database.DB_DIR
+        original_db_path = database.DB_PATH
+        original_daily_dir = markdown_gen.DAILY_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            database.DB_DIR = tmp
+            database.DB_PATH = os.path.join(tmp, "papers.db")
+            markdown_gen.DAILY_DIR = os.path.join(tmp, "daily")
+            database.init_db()
+            high_rating_id = database.insert_paper({
+                "arxiv_id": "2601.00005",
+                "title": "High Rating Low Interest",
+                "authors": ["Alice"],
+                "abstract": "abstract",
+                "categories": ["cs.RO"],
+                "primary_category": "cs.RO",
+                "url": "https://arxiv.org/abs/2601.00005",
+                "pdf_url": "https://arxiv.org/pdf/2601.00005",
+                "published_date": "2026-01-01",
+                "updated_date": "2026-01-01",
+            })
+            high_interest_id = database.insert_paper({
+                "arxiv_id": "2601.00006",
+                "title": "Lower Rating High Interest",
+                "authors": ["Bob"],
+                "abstract": "abstract",
+                "categories": ["cs.RO"],
+                "primary_category": "cs.RO",
+                "url": "https://arxiv.org/abs/2601.00006",
+                "pdf_url": "https://arxiv.org/pdf/2601.00006",
+                "published_date": "2026-01-01",
+                "updated_date": "2026-01-01",
+            })
+            database.insert_analysis(high_rating_id, {
+                "tags": ["Robot"],
+                "summary_cn": "摘要",
+                "summary_en": "",
+                "rating": 5,
+                "value_comment": "高分评价",
+                "qa_analysis": "",
+            })
+            database.insert_analysis(high_interest_id, {
+                "tags": ["VLA"],
+                "summary_cn": "高兴趣中文摘要",
+                "summary_en": "",
+                "rating": 3,
+                "value_comment": "相关评价",
+                "qa_analysis": "",
+            })
+            database.update_recommendation_result(high_rating_id, 20, "弱相关", "hash-v1")
+            database.update_recommendation_result(high_interest_id, 95, "强相关", "hash-v1")
+
+            with patch.object(markdown_gen, "get_personalization_config", return_value={"research_interests": "机器人基础模型\nVLA"}), \
+                 patch.object(markdown_gen, "get_research_interest_hash", return_value="hash-v1"):
+                report_path = markdown_gen.generate_daily_report("2026-01-01")
+            with open(report_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+        database.DB_DIR = original_db_dir
+        database.DB_PATH = original_db_path
+        markdown_gen.DAILY_DIR = original_daily_dir
+        self.assertIn("## 🎯 个性化推荐", content)
+        self.assertIn("**研究兴趣:**", content)
+        self.assertIn("> 机器人基础模型", content)
+        self.assertIn("> VLA", content)
+        self.assertIn("**中文摘要:** 高兴趣中文摘要", content)
+        self.assertIn("**推荐语:** 强相关", content)
+        self.assertIn("**评价:** 相关评价", content)
+        self.assertIn("## 📋 全部论文", content)
+        self.assertIn("High Rating Low Interest", content)
+        self.assertNotIn("高价值论文", content)
+
+    def test_recommendation_candidates_require_existing_analysis(self):
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            database.DB_DIR = tmp
+            database.DB_PATH = os.path.join(tmp, "papers.db")
+            database.init_db()
+            unanalyzed_id = database.insert_paper({
+                "arxiv_id": "2601.00003",
+                "title": "Unanalyzed",
+                "authors": ["Alice"],
+                "abstract": "abstract",
+                "categories": ["cs.RO"],
+                "primary_category": "cs.RO",
+                "url": "https://arxiv.org/abs/2601.00003",
+                "pdf_url": "https://arxiv.org/pdf/2601.00003",
+                "published_date": "2026-01-01",
+                "updated_date": "2026-01-01",
+            })
+            analyzed_id = database.insert_paper({
+                "arxiv_id": "2601.00004",
+                "title": "Analyzed",
+                "authors": ["Bob"],
+                "abstract": "abstract",
+                "categories": ["cs.RO"],
+                "primary_category": "cs.RO",
+                "url": "https://arxiv.org/abs/2601.00004",
+                "pdf_url": "https://arxiv.org/pdf/2601.00004",
+                "published_date": "2026-01-01",
+                "updated_date": "2026-01-01",
+            })
+            database.insert_analysis(analyzed_id, {
+                "tags": ["VLA"],
+                "summary_cn": "摘要",
+                "summary_en": "",
+                "rating": 3,
+                "value_comment": "相关",
+                "qa_analysis": "",
+            })
+
+            candidates = database.get_papers_for_recommendation(limit=10, date="2026-01-01", interest_hash="hash-v1")
+
+        database.DB_DIR = original_dir
+        database.DB_PATH = original_path
+        self.assertEqual([p["id"] for p in candidates], [analyzed_id])
+        self.assertNotIn(unanalyzed_id, [p["id"] for p in candidates])
 
     def test_ai_usage_log_records_and_summarizes_tokens(self):
         import database
@@ -994,6 +1784,24 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
         analyze_basic.assert_called_once_with(paper)
         self.assertEqual(executor.call_args.kwargs["max_workers"], 6)
 
+    def test_analyze_papers_updates_existing_manual_rating_without_overwriting_rating(self):
+        paper = {"id": 1, "arxiv_id": "2601.00001"}
+        result = {"tags": ["VLA"], "summary_cn": "摘要", "summary_en": "", "rating": 0, "value_comment": "简评"}
+
+        with patch.object(self.analyzer, "analyze_paper_basic", return_value=(paper, result, None)), \
+             patch.object(self.analyzer, "insert_analysis", return_value=None), \
+             patch.object(self.analyzer, "update_analysis", return_value=True) as update_analysis, \
+             patch.object(self.analyzer.logger, "info"):
+            count = self.analyzer.analyze_papers([paper], concurrency=1)
+
+        self.assertEqual(count, 1)
+        update_analysis.assert_called_once_with(1, {
+            "tags": ["VLA"],
+            "summary_cn": "摘要",
+            "summary_en": "",
+            "value_comment": "简评",
+        })
+
     def test_pdf_download_uses_proxy_settings(self):
         class FakeResponse:
             content = b"%PDF-test"
@@ -1033,6 +1841,140 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
         })
 
 
+class BackupServiceTests(unittest.TestCase):
+    def test_database_file_sizes_include_wal_and_shm(self):
+        import backup
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "papers.db")
+            with open(db_path, "wb") as f:
+                f.write(b"a" * 10)
+            with open(db_path + "-wal", "wb") as f:
+                f.write(b"b" * 20)
+            with open(db_path + "-shm", "wb") as f:
+                f.write(b"c" * 30)
+
+            sizes = backup.get_database_file_sizes(db_path)
+
+        self.assertEqual(sizes["total_bytes"], 60)
+        self.assertEqual([f["name"] for f in sizes["files"]], ["papers.db", "papers.db-wal", "papers.db-shm"])
+
+    def test_backup_archive_contains_database_settings_reports_and_manifest(self):
+        import backup
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = os.path.join(tmp, "papers.db")
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE demo (id INTEGER PRIMARY KEY, name TEXT)")
+            conn.execute("INSERT INTO demo (name) VALUES ('paper')")
+            conn.commit()
+            conn.close()
+
+            settings_path = os.path.join(tmp, "settings.json")
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump({"api_key": "secret"}, f)
+
+            output_dir = os.path.join(tmp, "output")
+            os.makedirs(os.path.join(output_dir, "daily"))
+            with open(os.path.join(output_dir, "daily", "2026-06-15.md"), "w", encoding="utf-8") as f:
+                f.write("# report")
+
+            archive_path = os.path.join(tmp, "backup.zip")
+            manifest = backup.create_backup_archive(
+                archive_path,
+                db_path=db_path,
+                settings_path=settings_path,
+                output_dir=output_dir,
+            )
+
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                names = set(zf.namelist())
+                extract_dir = os.path.join(tmp, "extract")
+                zf.extract("papers.db", extract_dir)
+                manifest_data = json.loads(zf.read("manifest.json").decode("utf-8"))
+
+            copied = sqlite3.connect(os.path.join(extract_dir, "papers.db"))
+            row = copied.execute("SELECT name FROM demo").fetchone()
+            copied.close()
+
+        self.assertIn("papers.db", names)
+        self.assertIn("settings.json", names)
+        self.assertIn("output/daily/2026-06-15.md", names)
+        self.assertIn("manifest.json", names)
+        self.assertEqual(row[0], "paper")
+        self.assertTrue(manifest["included"]["settings_json"])
+        self.assertEqual(manifest_data["report_files"], ["output/daily/2026-06-15.md"])
+
+    def test_webdav_backup_uploads_latest_and_cleans_expired_history(self):
+        import backup
+
+        class FakeResponse:
+            def __init__(self, status_code=200, content=b""):
+                self.status_code = status_code
+                self.content = content
+
+            def raise_for_status(self):
+                raise AssertionError(f"unexpected status {self.status_code}")
+
+        propfind_xml = b"""<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response><d:href>/dav/arxiv/arxiv-backup-20260610-120000.zip</d:href></d:response>
+  <d:response><d:href>/dav/arxiv/arxiv-backup-20260614-120000.zip</d:href></d:response>
+  <d:response><d:href>/dav/arxiv/arxiv-backup-latest.zip</d:href></d:response>
+</d:multistatus>"""
+
+        calls = []
+
+        def fake_request(method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            if method == "PROPFIND":
+                return FakeResponse(207, propfind_xml)
+            if method == "MKCOL":
+                return FakeResponse(201)
+            if method == "PUT":
+                return FakeResponse(201)
+            if method == "DELETE":
+                return FakeResponse(204)
+            return FakeResponse(200)
+
+        def fake_archive(path, **kwargs):
+            with open(path, "wb") as f:
+                f.write(b"zip")
+            return {
+                "archive": {"size_bytes": 3, "size": "3 B"},
+                "database": {"size_bytes": 2, "size": "2 B"},
+            }
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(backup, "DB_DIR", tmp), \
+             patch.object(backup, "create_backup_archive", side_effect=fake_archive), \
+             patch.object(backup.requests, "request", side_effect=fake_request):
+            result = backup.run_webdav_backup(
+                config={
+                    "enabled": False,
+                    "url": "https://dav.example.com",
+                    "username": "alice",
+                    "password": "secret",
+                    "remote_dir": "arxiv",
+                    "history_days": 3,
+                },
+                force=True,
+                record_status=False,
+                now=datetime(2026, 6, 15, 12, 0, 0),
+            )
+
+        methods = [call[0] for call in calls]
+        self.assertEqual(methods.count("PUT"), 2)
+        self.assertIn("MKCOL", methods)
+        self.assertIn("PROPFIND", methods)
+        self.assertIn("DELETE", methods)
+        self.assertEqual(result["uploaded_files"], [
+            "arxiv-backup-20260615-120000.zip",
+            "arxiv-backup-latest.zip",
+        ])
+        self.assertEqual(result["deleted_files"], ["arxiv-backup-20260610-120000.zip"])
+
+
 class TemplateSafetyTests(unittest.TestCase):
     def test_paper_inline_json_handlers_use_single_quoted_attributes(self):
         with open("templates/paper.html", "r", encoding="utf-8") as f:
@@ -1043,6 +1985,22 @@ class TemplateSafetyTests(unittest.TestCase):
         self.assertIn("onclick='removeTag({{ t | tojson }})'", html)
         self.assertNotIn('onclick="toggleTodo({{ paper.arxiv_id | tojson }})"', html)
         self.assertNotIn('onclick="removeTag({{ t | tojson }})"', html)
+
+    def test_report_detail_has_regenerate_action_for_current_date(self):
+        with open("templates/report_detail.html", "r", encoding="utf-8") as f:
+            html = f.read()
+
+        self.assertIn("重新生成该日报告", html)
+        self.assertIn("const reportDate = {{ report.report_date | tojson }};", html)
+        self.assertIn("/api/generate?date=${encodeURIComponent(reportDate)}", html)
+        self.assertIn("window.location.reload()", html)
+
+    def test_list_templates_show_numeric_zero_star_rating(self):
+        for path in ("templates/index.html", "templates/browse.html", "templates/search.html", "templates/reading_list.html"):
+            with self.subTest(path=path):
+                with open(path, "r", encoding="utf-8") as f:
+                    html = f.read()
+                self.assertIn("{{ paper.rating }}★", html)
 
 
 if __name__ == "__main__":

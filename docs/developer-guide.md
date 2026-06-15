@@ -117,9 +117,14 @@ CREATE TABLE analysis (
     tags TEXT,                         -- JSON 数组
     summary_cn TEXT,                   -- 中文摘要翻译
     summary_en TEXT,                   -- 英文摘要（未使用）
-    rating INTEGER DEFAULT 0,          -- 0-5 星
+    rating INTEGER DEFAULT 0,          -- 用户手动评级（0-5 星）
+    legacy_ai_rating INTEGER,          -- 历史 AI 自动评级备份
     value_comment TEXT,                -- 评价
     qa_analysis TEXT,                  -- Q&A 深度阅读（Markdown）
+    recommendation_score INTEGER,      -- 个性化推荐分（0-100）
+    recommendation_reason TEXT,        -- 推荐理由
+    recommendation_interest_hash TEXT, -- 对应研究兴趣哈希
+    recommendation_analyzed_at TEXT,   -- 推荐评分时间
     analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 ```
@@ -178,7 +183,7 @@ CREATE TABLE reading_list (
 | `ARXIV_CATEGORIES` | 监控的 arXiv 分类列表 |
 | `MAX_PAPERS_PER_CATEGORY` | 每分类每次拉取上限 |
 | `TAG_CANDIDATES` | AI 标签候选列表 |
-| `RATING_CRITERIA` | 评级标准文本 |
+| `RATING_CRITERIA` | 旧版评级标准兼容文本；当前 AI 基础分析不再使用 |
 | `SCHEDULE_HOUR/MINUTE` | 定时任务首次默认时间；运行后以 `settings.json.schedule` 为准 |
 | `FETCH_REQUEST_DELAY` | API 请求间隔 |
 | `FETCH_BATCH_DAYS` | 分批抓取每批天数 |
@@ -193,8 +198,10 @@ CREATE TABLE reading_list (
 |--------|------|
 | `active_provider` | 当前激活的 AI 供应商 |
 | `providers` | 供应商配置（API key、model、参数开关、思考模式、模型缓存等） |
-| `ai_tasks` | 基础分析、深度阅读、报告导读的任务级供应商/模型/参数路由 |
+| `ai_tasks` | 基础分析、深度阅读、报告导读、个性化推荐的任务级供应商/模型/参数路由 |
 | `prompt_profiles` | 按 AI 功能拆分的稳定 system/instruction prompt |
+| `personalization` | 个性化推荐配置，当前包含 `research_interests` |
+| `webdav_backup` | WebDAV 云同步备份配置，包含地址、账号、远端目录、历史保留天数和最近备份状态 |
 | `prompts` | 旧版 system/user prompt 兼容字段，映射到 `deep_reading` |
 | `concurrency` | AI 分析并发数 |
 | `per_page` | 首页每页论文数 |
@@ -202,12 +209,15 @@ CREATE TABLE reading_list (
 | `fetch` | 抓取延迟配置 |
 | `proxy` | 代理配置 |
 | `admin_password` | 管理密码（SHA-256） |
+| `session_secret` | 内部 Flask session 签名密钥，用于服务重启后保持登录 |
 
 > **⚠️ 重要：** 在 `load_settings()` 中添加新字段时，必须在合并逻辑中显式添加 `if "key" in migrated: merged["key"] = migrated["key"]`，否则新字段在读取时会丢失！
 
-AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要绕过任务级模型路由。
+AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要绕过任务级模型路由。个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。
 
-设置管理密码后，写接口和敏感设置读取接口需要登录；供应商列表接口只能返回脱敏后的 `api_key_masked`。
+设置管理密码后，写接口和敏感设置读取接口需要登录；管理登录默认通过签名 cookie 持久保存 180 天，修改管理密码后旧登录状态失效。供应商列表接口只能返回脱敏后的 `api_key_masked`。
+
+WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 `output/` 打包上传。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。
 
 ---
 

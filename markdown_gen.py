@@ -3,14 +3,14 @@ Markdown 报告生成模块
 
 本模块负责将数据库中的论文数据生成格式化的 Markdown 报告。
 主要功能：
-- 生成 README.md 总览报告（包含所有论文，按评级排序）
-- 生成每日论文日报（按日期筛选，按评级分类）
+- 生成 README.md 总览报告（包含所有论文，按推荐分/评级排序）
+- 生成每日论文日报（按日期筛选，包含个性化推荐和全部论文）
 - 生成单篇论文卡片（包含标题、作者、摘要、评级、标签等）
 - 支持多种格式化函数（评级、作者、标签等）
 
 报告结构：
 - README.md: 项目总览，包含标签统计、最新论文列表
-- daily/YYYY-MM-DD.md: 每日报告，包含当日论文，按评级分类
+- daily/YYYY-MM-DD.md: 每日报告，包含当日个性化推荐和全部论文
 
 依赖：
 - database.py: 提供论文数据查询接口
@@ -22,6 +22,7 @@ import json
 from datetime import datetime
 from config import OUTPUT_DIR, DAILY_DIR, ARXIV_CATEGORIES
 from database import get_papers_with_analysis, get_all_tags, get_paper_count, get_analyzed_count, get_daily_stats
+from settings import get_personalization_config, get_research_interest_hash
 
 
 def ensure_dirs():
@@ -50,7 +51,19 @@ def format_rating(rating):
     """
     if rating is None:
         return "N/A"
-    return "★" * rating + "☆" * (5 - rating)
+    rating = max(0, min(5, int(rating)))
+    return f"{'★' * rating}{'☆' * (5 - rating)} {rating}星"
+
+
+def current_recommendation_score(paper, interest_hash=None):
+    """返回当前研究兴趣对应的推荐分，过期推荐分返回 None。"""
+    interest_hash = interest_hash if interest_hash is not None else get_research_interest_hash()
+    if not interest_hash or paper.get("recommendation_interest_hash") != interest_hash:
+        return None
+    try:
+        return max(0, min(100, int(paper.get("recommendation_score"))))
+    except (TypeError, ValueError):
+        return None
 
 
 def format_authors(authors):
@@ -97,7 +110,7 @@ def format_tags(tags):
     return " ".join([f"`{t}`" for t in tags])
 
 
-def generate_paper_card(paper, show_date=True):
+def generate_paper_card(paper, show_date=True, recommendation_label="推荐理由"):
     """
     生成单篇论文的 Markdown 卡片
     
@@ -125,6 +138,7 @@ def generate_paper_card(paper, show_date=True):
             - qa_analysis (str): Q&A 分析内容
             - pdf_url (str): PDF 下载链接
         show_date (bool): 是否显示发布日期，默认为 True
+        recommendation_label (str): 推荐理由字段的显示标签
         
     Returns:
         str: 完整的 Markdown 格式论文卡片
@@ -146,6 +160,9 @@ def generate_paper_card(paper, show_date=True):
     if show_date and paper.get("published_date"):
         meta_parts.append(f"📅 {paper['published_date']}")
     meta_parts.append(f"⭐ {rating}")
+    rec_score = current_recommendation_score(paper)
+    if rec_score is not None:
+        meta_parts.append(f"🎯 推荐 {rec_score}/100")
     if paper.get("primary_category"):
         meta_parts.append(f"📂 {paper['primary_category']}")
     lines.append(" | ".join(meta_parts))
@@ -168,6 +185,10 @@ def generate_paper_card(paper, show_date=True):
     # 价值评价部分（如果有）
     if paper.get("value_comment"):
         lines.append(f"**评价:** {paper['value_comment']}")
+        lines.append("")
+
+    if rec_score is not None and paper.get("recommendation_reason"):
+        lines.append(f"**{recommendation_label}:** {paper['recommendation_reason']}")
         lines.append("")
 
     # Q&A 分析部分（如果有）
@@ -245,13 +266,20 @@ def generate_readme():
         lines.append(" | ".join(tag_links))
         lines.append("")
 
-    # 最新论文列表（按评级排序）
-    lines.append("## 📄 最新论文（按评级排序）")
+    interest_hash = get_research_interest_hash()
+
+    # 最新论文列表（按推荐/评级排序）
+    heading = "## 📄 最新论文（按推荐排序）" if interest_hash else "## 📄 最新论文（按评级排序）"
+    lines.append(heading)
     lines.append("")
 
-    # 筛选有评级的论文并按评级降序排序
+    # 筛选有评级的论文并按推荐分/评级降序排序
     rated_papers = [p for p in papers if p.get("rating") is not None]
-    rated_papers.sort(key=lambda x: (-x.get("rating", 0), x.get("published_date", "")))
+    rated_papers.sort(key=lambda x: (
+        -(current_recommendation_score(x, interest_hash) if current_recommendation_score(x, interest_hash) is not None else -1),
+        -x.get("rating", 0),
+        x.get("published_date", ""),
+    ))
 
     # 最多显示 100 篇论文
     for paper in rated_papers[:100]:
@@ -284,9 +312,8 @@ def generate_daily_report(date_str=None):
     生成包含以下内容的每日报告：
     1. 日期标题
     2. 当日统计（论文数、已分析数、平均评级）
-    3. 高价值论文（4-5 星）
-    4. 值得关注论文（2-3 星）
-    5. 其他论文（0-1 星）
+    3. 个性化推荐（如已启用）
+    4. 全部论文
     
     Args:
         date_str (str 或 None): 日期字符串，格式为 "YYYY-MM-DD"
@@ -315,41 +342,40 @@ def generate_daily_report(date_str=None):
         total = stats.get("total", 0)
         analyzed = stats.get("analyzed", 0)
         avg_rating = stats.get("avg_rating", 0)
-        lines.append(f"📊 今日论文: {total} 篇 | 已分析: {analyzed} 篇 | 平均评级: {avg_rating:.1f if avg_rating else 'N/A'}")
+        avg_rating_text = f"{avg_rating:.1f}" if avg_rating is not None else "N/A"
+        lines.append(f"📊 今日论文: {total} 篇 | 已分析: {analyzed} 篇 | 平均评级: {avg_rating_text}")
         lines.append("")
 
-    # 论文列表（按评级分类）
+    # 论文列表（按推荐分/评级排序）
     if not papers:
         lines.append("今日暂无论文。")
     else:
-        # 筛选有评级的论文并按评级降序排序
+        research_interests = get_personalization_config().get("research_interests", "")
+        interest_hash = get_research_interest_hash(research_interests)
+        # 筛选有评级的论文并按推荐分/评级降序排序
         rated_papers = [p for p in papers if p.get("rating") is not None]
-        rated_papers.sort(key=lambda x: -x.get("rating", 0))
+        rated_papers.sort(key=lambda x: (
+            -(current_recommendation_score(x, interest_hash) if current_recommendation_score(x, interest_hash) is not None else -1),
+            -x.get("rating", 0),
+        ))
 
-        # 按评级分类
-        high_rated = [p for p in rated_papers if p.get("rating", 0) >= 4]  # 高价值：4-5 星
-        mid_rated = [p for p in rated_papers if 2 <= p.get("rating", 0) < 4]  # 关注：2-3 星
-        low_rated = [p for p in rated_papers if p.get("rating", 0) < 2]  # 其他：0-1 星
-
-        # 高价值论文部分
-        if high_rated:
-            lines.append("## ⭐⭐⭐⭐+ 高价值论文")
+        recommended = [p for p in rated_papers if (current_recommendation_score(p, interest_hash) or 0) >= 60]
+        if recommended:
+            lines.append("## 🎯 个性化推荐")
             lines.append("")
-            for paper in high_rated:
-                lines.append(generate_paper_card(paper, show_date=False))
+            if research_interests:
+                lines.append("**研究兴趣:**")
+                lines.append("")
+                for line in research_interests.splitlines() or [research_interests]:
+                    lines.append(f"> {line}")
+                lines.append("")
+            for paper in recommended:
+                lines.append(generate_paper_card(paper, show_date=False, recommendation_label="推荐语"))
 
-        # 值得关注论文部分
-        if mid_rated:
-            lines.append("## ⭐⭐⭐ 值得关注")
+        if rated_papers:
+            lines.append("## 📋 全部论文")
             lines.append("")
-            for paper in mid_rated:
-                lines.append(generate_paper_card(paper, show_date=False))
-
-        # 其他论文部分
-        if low_rated:
-            lines.append("## ⭐⭐ 其他论文")
-            lines.append("")
-            for paper in low_rated:
+            for paper in rated_papers:
                 lines.append(generate_paper_card(paper, show_date=False))
 
     # 写入文件

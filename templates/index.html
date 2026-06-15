@@ -71,6 +71,7 @@
                             {% for i in range(5) %}
                                 {% if i < paper.rating %}★{% else %}☆{% endif %}
                             {% endfor %}
+                            {{ paper.rating }}★
                         </span>
                         {% endif %}
                     </div>

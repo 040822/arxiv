@@ -50,6 +50,7 @@
                             {% for i in range(5) %}
                                 {% if i < paper.rating %}★{% else %}☆{% endif %}
                             {% endfor %}
+                            {{ paper.rating }}★
                         </span>
                         {% endif %}
                         <span class="meta-item todo-time">

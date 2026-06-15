@@ -42,14 +42,15 @@ def run_full_pipeline():
     1. 初始化数据库（创建表、迁移结构）
     2. 从 arXiv 抓取最新论文
     3. 使用 AI 分析未处理的论文
-    4. 生成 Markdown 报告（README + 每日报告）
+    4. 按研究兴趣补齐个性化推荐分（如已配置）
+    5. 生成 Markdown 报告（README + 每日报告）
     
     每个步骤都会记录日志，包括开始和完成状态。
     """
     # 延迟导入，避免循环依赖
     from database import init_db
     from fetcher import fetch_latest_papers
-    from analyzer import analyze_pending_papers
+    from analyzer import analyze_pending_papers, recommend_pending_papers
     from markdown_gen import generate_all_markdown
     from settings import get_concurrency
 
@@ -59,22 +60,27 @@ def run_full_pipeline():
     logger.info("=" * 60)
 
     # 步骤 1: 初始化数据库
-    logger.info("[1/4] Initializing database...")
+    logger.info("[1/5] Initializing database...")
     init_db()
 
     # 步骤 2: 抓取最新论文
-    logger.info("[2/4] Fetching latest papers from arXiv...")
+    logger.info("[2/5] Fetching latest papers from arXiv...")
     new_papers = fetch_latest_papers()
     logger.info(f"Fetched {len(new_papers)} new papers.")
 
     # 步骤 3: AI 分析论文（默认最多 100 篇）
-    logger.info("[3/4] Analyzing papers with AI...")
+    logger.info("[3/5] Analyzing papers with AI...")
     concurrency = get_concurrency()
     analyzed_count = analyze_pending_papers(limit=100, concurrency=concurrency)
     logger.info(f"Analyzed {analyzed_count} papers.")
 
-    # 步骤 4: 生成 Markdown 报告
-    logger.info("[4/4] Generating Markdown reports...")
+    # 步骤 4: 个性化推荐评分（如已设置研究兴趣）
+    logger.info("[4/5] Scoring personalized recommendations...")
+    recommended_count = recommend_pending_papers(limit=1000, concurrency=concurrency)
+    logger.info(f"Recommended {recommended_count} papers.")
+
+    # 步骤 5: 生成 Markdown 报告
+    logger.info("[5/5] Generating Markdown reports...")
     readme_path, daily_path = generate_all_markdown()
     logger.info(f"README: {readme_path}")
     logger.info(f"Daily report: {daily_path}")

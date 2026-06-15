@@ -12,7 +12,7 @@
 
 ## 1. 项目概述
 
-自动从 arXiv 抓取 AI/机器人领域论文，调用 OpenAI 兼容 API 做基础分析（标签、评级、中文摘要）和按需深度阅读（Q&A），存入 SQLite 数据库，通过 Flask Web 界面浏览。
+自动从 arXiv 抓取 AI/机器人领域论文，调用 OpenAI 兼容 API 做基础分析（标签、中文摘要、简评）和按需深度阅读（Q&A），存入 SQLite 数据库，通过 Flask Web 界面浏览。论文评级由用户手动维护。
 
 **技术栈:** Python 3.10+ / Flask / SQLite / APScheduler / arxiv-py / OpenAI SDK / PyMuPDF
 
@@ -26,11 +26,12 @@
 
 ```
 arxiv/
-├── config.py           # 硬编码配置（分类、标签候选、评级标准、路径）
+├── config.py           # 硬编码配置（分类、标签候选、路径）
 ├── settings.py         # 运行时配置（JSON文件：供应商、prompt、并发数、定时任务、密码）
 ├── database.py         # SQLite 数据库全部操作（CRUD、迁移、任务日志）
 ├── fetcher.py          # arXiv API 论文抓取（去重、按分类拉取）
 ├── analyzer.py         # AI 分析逻辑（并发调用、PDF全文提取、Q&A生成）
+├── backup.py           # WebDAV 云同步备份（SQLite 快照、zip 打包、上传/清理）
 ├── pdf_reader.py       # PDF 下载与文本提取（PyMuPDF，缓存到 data/pdf_cache/）
 ├── markdown_gen.py     # Markdown 报告生成（README + 每日报告）
 ├── app.py              # Flask Web 服务（路由、API、APScheduler定时任务）
@@ -86,9 +87,14 @@ CREATE TABLE analysis (
     tags TEXT,                         -- JSON 数组，如 ["VLA","World Model"]
     summary_cn TEXT,                   -- Abstract 中文翻译
     summary_en TEXT,                   -- 英文摘要（当前未使用）
-    rating INTEGER DEFAULT 0,          -- 0-5 星
+    rating INTEGER DEFAULT 0,          -- 用户手动评级（0-5 星）
+    legacy_ai_rating INTEGER,          -- 历史 AI 自动评级备份
     value_comment TEXT,                -- 评价
     qa_analysis TEXT,                  -- Q&A 深度阅读（Markdown 格式）
+    recommendation_score INTEGER,      -- 个性化推荐分（0-100）
+    recommendation_reason TEXT,        -- 推荐理由
+    recommendation_interest_hash TEXT, -- 对应研究兴趣哈希
+    recommendation_analyzed_at TEXT,   -- 推荐评分时间
     analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 ```
@@ -130,7 +136,7 @@ analyzer.analyze_pending_papers(limit, concurrency)
     → get_prompt_profile("basic_analysis") 获取稳定 Prompt 前缀
     → 论文标题/作者/摘要作为独立 JSON message 放在最后
     → OpenAI chat.completions.create()
-    → 解析 JSON 响应：{tags, rating, summary_cn, value_comment}
+    → 解析 JSON 响应：{tags, summary_cn, value_comment}
   → insert_analysis() 写入 analysis 表（含重复检查）
 
 analyzer.analyze_paper_full(paper_data)
@@ -151,6 +157,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
     → analyze_pending_papers()
     → generate_report_content(latest_date)
     → save_report()
+    → run_webdav_backup()  # 如已启用；失败单独记录，不中断日报任务
     → finish_task_log(status="success")
 ```
 
@@ -161,7 +168,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 ### 5.1 config.py（硬编码，需改代码）
 - `ARXIV_CATEGORIES` — 监控的 arXiv 分类
 - `TAG_CANDIDATES` — AI 标签候选列表
-- `RATING_CRITERIA` — 评级标准文本
+- `RATING_CRITERIA` — 旧版评级标准兼容文本；当前 AI 基础分析不再使用
 - `ANALYSIS_CONCURRENCY` — 默认并发数
 - `SCHEDULE_HOUR/MINUTE` — 定时任务首次默认时间；运行后以 `settings.json` 的 `schedule` 为准
 - `WEB_HOST/PORT` — Web 服务地址
@@ -172,6 +179,16 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
   "active_provider": "deepseek",
   "concurrency": 5,
   "admin_password": "sha256...",
+  "session_secret": "随机生成的 Flask session 签名密钥",
+  "personalization": {"research_interests": "用户研究兴趣"},
+  "webdav_backup": {
+    "enabled": false,
+    "url": "https://example.com/remote.php/dav/files/user",
+    "username": "webdav用户名",
+    "password": "webdav密码或应用密码",
+    "remote_dir": "arxiv-backups",
+    "history_days": 3
+  },
   "schedule": {"enabled": true, "hour": 10, "minute": 0},
   "providers": {
     "deepseek": {
@@ -190,17 +207,19 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
   },
   "prompts": {
     "system_prompt": "...",
-    "user_prompt": "...{title}...{authors}...{abstract}...{tag_candidates}...{rating_criteria}..."
+    "user_prompt": "...{title}...{authors}...{abstract}...{tag_candidates}..."
   },
   "prompt_profiles": {
-    "basic_analysis": {"system": "...", "instruction": "...{tag_candidates}...{rating_criteria}..."},
+    "basic_analysis": {"system": "...", "instruction": "...{tag_candidates}..."},
     "deep_reading": {"system": "...", "instruction": "..."},
-    "report_summary": {"system": "...", "instruction": "..."}
+    "report_summary": {"system": "...", "instruction": "..."},
+    "recommendation": {"system": "...", "instruction": "...返回 recommendation_score/recommendation_reason..."}
   },
   "ai_tasks": {
     "basic_analysis": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1200},
     "deep_reading": {"provider_key": "deepseek", "model": "deepseek-reasoner", "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 6000},
-    "report_summary": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1000}
+    "report_summary": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1000},
+    "recommendation": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 500}
   }
 }
 ```
@@ -209,7 +228,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 - `load_settings()` / `save_settings()` — 读写JSON（含自动迁移）
 - `get_ai_config()` — 获取当前激活供应商的 API 配置
 - `get_ai_task_config(task_key)` — 获取某个 AI 功能的实际供应商、模型和参数配置
-- `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存基础分析、深度阅读、报告导读的模型路由
+- `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存基础分析、深度阅读、报告导读、个性化推荐的模型路由
 - `build_chat_completion_kwargs()` — 统一构建 Chat Completions 参数（思考模型会省略采样参数）
 - `normalize_provider_config()` — 补齐供应商配置字段，兼容旧版 settings.json
 - `get_prompt_profile()` / `get_prompt_profiles()` — 获取任务级 Prompt Profile；`get_prompts()` 保留旧接口兼容
@@ -218,8 +237,11 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 - `get_schedule_config()` / `save_schedule_config()` — 获取/保存每日定时任务配置
 - `get_fetch_config()` / `save_fetch_config()` — 抓取配置（请求间隔、批次天数、批次间隔）
 - `get_proxy_config()` / `save_proxy_config()` — 代理配置
+- `get_personalization_config()` / `save_personalization_config()` — 个性化推荐研究兴趣
+- `get_webdav_backup_config()` / `save_webdav_backup_config()` — WebDAV 云备份配置；GET 给前端时必须脱敏密码
 - `add/remove/switch/update_provider()` — 供应商 CRUD
 - `get/set/verify/has_admin_password()` — 管理密码
+- `get_session_secret()` — 获取/生成持久 Flask session 签名密钥
 
 > **⚠️ 重要：** 在 `load_settings()` 中添加新字段时，必须在合并逻辑中显式添加对应的 `if "key" in migrated: merged["key"] = migrated["key"]`，否则新字段在读取时会丢失！这是已踩过的坑。
 
@@ -275,6 +297,10 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 | `/api/prompts` | GET/POST | 读取/保存Prompt |
 | `/api/settings/ai-tasks` | GET/POST | 读取/保存 AI 功能模型路由 |
 | `/api/settings/ai-usage` | GET | 查看近期 LLM token 用量 |
+| `/api/settings/personalization` | GET/POST | 读取/保存研究兴趣 |
+| `/api/recommendations/recalculate` | POST | 手动重算个性化推荐评分 |
+| `/api/settings/webdav-backup` | GET/POST | 读取/保存 WebDAV 云备份配置（GET 不返回明文密码） |
+| `/api/backup/webdav/run` | POST | 手动立即执行 WebDAV 备份 |
 | `/api/settings/concurrency` | POST | 保存并发数 |
 | `/api/settings/schedule` | GET/POST | 读取/保存每日定时任务配置 |
 | `/api/db/info` | GET | 数据库信息 |
@@ -326,12 +352,12 @@ if "new_column" not in columns:
 
 调用模型时必须通过 `build_chat_completion_kwargs()` 构建参数，不要在业务代码中直接固定传 `temperature` 或 `max_tokens`。
 
-管理密码设置后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用。`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
+管理密码设置后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用。登录状态通过签名 cookie 持久保存 180 天，默认使用 `settings.json` 中的 `session_secret` 保证服务重启后仍有效；如果设置了 `FLASK_SECRET_KEY` 则优先使用环境变量。修改管理密码会使旧登录状态失效。`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
 
 ### 7.4 修改 Prompt
 - 新版 prompt 主要存储在 `data/settings.json` 的 `prompt_profiles` 字段，按 `basic_analysis`、`deep_reading`、`report_summary` 拆分
 - 旧版 `prompts.system_prompt/user_prompt` 保留为兼容字段，并映射到 `deep_reading`
-- 基础分析 Prompt Profile 可使用 `{tag_candidates}`、`{rating_criteria}`；深度阅读只描述 Q&A 输出；论文标题、作者、摘要、PDF 全文会作为最后一条动态 JSON message 传入
+- 基础分析 Prompt Profile 可使用 `{tag_candidates}`；AI 不再自动生成评级，`rating` 由用户手动维护；深度阅读只描述 Q&A 输出；论文标题、作者、摘要、PDF 全文会作为最后一条动态 JSON message 传入
 - 修改 AI 调用逻辑时不要重新把动态论文内容拼回稳定 instruction，否则会降低 prompt cache 命中率
 - 深度阅读按质量优先调用 `get_paper_full_text(max_chars=None)`，不截断 PDF 全文；基础分析只使用摘要以降低成本
 
@@ -377,6 +403,13 @@ python -c "from database import *; init_db(); print(get_paper_count(), 'papers,'
 
 # 备份数据库
 cp data/papers.db data/papers.db.bak
+
+# WebDAV 云备份
+# 设置页「数据库 → WebDAV 云同步备份」可启用每日自动同步。
+# 备份包包含 papers.db 一致性快照、data/settings.json 和 output/，
+# 会包含 API Key、管理密码哈希和 session secret 等敏感配置。
+# 远端文件：arxiv-backup-latest.zip + arxiv-backup-YYYYMMDD-HHMMSS.zip，
+# 历史备份默认保留 3 天，可在设置页修改。
 ```
 
 ---

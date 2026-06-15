@@ -23,12 +23,16 @@
         </nav>
 
         <div class="report-header">
-            <h2>📊 {{ report.report_date }} 每日报告</h2>
+            <div class="report-header-top">
+                <h2>📊 {{ report.report_date }} 每日报告</h2>
+                <button id="regenerate-report-btn" class="action-btn btn-primary" onclick="regenerateReport(this)">🔄 重新生成该日报告</button>
+            </div>
             <div class="report-meta">
                 <span>📄 {{ report.paper_count }} 篇论文</span>
                 <span>🔍 {{ report.analyzed_count }} 篇已分析</span>
                 <span>⭐ 平均评级 {{ report.avg_rating }}</span>
             </div>
+            <div id="regenerate-report-status" class="action-status"></div>
         </div>
 
         <div class="report-content">
@@ -39,5 +43,38 @@
             <p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p>
         </footer>
     </div>
+    <script>
+        const reportDate = {{ report.report_date | tojson }};
+
+        async function regenerateReport(btn) {
+            if (!confirm(`重新生成 ${reportDate} 的日报告？当前报告内容会被覆盖。`)) return;
+            const statusEl = document.getElementById('regenerate-report-status');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ 生成中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在重新生成报告...';
+
+            try {
+                const resp = await fetch(`/api/generate?date=${encodeURIComponent(reportDate)}`, {method: 'POST'});
+                const result = await resp.json();
+                if (resp.status === 401 || result.auth_required) {
+                    window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+                    return;
+                }
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + (result.message || '操作完成');
+                if (result.status === 'ok') {
+                    setTimeout(() => window.location.reload(), 800);
+                }
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+    </script>
 </body>
 </html>

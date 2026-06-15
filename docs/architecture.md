@@ -87,17 +87,41 @@
   → update_analysis() 仅更新 qa_analysis
 ```
 
+#### 个性化推荐
+
+```
+设置页保存研究兴趣 → 仅写入 settings.personalization
+手动重算 / 每日任务 / 一键执行 / 默认生成报告 → analyzer.recommend_pending_papers()
+  → get_papers_for_recommendation() 仅取已有基础分析且缺失/过期推荐分的非隐藏论文
+  → recommendation 任务模型返回 recommendation_score/reason
+  → update_recommendation_result() 写入当前兴趣 hash
+```
+
 ### 3. 报告生成流
 
 ```
 用户点击"生成报告" → app.py /api/generate → database.py
+  → 若研究兴趣非空且未传 recommend=0，先补齐目标日期缺失/过期推荐分
   → generate_report_content(date)
   → 查询指定日期的论文
-  → 生成 HTML（统计、分类分布、标签、高分论文、全部论文）
+  → 生成 HTML（统计、个性化推荐〔研究兴趣/中文摘要/推荐语/评价〕、分类分布、标签、全部论文）
   → save_report() 写入 reports 表
 ```
 
-### 4. 搜索流
+### 4. WebDAV 云备份流
+
+```
+设置页保存 WebDAV 配置 → settings.webdav_backup
+手动备份 / 每日任务结束 → backup.run_webdav_backup()
+  → SQLite online backup 生成 papers.db 一致性快照
+  → 打包 papers.db + settings.json + output/ + manifest.json
+  → WebDAV MKCOL/PUT 上传 latest 和日期历史文件
+  → PROPFIND/DELETE 清理超过 history_days 的历史备份
+```
+
+每日任务中的云备份失败只写入 `webdav_backup` 任务日志和设置页最近错误，不中断抓取、分析和日报生成。
+
+### 5. 搜索流
 
 ```
 用户输入关键词 → GET /search?q=xxx → database.py
@@ -172,7 +196,7 @@ app.py
 
 **原因：**
 - config.py 存放不常改的配置（分类、标签、路径）
-- settings.json 存放用户可改的配置（供应商、prompt、代理、抓取参数、定时任务）
+- settings.json 存放用户可改的配置（供应商、prompt、任务级模型路由、个性化研究兴趣、WebDAV 云备份、代理、抓取参数、定时任务）
 - 两者合并使用，优先级 settings.json > config.py
 
 ---
@@ -207,6 +231,8 @@ app.py
 - 管理密码使用 SHA-256 哈希存储
 - API Key 在接口返回时脱敏（只显示前 4 后 4 位）
 - 设置管理密码后，设置页、任务页、写接口和敏感设置读取接口需要登录
+- 管理登录默认通过签名 cookie 持久保存 180 天，使用 `session_secret` 保持服务重启后的登录状态，修改管理密码后旧登录状态失效
 - 供应商列表接口只返回 `api_key_masked`，不返回完整 `api_key`
 - 报告 HTML 由后端生成，数据库/AI 内容进入 HTML 前必须转义
-- 代理配置明文存储在 settings.json
+- 代理配置和 WebDAV 密码明文存储在 settings.json
+- WebDAV 备份包按设计包含原始 settings.json，因此也包含 API Key、管理密码哈希和 session secret

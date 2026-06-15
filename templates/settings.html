@@ -47,7 +47,7 @@
                     <button class="action-btn" id="ai-task-toggle-btn" onclick="toggleAiTaskRoutes()">展开</button>
                 </div>
                 <div id="ai-task-route-body" style="display:none;margin-top:12px;">
-                    <p class="section-desc">为不同 AI 功能单独选择供应商、模型和参数。基础分析负责标签/评级/摘要，建议廉价模型；深度阅读只补充 Q&A，可使用高智能/高思考模型；报告导读默认只在任务页勾选时调用。</p>
+                    <p class="section-desc">为不同 AI 功能单独选择供应商、模型和参数。基础分析负责标签、中文摘要和简评，建议廉价模型；评级由用户手动维护；深度阅读只补充 Q&A，可使用高智能/高思考模型；报告导读默认只在任务页勾选时调用。</p>
                     <div id="ai-task-routes"></div>
                     <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveAiTasks()">💾 保存功能模型路由</button></div>
                     <div id="ai-task-status" class="action-status"></div>
@@ -130,6 +130,26 @@
             </div>
 
             <div class="settings-section">
+                <h3>🎯 个性化推荐</h3>
+                <p class="section-desc">填写你的研究兴趣，推荐评分会使用独立的「个性化推荐」模型路由计算，不会影响原有论文评级。保存兴趣不会自动重算历史论文。</p>
+                <div class="form-group">
+                    <label>研究兴趣</label>
+                    <textarea id="research-interests" rows="6" maxlength="4000" placeholder="例如：我关注机器人基础模型、VLA、长时序任务规划、具身智能评测，以及能迁移到真实机械臂的模仿学习方法。"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="max-width:220px;">
+                        <label>手动重算数量</label>
+                        <input type="number" id="recommend-limit" min="1" max="1000" step="10" value="200">
+                    </div>
+                </div>
+                <div class="settings-actions">
+                    <button class="action-btn btn-primary" onclick="savePersonalization()">💾 保存研究兴趣</button>
+                    <button class="action-btn" onclick="recalculateRecommendations(this)">🎯 手动重算推荐评分</button>
+                </div>
+                <div id="personalization-status" class="action-status"></div>
+            </div>
+
+            <div class="settings-section">
                 <h3>🌐 代理设置</h3>
                 <p class="section-desc">配置 arXiv 论文抓取使用的代理服务器</p>
                 <div class="form-group"><label><input type="checkbox" id="proxy-enabled" onchange="toggleProxyFields()"> 启用代理</label></div>
@@ -170,13 +190,14 @@
 
             <div class="settings-section">
                 <h3>📝 Prompt 设置</h3>
-                <p class="section-desc">按功能维护稳定 Prompt 前缀。论文标题、摘要、PDF 全文等动态内容会作为独立 JSON 消息放在最后，以提高缓存命中率；基础分析可使用 <code>{tag_candidates}</code> <code>{rating_criteria}</code>，深度阅读只需描述 Q&A 输出。</p>
+                <p class="section-desc">按功能维护稳定 Prompt 前缀。论文标题、摘要、PDF 全文等动态内容会作为独立 JSON 消息放在最后，以提高缓存命中率；基础分析可使用 <code>{tag_candidates}</code>，深度阅读只需描述 Q&A 输出。</p>
                 <div class="form-group" style="max-width:280px;">
                     <label>Prompt Profile</label>
                     <select id="prompt-profile-select" onchange="switchPromptProfile()">
                         <option value="basic_analysis">基础分析</option>
                         <option value="deep_reading" selected>深度阅读</option>
                         <option value="report_summary">报告导读</option>
+                        <option value="recommendation">个性化推荐</option>
                     </select>
                 </div>
                 <div class="form-group"><label>System Prompt</label><textarea id="system-prompt" rows="4"></textarea></div>
@@ -204,6 +225,41 @@
             <div class="settings-section">
                 <h3>📂 存储路径</h3>
                 <div id="db-paths" class="db-info-grid"></div>
+            </div>
+            <div class="settings-section">
+                <h3>☁️ WebDAV 云同步备份</h3>
+                <p class="section-desc">每天定时任务结束后自动备份数据库快照、<code>settings.json</code> 和 <code>output/</code> 报告目录。注意：备份包会包含 API Key、管理密码哈希和 session secret 等敏感配置。</p>
+                <div class="form-group"><label><input type="checkbox" id="webdav-enabled"> 启用每日自动 WebDAV 备份</label></div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>WebDAV 地址</label>
+                        <input type="text" id="webdav-url" placeholder="https://example.com/remote.php/dav/files/user">
+                    </div>
+                    <div class="form-group">
+                        <label>远端目录</label>
+                        <input type="text" id="webdav-remote-dir" placeholder="arxiv-backups">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>用户名</label>
+                        <input type="text" id="webdav-username" autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label>密码 / 应用密码</label>
+                        <div class="input-group"><input type="password" id="webdav-password" autocomplete="new-password" placeholder="留空表示不修改"><button class="btn-small" onclick="togglePwd('webdav-password')">👁</button></div>
+                    </div>
+                    <div class="form-group" style="max-width:180px;">
+                        <label>历史保留天数</label>
+                        <input type="number" id="webdav-history-days" min="1" max="3650" step="1" value="3">
+                    </div>
+                </div>
+                <div class="settings-actions">
+                    <button class="action-btn btn-primary" onclick="saveWebdavBackup()">💾 保存云备份配置</button>
+                    <button class="action-btn" onclick="runWebdavBackup(this)">☁️ 立即备份</button>
+                </div>
+                <div id="webdav-backup-status" class="db-info-grid webdav-status-grid"></div>
+                <div id="webdav-backup-action-status" class="action-status"></div>
             </div>
         </div>
 
@@ -289,6 +345,7 @@
         let aiUsageState = { days: 7, selectedModel: '' };
         let currentPromptProfile = 'deep_reading';
         let modelFetchTimer = null;
+        let recommendationEventSource = null;
 
         function escapeHtml(value) {
             return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -317,11 +374,13 @@
         }
 
         async function init() {
-            const [provResp, presetResp, promptResp, statsResp, proxyResp, fetchResp, taskResp, usageResp] = await Promise.all([
+            const [provResp, presetResp, promptResp, statsResp, proxyResp, fetchResp, taskResp, usageResp, personalizationResp, webdavResp] = await Promise.all([
                 fetch('/api/providers'), fetch('/api/providers/presets'),
                 fetch('/api/prompts'), fetch('/api/stats'), fetch('/api/settings/proxy'),
                 fetch('/api/settings/fetch'), fetch('/api/settings/ai-tasks'),
-                fetch('/api/settings/ai-usage?days=7&group_by=model')
+                fetch('/api/settings/ai-usage?days=7&group_by=model'),
+                fetch('/api/settings/personalization'),
+                fetch('/api/settings/webdav-backup')
             ]);
             providerData = await provResp.json();
             presets = await presetResp.json();
@@ -331,13 +390,17 @@
             const fetchData = await fetchResp.json();
             aiTaskData = await taskResp.json();
             aiUsageData = await usageResp.json();
+            const personalizationData = await personalizationResp.json();
+            const webdavData = await webdavResp.json();
 
             renderProviderList();
             renderPresetGrid();
             renderAiTasks(aiTaskData.tasks || {});
             renderAiUsage(aiUsageData);
             renderPrompts(promptData);
+            renderWebdavBackup(webdavData);
             if (statsData.concurrency !== undefined) document.getElementById('concurrency').value = statsData.concurrency;
+            document.getElementById('research-interests').value = personalizationData.research_interests || '';
 
             document.getElementById('proxy-enabled').checked = !!proxyData.enabled;
             document.getElementById('proxy-http').value = proxyData.http || '';
@@ -351,9 +414,10 @@
 
         /* ---- AI Task Routing ---- */
         const AI_TASK_META = {
-            basic_analysis: {title: '基础分析', desc: '批量/自动分析使用，生成标签、评级、中文摘要和简评。建议廉价模型，默认不使用思考。'},
+            basic_analysis: {title: '基础分析', desc: '批量/自动分析使用，生成标签、中文摘要和简评。评级由用户手动维护。建议廉价模型，默认不使用思考。'},
             deep_reading: {title: '深度阅读', desc: '单篇生成/刷新 Q&A 深度阅读使用，不覆盖基础分析字段。可使用高智能模型和 high 思考。'},
             report_summary: {title: '报告导读', desc: '仅在任务页勾选“生成 AI 导读”时调用。建议廉价模型。'},
+            recommendation: {title: '个性化推荐', desc: '根据研究兴趣计算 0-100 推荐评分和推荐理由。独立于基础分析模型，可单独配置廉价模型。'},
         };
 
         function taskFieldId(taskKey, name) {
@@ -1004,6 +1068,71 @@
             } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
         }
 
+        async function savePersonalization() {
+            const statusEl = document.getElementById('personalization-status');
+            const research_interests = document.getElementById('research-interests').value.trim();
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在保存...';
+            try {
+                const resp = await fetch('/api/settings/personalization', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({research_interests})
+                });
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + (result.message || '保存失败');
+                if (result.personalization) {
+                    document.getElementById('research-interests').value = result.personalization.research_interests || '';
+                }
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            }
+        }
+
+        async function recalculateRecommendations(btn) {
+            const statusEl = document.getElementById('personalization-status');
+            const limit = Math.max(1, Math.min(1000, parseInt(document.getElementById('recommend-limit').value) || 200));
+            const origText = btn.textContent;
+            const taskId = 'recommend_' + Date.now();
+            if (recommendationEventSource) recommendationEventSource.close();
+            recommendationEventSource = new EventSource('/api/progress/' + taskId);
+            recommendationEventSource.onmessage = function(e) {
+                try {
+                    const data = JSON.parse(e.data);
+                    const total = data.total || 0;
+                    const current = data.current || 0;
+                    statusEl.className = data.status === 'error' ? 'action-status error' : 'action-status info';
+                    statusEl.textContent = total ? `推荐评分进度：${current}/${total}，成功 ${data.success || 0}，失败 ${data.fail || 0}` : (data.message || '正在计算推荐评分...');
+                    if (data.status === 'completed' || data.status === 'error') {
+                        recommendationEventSource.close();
+                        recommendationEventSource = null;
+                    }
+                } catch (err) {}
+            };
+            recommendationEventSource.onerror = function() {
+                if (recommendationEventSource) recommendationEventSource.close();
+                recommendationEventSource = null;
+            };
+            btn.disabled = true;
+            btn.textContent = '⏳ 重算中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在计算推荐评分...';
+            try {
+                const resp = await fetch(`/api/recommendations/recalculate?task_id=${encodeURIComponent(taskId)}&limit=${limit}`, {method: 'POST'});
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + (result.message || '操作完成');
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
+            }
+        }
+
         /* ---- Proxy Management ---- */
         function toggleProxyFields() {
             const enabled = document.getElementById('proxy-enabled').checked;
@@ -1109,6 +1238,85 @@
         }
 
         /* ---- Database Info ---- */
+        function renderWebdavBackup(data) {
+            document.getElementById('webdav-enabled').checked = !!data.enabled;
+            document.getElementById('webdav-url').value = data.url || '';
+            document.getElementById('webdav-username').value = data.username || '';
+            document.getElementById('webdav-password').value = '';
+            document.getElementById('webdav-password').placeholder = data.password_masked ? '已设置，留空不修改' : 'WebDAV 密码或应用密码';
+            document.getElementById('webdav-remote-dir').value = data.remote_dir || 'arxiv-backups';
+            document.getElementById('webdav-history-days').value = data.history_days || 3;
+            renderWebdavStatus(data);
+        }
+
+        function renderWebdavStatus(data) {
+            const statusText = data.last_status === 'success' ? '成功' : (data.last_status === 'error' ? '失败' : '暂无');
+            const statusClass = data.last_status === 'error' ? 'db-stat-value danger' : 'db-stat-value';
+            document.getElementById('webdav-backup-status').innerHTML = `
+                <div class="db-stat"><div class="${statusClass}">${escapeHtml(statusText)}</div><div class="db-stat-label">最近状态</div></div>
+                <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.last_success_at || 'N/A')}</div><div class="db-stat-label">最近成功</div></div>
+                <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.last_uploaded_file || 'N/A')}</div><div class="db-stat-label">最近文件</div></div>
+                <div class="db-stat db-stat-wide"><div class="db-stat-label">错误信息</div><div class="db-stat-value">${escapeHtml(data.last_error || '无')}</div></div>
+            `;
+        }
+
+        async function loadWebdavBackup() {
+            const resp = await fetch('/api/settings/webdav-backup');
+            const data = await resp.json();
+            renderWebdavBackup(data);
+            return data;
+        }
+
+        async function saveWebdavBackup() {
+            const statusEl = document.getElementById('webdav-backup-action-status');
+            const data = {
+                enabled: document.getElementById('webdav-enabled').checked,
+                url: document.getElementById('webdav-url').value.trim(),
+                username: document.getElementById('webdav-username').value.trim(),
+                password: document.getElementById('webdav-password').value,
+                remote_dir: document.getElementById('webdav-remote-dir').value.trim(),
+                history_days: parseInt(document.getElementById('webdav-history-days').value || '3', 10),
+            };
+            try {
+                const resp = await fetch('/api/settings/webdav-backup', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+                if (result.webdav_backup) renderWebdavBackup(result.webdav_backup);
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            }
+        }
+
+        async function runWebdavBackup(btn) {
+            const statusEl = document.getElementById('webdav-backup-action-status');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '备份中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在创建快照并上传到 WebDAV...';
+            try {
+                const resp = await fetch('/api/backup/webdav/run', {method: 'POST'});
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = result.status === 'ok'
+                    ? `✅ ${result.message}（压缩包 ${result.archive_size || 'N/A'}）`
+                    : `❌ ${result.message}`;
+                await loadWebdavBackup();
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
         async function loadDbInfo() {
             try {
                 const resp = await fetch('/api/db/info'); const data = await resp.json();
@@ -1124,8 +1332,13 @@
                     <div class="db-stat db-stat-wide"><div class="db-stat-label">日期范围</div><div class="db-stat-value">${escapeHtml(data.date_range || 'N/A')}</div></div>
                 `;
                 const paths = document.getElementById('db-paths');
+                const fileRows = (data.db_files || []).map(file => (
+                    `<div class="db-path-item"><strong>${escapeHtml(file.name)}:</strong> <code>${escapeHtml(file.path)}</code> <span class="field-hint">${escapeHtml(file.size)}</span></div>`
+                )).join('');
                 paths.innerHTML = `
                     <div class="db-path-item"><strong>数据库文件:</strong> <code>${escapeHtml(data.db_path)}</code></div>
+                    <div class="db-path-item"><strong>数据库文件占用:</strong> ${escapeHtml(data.db_size)} (${escapeHtml(data.db_size_bytes)} bytes)</div>
+                    ${fileRows}
                     <div class="db-path-item"><strong>输出目录:</strong> <code>${escapeHtml(data.output_dir)}</code></div>
                     <div class="db-path-item"><strong>日报目录:</strong> <code>${escapeHtml(data.daily_dir)}</code></div>
                 `;

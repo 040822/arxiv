@@ -36,6 +36,8 @@
 
 未设置管理密码时，系统保持本地免登录兼容。设置管理密码后，`/settings`、`/tasks`、所有 `POST/PUT/DELETE` 写接口、设置读取接口、任务日志接口都需要登录。
 
+管理登录默认通过签名 cookie 持久保存 180 天，不需要“记住我”开关。默认使用 `data/settings.json` 内部字段 `session_secret` 作为 Flask session 签名密钥，因此服务重启后仍可保持登录；如果部署环境设置了 `FLASK_SECRET_KEY`，则优先使用该环境变量。修改管理密码后，旧 cookie 会因密码版本 token 不匹配而失效。
+
 例外：阅读清单的加入/移除接口 `POST/DELETE /api/paper/<arxiv_id>/todo` 为公开轻量操作，不要求管理密码；标记已读/未读仍需要登录。
 
 ```
@@ -151,6 +153,7 @@ POST /api/generate
 |---------------|------|------|
 | `date` | string | 指定日期（留空使用最新日期） |
 | `ai_summary` | bool | 传 `1/true` 时使用 `report_summary` 任务模型生成 AI 导读；默认不调用 LLM |
+| `recommend` | bool | 默认补齐当前研究兴趣下缺失/过期的推荐分；传 `0/false/no/off` 跳过 |
 
 ### 一键执行
 
@@ -246,6 +249,8 @@ Body (JSON)：
 }
 ```
 
+`rating` 为用户手动评级字段。AI 基础分析不再自动生成或覆盖该字段；旧版 AI 评级迁移时备份到 `legacy_ai_rating`。
+
 字段均可选，只传需要更新的字段。
 
 ### 隐藏/取消隐藏
@@ -269,7 +274,7 @@ DELETE /api/paper/<arxiv_id>
 POST /api/paper/<arxiv_id>/reanalyze
 ```
 
-下载 PDF，生成/刷新 Q&A 深度阅读；不会覆盖已有标签、评级、中文摘要和简评。
+下载 PDF，生成/刷新 Q&A 深度阅读；不会覆盖已有标签、手动评级、中文摘要和简评。
 
 ### 添加指定论文
 
@@ -414,11 +419,11 @@ POST /api/prompts                # 保存 prompt
 {
   "profile_key": "deep_reading",
   "system": "...",
-  "instruction": "...{tag_candidates}...{rating_criteria}..."
+  "instruction": "...{tag_candidates}..."
 }
 ```
 
-旧版 `system_prompt/user_prompt` 保存仍可用，会映射到 `deep_reading`。新版 Profile 中论文动态内容不写入 instruction，而是由后端作为最后一条 JSON message 传入；`basic_analysis` 可使用 `{tag_candidates}` 和 `{rating_criteria}`，`deep_reading` 只需要描述 Q&A 输出。
+旧版 `system_prompt/user_prompt` 保存仍可用，会映射到 `deep_reading`。新版 Profile 中论文动态内容不写入 instruction，而是由后端作为最后一条 JSON message 传入；`basic_analysis` 可使用 `{tag_candidates}`，评级由用户手动维护，`deep_reading` 只需要描述 Q&A 输出。
 
 ### 配置管理
 
@@ -428,12 +433,16 @@ POST /api/settings/per_page      # 保存每页数量（5-100）
 GET  /api/settings/ai-tasks      # 获取 AI 功能模型路由
 POST /api/settings/ai-tasks      # 保存 AI 功能模型路由
 GET  /api/settings/ai-usage      # 获取近期 LLM token 用量汇总和趋势
+GET  /api/settings/personalization   # 获取研究兴趣
+POST /api/settings/personalization   # 保存研究兴趣（不自动重算）
 GET  /api/settings/schedule      # 获取每日定时任务配置
 POST /api/settings/schedule      # 保存每日定时任务配置并重建 APScheduler job
 GET  /api/settings/proxy         # 获取代理配置
 POST /api/settings/proxy         # 保存代理配置
 GET  /api/settings/fetch         # 获取抓取配置
 POST /api/settings/fetch         # 保存抓取配置
+GET  /api/settings/webdav-backup # 获取 WebDAV 云备份配置（不返回明文密码）
+POST /api/settings/webdav-backup # 保存 WebDAV 云备份配置
 ```
 
 `/api/settings/ai-usage` 查询参数：
@@ -455,13 +464,55 @@ POST /api/settings/fetch         # 保存抓取配置
 
 保存后会立即重建 APScheduler 中的每日任务。未设置 `data/settings.json.schedule` 时，首次默认值来自 `config.py` 的 `SCHEDULE_HOUR/SCHEDULE_MINUTE`。
 
+`POST /api/settings/webdav-backup` Body：
+
+```json
+{
+    "enabled": true,
+    "url": "https://example.com/remote.php/dav/files/user",
+    "username": "alice",
+    "password": "webdav应用密码",
+    "remote_dir": "arxiv-backups",
+    "history_days": 3
+}
+```
+
+`GET /api/settings/webdav-backup` 只返回 `password_masked`，不会返回明文 `password`。POST 时 `password` 为空会保留已有密码。
+
 `GET/POST /api/settings/ai-tasks` 的任务 key 固定为：
 
 - `basic_analysis`：批量/自动基础分析，建议廉价模型
 - `deep_reading`：单篇 Q&A 深度阅读，默认可启用 high 思考，不覆盖基础分析字段
 - `report_summary`：报告 AI 导读，只在生成报告时显式启用
+- `recommendation`：个性化推荐评分，按研究兴趣返回 `recommendation_score` 和 `recommendation_reason`，模型路由独立配置
 
 每个任务支持独立的 `provider_key`、`model`、`is_thinking`、`thinking_effort`、`max_tokens_enabled/max_tokens`、`temperature/top_p/presence_penalty/frequency_penalty` 及其启用开关。
+
+### 个性化推荐
+
+```
+POST /api/recommendations/recalculate
+```
+
+需要登录。按当前研究兴趣重算缺失或兴趣 hash 过期的推荐分，只处理已有基础分析结果的非隐藏论文。
+
+查询参数：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `task_id` | string | SSE 进度 ID，可通过 `/api/progress/<task_id>` 订阅 |
+| `limit` | int | 最大处理数量，默认 200，最大 1000 |
+| `date` | string | 可选，限制某个发布日期 |
+
+保存研究兴趣只写入配置，不触发 LLM；手动重算、每日定时任务、一键执行和默认报告生成会使用独立 `recommendation` 模型路由补齐推荐分。
+
+### WebDAV 云备份
+
+```
+POST /api/backup/webdav/run
+```
+
+需要登录。立即创建备份包并上传到 WebDAV；即使未启用每日自动备份，也可用于手动测试。备份包包含 `papers.db` 一致性快照、`settings.json` 和 `output/` 报告目录。远端会写入 `arxiv-backup-latest.zip` 和 `arxiv-backup-YYYYMMDD-HHMMSS.zip`，并按 `history_days` 清理过期历史备份。
 
 ### 数据库信息
 
@@ -469,7 +520,7 @@ POST /api/settings/fetch         # 保存抓取配置
 GET /api/db/info
 ```
 
-返回：论文总数、已分析数、标签种类、分类数、数据库大小、日期范围等。
+返回：论文总数、已分析数、标签种类、分类数、日期范围、平均评级、数据库文件占用等。数据库大小会合并统计 `papers.db`、`papers.db-wal` 和 `papers.db-shm`，并在 `db_files` 中返回每个文件的明细。
 
 ### 管理密码
 

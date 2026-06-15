@@ -1,6 +1,6 @@
 # AI 论文数据库 — 文档中心
 
-自动从 arXiv 抓取 AI/机器人领域论文，调用 AI 做基础分析（标签、评级、中文翻译）和按需深度阅读（Q&A），存入 SQLite 数据库，通过 Flask Web 界面浏览。
+自动从 arXiv 抓取 AI/机器人领域论文，调用 AI 做基础分析（标签、中文翻译、简评）和按需深度阅读（Q&A），存入 SQLite 数据库，通过 Flask Web 界面浏览。论文评级由用户手动维护。
 
 ## 📖 文档导航
 
@@ -37,6 +37,7 @@ arxiv/
 ├── database.py         # SQLite 数据库操作
 ├── fetcher.py          # arXiv API 论文抓取
 ├── analyzer.py         # AI 分析（基础/完整）
+├── backup.py           # WebDAV 云同步备份
 ├── pdf_reader.py       # PDF 下载与文本提取
 ├── markdown_gen.py     # Markdown 报告生成
 ├── app.py              # Flask Web 服务 + 定时任务

@@ -33,6 +33,16 @@ from config import DB_PATH, DB_DIR
 logger = logging.getLogger(__name__)
 
 
+def _basic_analysis_missing_condition(alias="a"):
+    """Return SQL condition for missing or incomplete basic AI analysis fields."""
+    return f"""(
+        {alias}.id IS NULL
+        OR {alias}.tags IS NULL OR {alias}.tags = '' OR {alias}.tags = '[]'
+        OR {alias}.summary_cn IS NULL OR {alias}.summary_cn = ''
+        OR {alias}.value_comment IS NULL OR {alias}.value_comment = ''
+    )"""
+
+
 def get_connection():
     """获取数据库连接。
     
@@ -95,9 +105,14 @@ def init_db():
             tags TEXT,                         -- 标签（JSON 数组，如 ["VLA", "World Model"]）
             summary_cn TEXT,                   -- 摘要中文翻译
             summary_en TEXT,                   -- 英文摘要（当前未使用）
-            rating INTEGER DEFAULT 0,          -- 评级（0-5 星）
+            rating INTEGER DEFAULT 0,          -- 用户手动评级（0-5 星）
+            legacy_ai_rating INTEGER,          -- 历史 AI 自动评级备份
             value_comment TEXT,                -- 价值评价（2-3 句话）
             qa_analysis TEXT,                  -- Q&A 深度阅读（Markdown 格式）
+            recommendation_score INTEGER,      -- 个性化推荐分（0-100）
+            recommendation_reason TEXT,        -- 推荐理由
+            recommendation_interest_hash TEXT, -- 对应研究兴趣的哈希
+            recommendation_analyzed_at TEXT,   -- 推荐评分时间
             analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP,  -- 分析时间
             FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE
         )
@@ -120,6 +135,19 @@ def init_db():
     columns = [row["name"] for row in cursor.fetchall()]
     if "qa_analysis" not in columns:
         cursor.execute("ALTER TABLE analysis ADD COLUMN qa_analysis TEXT")
+    if "legacy_ai_rating" not in columns:
+        cursor.execute("ALTER TABLE analysis ADD COLUMN legacy_ai_rating INTEGER")
+        cursor.execute("UPDATE analysis SET legacy_ai_rating = rating, rating = 0")
+    if "recommendation_score" not in columns:
+        cursor.execute("ALTER TABLE analysis ADD COLUMN recommendation_score INTEGER")
+    if "recommendation_reason" not in columns:
+        cursor.execute("ALTER TABLE analysis ADD COLUMN recommendation_reason TEXT")
+    if "recommendation_interest_hash" not in columns:
+        cursor.execute("ALTER TABLE analysis ADD COLUMN recommendation_interest_hash TEXT")
+    if "recommendation_analyzed_at" not in columns:
+        cursor.execute("ALTER TABLE analysis ADD COLUMN recommendation_analyzed_at TEXT")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_recommendation_score ON analysis(recommendation_score)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_recommendation_hash ON analysis(recommendation_interest_hash)")
 
     # 迁移：添加 hidden 字段（论文隐藏标记）
     cursor.execute("PRAGMA table_info(papers)")
@@ -283,9 +311,10 @@ def insert_analysis(paper_id, analysis_data):
             - tags: 标签列表（如 ["VLA", "World Model"]）
             - summary_cn: 中文摘要
             - summary_en: 英文摘要
-            - rating: 评级（0-5）
+            - rating: 用户手动评级（0-5），基础分析默认写入 0
             - value_comment: 价值评价
             - qa_analysis: Q&A 深度阅读（可选，默认为空字符串）
+            - recommendation_score/reason/interest_hash: 个性化推荐字段（可选）
             
     返回：
         int or None: 成功返回分析 ID，已存在则返回 None
@@ -301,16 +330,23 @@ def insert_analysis(paper_id, analysis_data):
         return None
 
     cursor.execute("""
-        INSERT INTO analysis (paper_id, tags, summary_cn, summary_en, rating, value_comment, qa_analysis)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO analysis (
+            paper_id, tags, summary_cn, summary_en, rating, value_comment, qa_analysis,
+            recommendation_score, recommendation_reason, recommendation_interest_hash, recommendation_analyzed_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         paper_id,
         json.dumps(analysis_data["tags"], ensure_ascii=False),
         analysis_data["summary_cn"],
         analysis_data["summary_en"],
-        analysis_data["rating"],
+        int(analysis_data.get("rating", 0)),
         analysis_data["value_comment"],
         analysis_data.get("qa_analysis", ""),
+        analysis_data.get("recommendation_score"),
+        analysis_data.get("recommendation_reason", ""),
+        analysis_data.get("recommendation_interest_hash", ""),
+        analysis_data.get("recommendation_analyzed_at"),
     ))
     conn.commit()
     analysis_id = cursor.lastrowid
@@ -392,7 +428,11 @@ def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, of
         total = cursor.fetchone()[0]
 
     # 构建完整查询：选择字段、排序、分页
-    query = "SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis, a.analyzed_at " + base_query
+    query = """
+        SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis,
+               a.recommendation_score, a.recommendation_reason, a.recommendation_interest_hash,
+               a.recommendation_analyzed_at, a.analyzed_at
+    """ + base_query
     query += " ORDER BY p.published_date DESC, a.rating DESC"
     query += " LIMIT ? OFFSET ?"
     params.extend([limit, offset])
@@ -487,9 +527,9 @@ def browse_papers(date=None, tag=None, min_rating=None, max_rating=None,
 
     # 按是否有分析结果筛选
     if has_analysis == "yes":
-        base_query += " AND a.id IS NOT NULL"
+        base_query += f" AND NOT {_basic_analysis_missing_condition('a')}"
     elif has_analysis == "no":
-        base_query += " AND a.id IS NULL"
+        base_query += f" AND {_basic_analysis_missing_condition('a')}"
 
     # 按是否有深度分析（Q&A）筛选
     if has_deep_analysis == "yes":
@@ -504,7 +544,9 @@ def browse_papers(date=None, tag=None, min_rating=None, max_rating=None,
 
     # 查询数据：选择字段、排序、分页
     data_query = """
-        SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis, a.analyzed_at
+        SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis,
+               a.recommendation_score, a.recommendation_reason, a.recommendation_interest_hash,
+               a.recommendation_analyzed_at, a.analyzed_at
     """ + base_query + " ORDER BY p.published_date DESC, a.rating DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
@@ -661,11 +703,16 @@ def get_analyzed_count():
     """获取已分析的论文数量。
     
     返回：
-        int: 已分析论文数（analysis 表中的记录数）
+        int: 已完成基础分析的论文数
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) as cnt FROM analysis")
+    cursor.execute(f"""
+        SELECT COUNT(*) as cnt
+        FROM papers p
+        LEFT JOIN analysis a ON p.id = a.paper_id
+        WHERE NOT {_basic_analysis_missing_condition("a")}
+    """)
     count = cursor.fetchone()["cnt"]
     conn.close()
     return count
@@ -674,17 +721,17 @@ def get_analyzed_count():
 def get_unanalyzed_count():
     """获取未分析的论文数量。
     
-    通过 LEFT JOIN 找出没有对应 analysis 记录的论文。
+    通过 LEFT JOIN 找出没有基础分析结果或基础分析字段不完整的论文。
     
     返回：
         int: 未分析论文数
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT COUNT(*) as cnt FROM papers p
         LEFT JOIN analysis a ON p.id = a.paper_id
-        WHERE a.id IS NULL
+        WHERE {_basic_analysis_missing_condition("a")}
     """)
     count = cursor.fetchone()["cnt"]
     conn.close()
@@ -704,10 +751,10 @@ def get_unanalyzed_papers(limit=100):
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT p.* FROM papers p
         LEFT JOIN analysis a ON p.id = a.paper_id
-        WHERE a.id IS NULL
+        WHERE {_basic_analysis_missing_condition("a")}
         ORDER BY p.published_date DESC
         LIMIT ?
     """, (limit,))
@@ -751,7 +798,9 @@ def search_papers(keyword, limit=50):
     if arxiv_id:
         # 精确匹配 arXiv ID
         cursor.execute("""
-            SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis
+            SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis,
+                   a.recommendation_score, a.recommendation_reason, a.recommendation_interest_hash,
+                   a.recommendation_analyzed_at
             FROM papers p
             LEFT JOIN analysis a ON p.id = a.paper_id
             WHERE p.arxiv_id = ?
@@ -760,7 +809,9 @@ def search_papers(keyword, limit=50):
     else:
         # 多字段模糊搜索：标题、摘要、中文摘要、标签、Q&A
         cursor.execute("""
-            SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis
+            SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis,
+                   a.recommendation_score, a.recommendation_reason, a.recommendation_interest_hash,
+                   a.recommendation_analyzed_at
             FROM papers p
             LEFT JOIN analysis a ON p.id = a.paper_id
             WHERE (p.hidden IS NULL OR p.hidden = 0)
@@ -798,9 +849,9 @@ def get_daily_stats(date):
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT COUNT(*) as total,
-               SUM(CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END) as analyzed,
+               SUM(CASE WHEN NOT {_basic_analysis_missing_condition("a")} THEN 1 ELSE 0 END) as analyzed,
                AVG(a.rating) as avg_rating
         FROM papers p
         LEFT JOIN analysis a ON p.id = a.paper_id
@@ -846,11 +897,15 @@ def update_analysis(paper_id, data):
     参数：
         paper_id (int): 论文 ID
         data (dict): 要更新的数据，可包含以下字段：
-            - rating: 评级（0-5）
+            - rating: 用户手动评级（0-5）
             - tags: 标签列表
             - summary_cn: 中文摘要
             - value_comment: 价值评价
             - qa_analysis: Q&A 深度阅读
+            - recommendation_score: 个性化推荐分（0-100）
+            - recommendation_reason: 推荐理由
+            - recommendation_interest_hash: 对应研究兴趣哈希
+            - recommendation_analyzed_at: 推荐评分时间
             
     返回：
         bool: 始终返回 True
@@ -881,6 +936,19 @@ def update_analysis(paper_id, data):
         if "qa_analysis" in data:
             sets.append("qa_analysis = ?")
             params.append(data["qa_analysis"])
+        if "recommendation_score" in data:
+            sets.append("recommendation_score = ?")
+            score = data["recommendation_score"]
+            params.append(None if score is None else int(score))
+        if "recommendation_reason" in data:
+            sets.append("recommendation_reason = ?")
+            params.append(data["recommendation_reason"])
+        if "recommendation_interest_hash" in data:
+            sets.append("recommendation_interest_hash = ?")
+            params.append(data["recommendation_interest_hash"])
+        if "recommendation_analyzed_at" in data:
+            sets.append("recommendation_analyzed_at = ?")
+            params.append(data["recommendation_analyzed_at"])
 
         if sets:
             params.append(paper_id)
@@ -888,8 +956,11 @@ def update_analysis(paper_id, data):
     else:
         # 插入新记录：使用 get 提供默认值
         cursor.execute("""
-            INSERT INTO analysis (paper_id, tags, summary_cn, summary_en, rating, value_comment, qa_analysis)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO analysis (
+                paper_id, tags, summary_cn, summary_en, rating, value_comment, qa_analysis,
+                recommendation_score, recommendation_reason, recommendation_interest_hash, recommendation_analyzed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             paper_id,
             json.dumps(data.get("tags", []), ensure_ascii=False),
@@ -898,11 +969,96 @@ def update_analysis(paper_id, data):
             int(data.get("rating", 0)),
             data.get("value_comment", ""),
             data.get("qa_analysis", ""),
+            data.get("recommendation_score"),
+            data.get("recommendation_reason", ""),
+            data.get("recommendation_interest_hash", ""),
+            data.get("recommendation_analyzed_at"),
         ))
 
     conn.commit()
     conn.close()
     return True
+
+
+def _parse_paper_analysis_row(row):
+    """解析 papers + analysis 查询结果中的 JSON 字段。"""
+    r = dict(row)
+    for field in ("authors", "categories", "tags"):
+        if r.get(field) and isinstance(r[field], str):
+            try:
+                r[field] = json.loads(r[field])
+            except json.JSONDecodeError:
+                r[field] = []
+    return r
+
+
+def get_papers_for_recommendation(limit=200, date=None, interest_hash=""):
+    """
+    获取需要计算个性化推荐分的论文。
+
+    只返回已有基础分析结果的非隐藏论文，避免推荐任务创建空 analysis 记录后
+    影响 get_unanalyzed_papers() 对“待基础分析”论文的判断。
+    """
+    if not interest_hash:
+        return []
+    limit = max(1, min(1000, int(limit or 200)))
+    conn = get_connection()
+    cursor = conn.cursor()
+    params = [interest_hash]
+    where = """
+        WHERE (p.hidden IS NULL OR p.hidden = 0)
+        AND a.id IS NOT NULL
+        AND (
+            a.recommendation_score IS NULL
+            OR a.recommendation_interest_hash IS NULL
+            OR a.recommendation_interest_hash != ?
+        )
+    """
+    if date:
+        where += " AND p.published_date = ?"
+        params.append(date)
+    params.append(limit)
+    cursor.execute("""
+        SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis,
+               a.recommendation_score, a.recommendation_reason, a.recommendation_interest_hash,
+               a.recommendation_analyzed_at
+        FROM papers p
+        JOIN analysis a ON p.id = a.paper_id
+    """ + where + """
+        ORDER BY p.published_date DESC, COALESCE(a.rating, 0) DESC, p.arxiv_id
+        LIMIT ?
+    """, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [_parse_paper_analysis_row(row) for row in rows]
+
+
+def update_recommendation_result(paper_id, score, reason, interest_hash):
+    """更新已有分析记录的个性化推荐结果。"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        score = max(0, min(100, int(score or 0)))
+    except (TypeError, ValueError):
+        score = 0
+    cursor.execute("""
+        UPDATE analysis
+        SET recommendation_score = ?,
+            recommendation_reason = ?,
+            recommendation_interest_hash = ?,
+            recommendation_analyzed_at = ?
+        WHERE paper_id = ?
+    """, (
+        score,
+        str(reason or ""),
+        str(interest_hash or ""),
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        paper_id,
+    ))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
 
 
 # ==================== 论文管理操作 ====================
@@ -1023,12 +1179,12 @@ def get_unanalyzed_papers_by_ids(arxiv_ids):
         return []
     conn = get_connection()
     cursor = conn.cursor()
-    # 使用 IN 子句筛选，LEFT JOIN 找出无分析记录的论文
+    # 使用 IN 子句筛选，LEFT JOIN 找出无基础分析或基础分析不完整的论文
     placeholders = ",".join(["?"] * len(arxiv_ids))
     cursor.execute(f"""
         SELECT p.* FROM papers p
         LEFT JOIN analysis a ON p.id = a.paper_id
-        WHERE p.arxiv_id IN ({placeholders}) AND a.id IS NULL
+        WHERE p.arxiv_id IN ({placeholders}) AND {_basic_analysis_missing_condition("a")}
     """, arxiv_ids)
     rows = cursor.fetchall()
     conn.close()
@@ -1450,7 +1606,7 @@ def generate_report_content(date, ai_summary=None):
     1. 统计摘要（论文总数、已分析数、平均评级）
     2. 分类分布
     3. 热门标签（Top 15）
-    4. 高分论文（4 星以上）
+    4. 个性化推荐（如已启用）
     5. 全部论文列表
     
     参数：
@@ -1469,7 +1625,9 @@ def generate_report_content(date, ai_summary=None):
 
     # 查询指定日期的所有论文及其分析结果
     cursor.execute("""
-        SELECT p.*, a.tags, a.summary_cn, a.rating, a.value_comment
+        SELECT p.*, a.id AS analysis_id, a.tags, a.summary_cn, a.rating, a.value_comment,
+               a.recommendation_score, a.recommendation_reason, a.recommendation_interest_hash,
+               a.recommendation_analyzed_at
         FROM papers p
         LEFT JOIN analysis a ON p.id = a.paper_id
         WHERE p.published_date = ?
@@ -1481,8 +1639,21 @@ def generate_report_content(date, ai_summary=None):
     if not rows:
         return None, 0, 0, 0
 
+    from settings import get_personalization_config, get_research_interest_hash
+    current_research_interests = get_personalization_config().get("research_interests", "")
+    current_interest_hash = get_research_interest_hash(current_research_interests)
+
     def esc(value):
         return html_module.escape(str(value or ""), quote=True)
+
+    def current_recommendation_score(paper):
+        if not current_interest_hash or paper.get("recommendation_interest_hash") != current_interest_hash:
+            return None
+        try:
+            score = int(paper.get("recommendation_score"))
+            return max(0, min(100, score))
+        except (TypeError, ValueError):
+            return None
 
     # 解析 JSON 字段
     papers = []
@@ -1494,13 +1665,22 @@ def generate_report_content(date, ai_summary=None):
             r["categories"] = json.loads(r["categories"])
         if r.get("tags") and isinstance(r["tags"], str):
             r["tags"] = json.loads(r["tags"])
+        r["current_recommendation_score"] = current_recommendation_score(r)
         papers.append(r)
+
+    if current_interest_hash:
+        papers.sort(key=lambda p: (
+            -(p.get("current_recommendation_score") if p.get("current_recommendation_score") is not None else -1),
+            -int(p.get("rating") or 0),
+            str(p.get("arxiv_id") or ""),
+        ))
 
     # 计算统计数据
     total = len(papers)
-    analyzed = sum(1 for p in papers if p.get("rating") and p["rating"] > 0)
-    ratings = [p["rating"] for p in papers if p.get("rating") and p["rating"] > 0]
+    analyzed = sum(1 for p in papers if p.get("analysis_id") is not None)
+    ratings = [int(p["rating"]) for p in papers if p.get("rating") is not None]
     avg_rating = round(sum(ratings) / len(ratings), 1) if ratings else 0
+    recommended_count = sum(1 for p in papers if (p.get("current_recommendation_score") or 0) >= 80)
 
     # 统计标签和分类分布
     tag_counts = {}
@@ -1516,9 +1696,8 @@ def generate_report_content(date, ai_summary=None):
     # 获取 Top 15 标签和 Top 10 分类
     top_tags = sorted(tag_counts.items(), key=lambda x: -x[1])[:15]
     top_categories = sorted(category_counts.items(), key=lambda x: -x[1])[:10]
-    # 筛选高分论文（4 星以上）并按评级降序排列
-    high_rated = [p for p in papers if p.get("rating") and p["rating"] >= 4]
-    high_rated.sort(key=lambda x: -x["rating"])
+    recommended = [p for p in papers if (p.get("current_recommendation_score") or 0) >= 60]
+    recommended.sort(key=lambda x: (-(x.get("current_recommendation_score") or 0), -int(x.get("rating") or 0)))
 
     # ==================== 生成 HTML 报告 ====================
     
@@ -1528,11 +1707,39 @@ def generate_report_content(date, ai_summary=None):
     html += f'<div class="report-stat"><span class="report-stat-val">{total}</span><span class="report-stat-label">论文总数</span></div>'
     html += f'<div class="report-stat"><span class="report-stat-val">{analyzed}</span><span class="report-stat-label">已分析</span></div>'
     html += f'<div class="report-stat"><span class="report-stat-val">{avg_rating}</span><span class="report-stat-label">平均评级</span></div>'
+    if current_interest_hash:
+        html += f'<div class="report-stat"><span class="report-stat-val">{recommended_count}</span><span class="report-stat-label">强推荐</span></div>'
     html += f'</div></div>'
 
     if ai_summary:
         summary_html = esc(ai_summary).replace("\n", "<br>")
         html += f'<div class="report-section"><h3>🤖 AI 导读</h3><div class="report-paper-summary">{summary_html}</div></div>'
+
+    if recommended:
+        interest_html = ""
+        if current_research_interests:
+            interest_text = esc(current_research_interests).replace("\n", "<br>")
+            interest_html = f'<div class="report-paper-summary"><strong>研究兴趣:</strong><br>{interest_text}</div>'
+        html += f'<div class="report-section"><h3>🎯 个性化推荐</h3>{interest_html}<div class="report-papers">'
+        for p in recommended[:20]:
+            rating = max(0, min(5, int(p.get('rating') or 0)))
+            stars = '★' * rating + '☆' * (5 - rating) + f' {rating}★'
+            score = p.get("current_recommendation_score") or 0
+            authors = ', '.join(esc(a) for a in p['authors'][:3]) if isinstance(p.get('authors'), list) else esc(p.get('authors', ''))
+            cats = ' '.join(f'<span class="category-tag">{esc(c)}</span>' for c in (p.get('categories') or [])[:3])
+            arxiv_id = esc(p.get('arxiv_id', ''))
+            summary = f'<div class="report-paper-summary"><strong>中文摘要:</strong> {esc(p.get("summary_cn", ""))}</div>' if p.get("summary_cn") else ''
+            reason = f'<div class="report-paper-comment"><strong>推荐语:</strong> {esc(p.get("recommendation_reason", ""))}</div>' if p.get("recommendation_reason") else ''
+            comment = f'<div class="report-paper-comment"><strong>评价:</strong> {esc(p.get("value_comment", ""))}</div>' if p.get("value_comment") else ''
+            html += f'''<div class="report-paper">
+                <div class="report-paper-title"><a href="/paper/{arxiv_id}">{esc(p.get('title', ''))}</a></div>
+                <div class="report-paper-meta"><span class="rating">推荐 {score}/100</span> <span class="rating">{stars}</span> {cats}</div>
+                <div class="report-paper-authors">{authors}</div>
+                {summary}
+                {reason}
+                {comment}
+            </div>'''
+        html += '</div></div>'
 
     # 分类分布区块
     if top_categories:
@@ -1548,30 +1755,16 @@ def generate_report_content(date, ai_summary=None):
             html += f'<span class="tag-badge">{esc(tag)} <span class="tag-count">{cnt}</span></span>'
         html += '</div></div>'
 
-    # 高分论文区块（4 星以上）
-    if high_rated:
-        html += '<div class="report-section"><h3>⭐ 高分论文 (4★+)</h3><div class="report-papers">'
-        for p in high_rated:
-            rating = max(0, min(5, int(p.get('rating') or 0)))
-            stars = '★' * rating + '☆' * (5 - rating)
-            authors = ', '.join(esc(a) for a in p['authors'][:3]) if isinstance(p.get('authors'), list) else esc(p.get('authors', ''))
-            cats = ' '.join(f'<span class="category-tag">{esc(c)}</span>' for c in (p.get('categories') or [])[:3])
-            arxiv_id = esc(p.get('arxiv_id', ''))
-            html += f'''<div class="report-paper">
-                <div class="report-paper-title"><a href="/paper/{arxiv_id}">{esc(p.get('title', ''))}</a></div>
-                <div class="report-paper-meta"><span class="rating">{stars}</span> {cats}</div>
-                <div class="report-paper-authors">{authors}</div>
-                {f'<div class="report-paper-comment">{esc(p["value_comment"])}</div>' if p.get('value_comment') else ''}
-            </div>'''
-        html += '</div></div>'
-
     # 全部论文列表区块
     html += '<div class="report-section"><h3>📋 全部论文</h3><div class="report-papers">'
     for p in papers:
         stars = ''
-        if p.get('rating') and p['rating'] > 0:
+        if p.get('rating') is not None:
             rating = max(0, min(5, int(p.get('rating') or 0)))
-            stars = f'<span class="rating">{"★" * rating}{"☆" * (5 - rating)}</span>'
+            stars = f'<span class="rating">{"★" * rating}{"☆" * (5 - rating)} {rating}★</span>'
+        rec = ''
+        if p.get("current_recommendation_score") is not None:
+            rec = f'<span class="rating">推荐 {int(p["current_recommendation_score"])}/100</span>'
         cats = ' '.join(f'<span class="category-tag">{esc(c)}</span>' for c in (p.get('categories') or [])[:3])
         authors = ', '.join(esc(a) for a in p['authors'][:3]) if isinstance(p.get('authors'), list) else esc(p.get('authors', ''))
         tags_html = ''
@@ -1580,7 +1773,7 @@ def generate_report_content(date, ai_summary=None):
         summary = f'<div class="report-paper-summary">{esc(p["summary_cn"])}</div>' if p.get('summary_cn') else ''
         arxiv_id = esc(p.get('arxiv_id', ''))
         html += f'''<div class="report-paper">
-            <div class="report-paper-title"><a href="/paper/{arxiv_id}">{esc(p.get('title', ''))}</a> {stars}</div>
+            <div class="report-paper-title"><a href="/paper/{arxiv_id}">{esc(p.get('title', ''))}</a> {rec} {stars}</div>
             <div class="report-paper-meta">{cats}</div>
             <div class="report-paper-authors">{authors}</div>
             {'<div class="report-paper-tags">' + tags_html + '</div>' if tags_html else ''}
@@ -1714,6 +1907,7 @@ def get_reading_list(status=None):
         # 按指定状态筛选
         cursor.execute("""
             SELECT p.*, a.tags, a.summary_cn, a.rating, a.value_comment,
+                   a.recommendation_score, a.recommendation_reason, a.recommendation_interest_hash,
                    rl.status as todo_status, rl.added_at, rl.completed_at
             FROM reading_list rl
             JOIN papers p ON rl.paper_id = p.id
@@ -1725,6 +1919,7 @@ def get_reading_list(status=None):
         # 返回全部：未读优先，同状态按添加时间降序
         cursor.execute("""
             SELECT p.*, a.tags, a.summary_cn, a.rating, a.value_comment,
+                   a.recommendation_score, a.recommendation_reason, a.recommendation_interest_hash,
                    rl.status as todo_status, rl.added_at, rl.completed_at
             FROM reading_list rl
             JOIN papers p ON rl.paper_id = p.id

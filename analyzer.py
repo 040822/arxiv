@@ -3,7 +3,7 @@ AI 论文分析模块
 
 本模块负责调用 OpenAI 兼容 API 对 arXiv 论文进行深度阅读分析。
 支持两种分析模式：
-  - 基础分析（basic）：仅使用论文摘要，生成标签、评级和中文翻译，不含 Q&A 深度阅读
+  - 基础分析（basic）：仅使用论文摘要，生成标签、中文翻译和简评，不含 Q&A 深度阅读
   - 深度阅读（full）：下载 PDF 提取全文，只生成 Q&A 深度阅读，不覆盖基础分析字段
 
 核心流程：
@@ -18,8 +18,14 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 from config import TAG_CANDIDATES, RATING_CRITERIA
-from settings import build_chat_completion_kwargs, get_ai_config, get_ai_task_config, get_prompt_profile, get_concurrency
-from database import get_connection, insert_analysis, get_unanalyzed_papers, record_ai_usage
+from settings import (
+    build_chat_completion_kwargs, get_ai_config, get_ai_task_config, get_prompt_profile,
+    get_concurrency, get_personalization_config, get_research_interest_hash
+)
+from database import (
+    get_connection, insert_analysis, update_analysis, get_unanalyzed_papers, record_ai_usage,
+    get_papers_for_recommendation, update_recommendation_result
+)
 from pdf_reader import get_paper_full_text
 
 # 模块级日志记录器
@@ -177,11 +183,10 @@ def _normalise_analysis_result(result):
         result["summary_cn"] = ""
     if "summary_en" not in result:
         result["summary_en"] = ""
-    if "rating" not in result or not isinstance(result["rating"], int):
-        result["rating"] = 0
     if "value_comment" not in result:
         result["value_comment"] = ""
-    result["rating"] = max(0, min(5, result["rating"]))
+    # rating is now user-maintained only. Ignore any rating returned by old prompts/models.
+    result["rating"] = 0
     result.pop("qa_analysis", None)
     return result
 
@@ -194,6 +199,23 @@ def _normalise_deep_reading_result(result):
     if not isinstance(qa_analysis, str):
         qa_analysis = json.dumps(qa_analysis, ensure_ascii=False)
     return {"qa_analysis": qa_analysis.strip()}
+
+
+def _normalise_recommendation_result(result):
+    """校验并补齐个性化推荐结果字段。"""
+    if not isinstance(result, dict):
+        result = {}
+    try:
+        score = int(round(float(result.get("recommendation_score", 0) or 0)))
+    except (TypeError, ValueError):
+        score = 0
+    reason = result.get("recommendation_reason", "")
+    if not isinstance(reason, str):
+        reason = json.dumps(reason, ensure_ascii=False)
+    return {
+        "recommendation_score": max(0, min(100, score)),
+        "recommendation_reason": reason.strip(),
+    }
 
 
 def _call_ai(messages, paper_data, task_key):
@@ -259,7 +281,7 @@ def analyze_paper_basic(paper_data):
     基础分析模式：仅使用论文摘要进行 AI 分析，不下载 PDF。
 
     该模式速度较快，适合大批量快速分析。分析结果包含：
-      - 标签分类、中文翻译、评级、价值评价
+      - 标签分类、中文翻译、价值评价
       - 不包含 Q&A 深度阅读
 
     Args:
@@ -324,18 +346,64 @@ def analyze_paper_full(paper_data):
     return paper_data, result, error
 
 
+def analyze_paper_recommendation(paper_data, research_interests=None, interest_hash=None):
+    """
+    个性化推荐模式：按用户研究兴趣为一篇论文计算推荐分。
+
+    该任务与基础分析/深度阅读/报告导读使用独立模型路由，只依赖论文摘要
+    和已有基础分析字段，不下载 PDF。
+    """
+    research_interests = (research_interests or get_personalization_config().get("research_interests", "")).strip()
+    interest_hash = interest_hash or get_research_interest_hash(research_interests)
+    if not research_interests or not interest_hash:
+        return paper_data, None, "未设置研究兴趣"
+
+    payload = {
+        "research_interests": research_interests,
+        "paper": {
+            "arxiv_id": paper_data.get("arxiv_id", ""),
+            "title": paper_data.get("title", ""),
+            "authors": _authors_text(paper_data),
+            "abstract": paper_data.get("abstract", ""),
+            "categories": paper_data.get("categories") or [],
+            "tags": paper_data.get("tags") or [],
+            "rating": paper_data.get("rating") or 0,
+            "summary_cn": paper_data.get("summary_cn") or "",
+            "value_comment": paper_data.get("value_comment") or "",
+        },
+    }
+    messages = _build_task_messages("recommendation", payload)
+    result, error = _call_ai(messages, paper_data, "recommendation")
+    if result:
+        result = _normalise_recommendation_result(result)
+        result["recommendation_interest_hash"] = interest_hash
+    return paper_data, result, error
+
+
 def _get_report_summary_context(report_date, limit=30):
     """读取报告导读所需的轻量论文上下文，避免把全文再次送给模型。"""
     conn = get_connection()
     cursor = conn.cursor()
+    interest_hash = get_research_interest_hash()
     cursor.execute("""
-        SELECT p.arxiv_id, p.title, p.authors, p.categories, a.tags, a.rating, a.value_comment, a.summary_cn
+        SELECT p.arxiv_id, p.title, p.authors, p.categories,
+               a.tags, a.rating, a.value_comment, a.summary_cn,
+               a.recommendation_score, a.recommendation_interest_hash
         FROM papers p
         LEFT JOIN analysis a ON p.id = a.paper_id
         WHERE p.published_date = ?
-        ORDER BY COALESCE(a.rating, 0) DESC, p.arxiv_id
+        ORDER BY
+            CASE
+                WHEN ? <> ''
+                 AND a.recommendation_interest_hash = ?
+                 AND a.recommendation_score IS NOT NULL
+                THEN a.recommendation_score
+                ELSE -1
+            END DESC,
+            COALESCE(a.rating, 0) DESC,
+            p.arxiv_id
         LIMIT ?
-    """, (report_date, limit))
+    """, (report_date, interest_hash, interest_hash, limit))
     rows = cursor.fetchall()
     conn.close()
 
@@ -355,6 +423,9 @@ def _get_report_summary_context(report_date, limit=30):
             "categories": item.get("categories") or [],
             "tags": item.get("tags") or [],
             "rating": item.get("rating") or 0,
+            "recommendation_score": item.get("recommendation_score")
+            if interest_hash and item.get("recommendation_interest_hash") == interest_hash
+            else None,
             "value_comment": item.get("value_comment") or "",
             "summary_cn": item.get("summary_cn") or "",
         })
@@ -448,12 +519,18 @@ def analyze_papers(papers, concurrency=None, progress_callback=None):
                 if inserted:
                     success_count += 1
                     logger.info(f"[{completed_count}/{total}] ✅ {arxiv_id} | "
-                                f"{'★' * result['rating']}{'☆' * (5 - result['rating'])} | "
                                 f"{', '.join(result['tags'])}")
                 else:
-                    # 数据库中已存在该论文的分析结果
-                    skip_count += 1
-                    logger.info(f"[{completed_count}/{total}] ⏭️ {arxiv_id} already analyzed")
+                    # 已有手动评分等 analysis 记录时，补齐基础分析字段但不覆盖用户评分。
+                    update_analysis(paper_data["id"], {
+                        "tags": result.get("tags", []),
+                        "summary_cn": result.get("summary_cn", ""),
+                        "summary_en": result.get("summary_en", ""),
+                        "value_comment": result.get("value_comment", ""),
+                    })
+                    success_count += 1
+                    logger.info(f"[{completed_count}/{total}] ✅ {arxiv_id} updated basic analysis | "
+                                f"{', '.join(result['tags'])}")
             else:
                 # AI 调用失败或 JSON 解析失败
                 fail_count += 1
@@ -469,7 +546,7 @@ def analyze_papers(papers, concurrency=None, progress_callback=None):
                     "skip": skip_count,
                     "fail": fail_count,
                     "arxiv_id": arxiv_id,
-                    "rating": result.get("rating", 0) if result else 0,
+                    "rating": 0,
                     "tags": result.get("tags", []) if result else [],
                     "message": f"[{completed_count}/{total}] {arxiv_id}"
                 })
@@ -488,6 +565,89 @@ def analyze_papers(papers, concurrency=None, progress_callback=None):
             "message": f"基础分析完成：{success_count} 篇新增，{skip_count} 跳过，{fail_count} 失败"
         })
     return success_count
+
+
+def recommend_papers(papers, research_interests, interest_hash, concurrency=None, progress_callback=None):
+    """批量计算指定论文列表的个性化推荐分。"""
+    if not papers or not research_interests or not interest_hash:
+        if progress_callback:
+            progress_callback({"current": 0, "total": 0, "status": "completed", "message": "无推荐评分任务"})
+        return 0
+    if concurrency is None:
+        concurrency = get_concurrency()
+
+    total = len(papers)
+    success_count = 0
+    fail_count = 0
+    completed_count = 0
+    logger.info(f"Starting recommendation scoring: {total} papers, concurrency={concurrency}")
+
+    if progress_callback:
+        progress_callback({"current": 0, "total": total, "status": "running", "message": "开始个性化推荐评分..."})
+
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = {
+            executor.submit(analyze_paper_recommendation, paper, research_interests, interest_hash): paper
+            for paper in papers
+        }
+        for future in as_completed(futures):
+            source_paper = futures[future]
+            try:
+                paper_data, result, error = future.result()
+            except Exception as e:
+                paper_data = source_paper
+                result = None
+                error = str(e)
+
+            completed_count += 1
+            arxiv_id = paper_data.get("arxiv_id", "unknown")
+            if result and update_recommendation_result(
+                paper_data["id"],
+                result.get("recommendation_score", 0),
+                result.get("recommendation_reason", ""),
+                interest_hash,
+            ):
+                success_count += 1
+                logger.info(f"[{completed_count}/{total}] 🎯 {arxiv_id} | 推荐 {result['recommendation_score']}/100")
+            else:
+                fail_count += 1
+                logger.warning(f"[{completed_count}/{total}] ❌ recommendation {arxiv_id}: {error or 'update failed'}")
+
+            if progress_callback:
+                progress_callback({
+                    "current": completed_count,
+                    "total": total,
+                    "status": "running",
+                    "success": success_count,
+                    "fail": fail_count,
+                    "arxiv_id": arxiv_id,
+                    "recommendation_score": result.get("recommendation_score", 0) if result else 0,
+                    "message": f"[{completed_count}/{total}] {arxiv_id}"
+                })
+
+    if progress_callback:
+        progress_callback({
+            "current": total,
+            "total": total,
+            "status": "completed",
+            "success": success_count,
+            "fail": fail_count,
+            "message": f"推荐评分完成：{success_count} 篇成功，{fail_count} 篇失败"
+        })
+    return success_count
+
+
+def recommend_pending_papers(limit=200, date=None, concurrency=None, progress_callback=None):
+    """按当前研究兴趣为缺失或过期的论文补齐个性化推荐分。"""
+    cfg = get_personalization_config()
+    research_interests = cfg.get("research_interests", "")
+    interest_hash = get_research_interest_hash(research_interests)
+    if not research_interests or not interest_hash:
+        if progress_callback:
+            progress_callback({"current": 0, "total": 0, "status": "completed", "message": "未设置研究兴趣，跳过推荐评分"})
+        return 0
+    papers = get_papers_for_recommendation(limit=limit, date=date, interest_hash=interest_hash)
+    return recommend_papers(papers, research_interests, interest_hash, concurrency=concurrency, progress_callback=progress_callback)
 
 
 def analyze_pending_papers(limit=50, concurrency=None, progress_callback=None):

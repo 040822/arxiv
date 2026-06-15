@@ -22,6 +22,8 @@ import json
 import os
 import logging
 import re
+import secrets
+import hashlib
 from string import Formatter
 from config import (
     DB_DIR,
@@ -94,12 +96,13 @@ THINKING_BUDGETS = {
     "max": 16384,
 }
 OPENAI_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
-REQUIRED_PROMPT_FIELDS = {"title", "authors", "abstract", "tag_candidates", "rating_criteria"}
-AI_TASK_KEYS = ("basic_analysis", "deep_reading", "report_summary")
+REQUIRED_PROMPT_FIELDS = {"title", "authors", "abstract", "tag_candidates"}
+AI_TASK_KEYS = ("basic_analysis", "deep_reading", "report_summary", "recommendation")
 AI_TASK_LABELS = {
     "basic_analysis": "基础分析",
     "deep_reading": "深度阅读",
     "report_summary": "报告导读",
+    "recommendation": "个性化推荐",
 }
 
 DEFAULT_PROVIDER_OPTIONS = {
@@ -167,6 +170,22 @@ DEFAULT_AI_TASK_OPTIONS = {
         "is_thinking": False,
         "thinking_effort": "medium",
     },
+    "recommendation": {
+        "provider_key": "",
+        "model": "",
+        "temperature": 0.2,
+        "temperature_enabled": True,
+        "top_p": 1.0,
+        "top_p_enabled": False,
+        "presence_penalty": 0.0,
+        "presence_penalty_enabled": False,
+        "frequency_penalty": 0.0,
+        "frequency_penalty_enabled": False,
+        "max_tokens": 500,
+        "max_tokens_enabled": True,
+        "is_thinking": False,
+        "thinking_effort": "medium",
+    },
 }
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -180,7 +199,6 @@ DEFAULT_BASIC_ANALYSIS_INSTRUCTION = """请完成低成本基础论文分析。�
 
 {
   "tags": ["标签1", "标签2"],
-  "rating": 3,
   "summary_cn": "将论文摘要完整翻译为中文，要求忠实原文、语句通顺、术语准确。",
   "value_comment": "对论文价值的简短评价（2-3句话）"
 }
@@ -191,8 +209,6 @@ DEFAULT_BASIC_ANALYSIS_INSTRUCTION = """请完成低成本基础论文分析。�
 标签精度要求：
 - 避免过于宽泛的标签，例如 Robot Learning、Embodied AI、Transformer、LLM、Agent、Multimodal
 - 优先使用具体技术方法、任务、架构或数据集名称
-
-{rating_criteria}
 """
 
 DEFAULT_DEEP_READING_QUESTIONS = [
@@ -251,6 +267,27 @@ DEFAULT_REPORT_SUMMARY_INSTRUCTION = """请根据当天论文列表生成一段�
 - 如果数据不足，请明确说明报告主要基于已有分析结果
 """
 
+DEFAULT_RECOMMENDATION_INSTRUCTION = """请根据用户研究兴趣，判断论文对该用户的个性化相关性和阅读优先级。
+
+请严格返回合法 JSON，不要返回额外解释：
+
+{
+  "recommendation_score": 85,
+  "recommendation_reason": "1-2句中文理由，说明论文与用户研究兴趣的匹配点。"
+}
+
+评分规则：
+- 90-100：与研究兴趣高度一致，建议优先精读
+- 70-89：明显相关，值得阅读
+- 50-69：部分相关，可按时间关注
+- 0-49：关联较弱或不相关
+
+要求：
+- recommendation_score 必须是 0 到 100 的整数
+- recommendation_reason 要具体说明匹配的技术点、任务或应用场景
+- 只基于输入的论文信息判断，不要编造摘要中没有的信息
+"""
+
 DEFAULT_PROMPT_PROFILES = {
     "basic_analysis": {
         "system": DEFAULT_SYSTEM_PROMPT,
@@ -263,6 +300,10 @@ DEFAULT_PROMPT_PROFILES = {
     "report_summary": {
         "system": DEFAULT_SYSTEM_PROMPT,
         "instruction": DEFAULT_REPORT_SUMMARY_INSTRUCTION,
+    },
+    "recommendation": {
+        "system": DEFAULT_SYSTEM_PROMPT,
+        "instruction": DEFAULT_RECOMMENDATION_INSTRUCTION,
     },
 }
 
@@ -279,6 +320,22 @@ DEFAULT_SETTINGS = {
     "active_provider": "deepseek",
     "concurrency": 5,
     "per_page": 20,
+    "session_secret": "",
+    "personalization": {
+        "research_interests": "",
+    },
+    "webdav_backup": {
+        "enabled": False,
+        "url": "",
+        "username": "",
+        "password": "",
+        "remote_dir": "arxiv-backups",
+        "history_days": 3,
+        "last_status": "",
+        "last_success_at": "",
+        "last_error": "",
+        "last_uploaded_file": "",
+    },
     "schedule": {
         "enabled": True,
         "hour": SCHEDULE_HOUR,
@@ -376,6 +433,36 @@ def _normalize_fetch_config(fetch):
         "request_delay": max(3.0, min(300.0, request_delay)),
         "batch_days": max(1, min(365, batch_days)),
         "batch_delay": max(1.0, min(1800.0, batch_delay)),
+    }
+
+
+def _normalize_personalization_config(config):
+    """补齐并约束个性化推荐配置。"""
+    config = dict(config or {})
+    interests = str(config.get("research_interests") or "").strip()
+    return {
+        "research_interests": interests[:4000],
+    }
+
+
+def _normalize_webdav_backup_config(config, existing_password=None):
+    """补齐并约束 WebDAV 云备份配置。"""
+    config = dict(config or {})
+    password = config.get("password")
+    if password in (None, "") and existing_password is not None:
+        password = existing_password
+    history_days = _as_int(config.get("history_days"), 3)
+    return {
+        "enabled": _as_bool(config.get("enabled"), False),
+        "url": str(config.get("url") or "").strip(),
+        "username": str(config.get("username") or "").strip(),
+        "password": str(password or ""),
+        "remote_dir": str(config.get("remote_dir") or "arxiv-backups").strip().strip("/") or "arxiv-backups",
+        "history_days": max(1, min(3650, history_days)),
+        "last_status": str(config.get("last_status") or "").strip(),
+        "last_success_at": str(config.get("last_success_at") or "").strip(),
+        "last_error": str(config.get("last_error") or "").strip(),
+        "last_uploaded_file": str(config.get("last_uploaded_file") or "").strip(),
     }
 
 
@@ -490,6 +577,26 @@ def _migrate_deep_reading_instruction(instruction):
     return instruction
 
 
+def _is_legacy_basic_analysis_instruction(instruction):
+    """判断是否为旧默认基础分析 prompt（包含 AI 自动评级）。"""
+    text = instruction or ""
+    return (
+        "请完成低成本基础论文分析" in text
+        and '"tags"' in text
+        and '"rating"' in text
+        and '"summary_cn"' in text
+        and '"value_comment"' in text
+        and ("{rating_criteria}" in text or "评级标准" in text)
+    )
+
+
+def _migrate_basic_analysis_instruction(instruction):
+    """旧默认基础分析 prompt 去除 AI 自动评级；自定义 prompt 原样保留。"""
+    if _is_legacy_basic_analysis_instruction(instruction):
+        return DEFAULT_BASIC_ANALYSIS_INSTRUCTION
+    return instruction
+
+
 def _normalize_prompt_profiles(profiles, legacy_prompts=None):
     """补齐基础分析、深度阅读、报告导读三套 prompt profile。"""
     result = json.loads(json.dumps(DEFAULT_PROMPT_PROFILES))
@@ -516,7 +623,9 @@ def _normalize_prompt_profiles(profiles, legacy_prompts=None):
             result[task_key]["system"] = str(system)
         if instruction is not None:
             instruction = str(instruction)
-            if task_key == "deep_reading":
+            if task_key == "basic_analysis":
+                instruction = _migrate_basic_analysis_instruction(instruction)
+            elif task_key == "deep_reading":
                 instruction = _migrate_deep_reading_instruction(instruction)
             result[task_key]["instruction"] = instruction
     return result
@@ -788,6 +897,22 @@ def _migrate_old_settings(data):
         "is_thinking": data.get("is_thinking", False),
         "thinking_effort": data.get("thinking_effort", "medium"),
     }
+    for key in (
+        "concurrency",
+        "per_page",
+        "schedule",
+        "proxy",
+        "fetch",
+        "admin_password",
+        "session_secret",
+        "personalization",
+        "webdav_backup",
+        "prompts",
+        "prompt_profiles",
+        "ai_tasks",
+    ):
+        if key in data:
+            migrated[key] = data[key]
     return migrated
 
 
@@ -837,6 +962,12 @@ def load_settings():
             merged["concurrency"] = migrated["concurrency"]
         if "per_page" in migrated:
             merged["per_page"] = migrated["per_page"]
+        if "session_secret" in migrated:
+            merged["session_secret"] = migrated["session_secret"]
+        if "personalization" in migrated:
+            merged["personalization"] = _normalize_personalization_config(migrated["personalization"])
+        if "webdav_backup" in migrated:
+            merged["webdav_backup"] = _normalize_webdav_backup_config(migrated["webdav_backup"])
         if "schedule" in migrated:
             merged["schedule"] = _normalize_schedule(migrated["schedule"])
         if "proxy" in migrated:
@@ -885,6 +1016,22 @@ def save_settings(settings):
     except Exception as e:
         logger.error(f"Failed to save settings: {e}")
         return False
+
+
+def get_session_secret():
+    """
+    获取 Flask session 签名密钥。
+
+    优先复用 settings.json 中已保存的密钥；如果旧配置没有该字段，则生成
+    一个随机密钥并写回配置文件，保证服务重启后已有登录 cookie 仍可验证。
+    """
+    settings = load_settings()
+    secret = settings.get("session_secret", "")
+    if not secret:
+        secret = secrets.token_hex(32)
+        settings["session_secret"] = secret
+        save_settings(settings)
+    return secret
 
 
 # ============================================================================
@@ -1029,6 +1176,95 @@ def get_fetch_config():
     """
     settings = load_settings()
     return _normalize_fetch_config(settings.get("fetch", {}))
+
+
+def get_personalization_config():
+    """
+    获取个性化推荐配置。
+
+    返回:
+        dict: {"research_interests": "..."}，空字符串表示关闭个性化推荐。
+    """
+    settings = load_settings()
+    return _normalize_personalization_config(settings.get("personalization", {}))
+
+
+def get_research_interest_hash(interests=None):
+    """
+    获取研究兴趣文本的稳定哈希。
+
+    空兴趣返回空字符串；非空兴趣先按保存规则 trim/截断，再计算 SHA-256。
+    """
+    if interests is None:
+        interests = get_personalization_config().get("research_interests", "")
+    normalized = _normalize_personalization_config({"research_interests": interests})
+    text = normalized.get("research_interests", "")
+    if not text:
+        return ""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def save_personalization_config(personalization_config):
+    """
+    保存个性化推荐配置。
+
+    仅保存用户研究兴趣文本，不触发历史论文推荐分重算。
+    """
+    settings = load_settings()
+    settings["personalization"] = _normalize_personalization_config(personalization_config)
+    return save_settings(settings)
+
+
+def get_webdav_backup_config(mask_password=False):
+    """
+    获取 WebDAV 云备份配置。
+
+    参数:
+        mask_password: 为 True 时不返回明文 password，仅返回 password_masked。
+    """
+    settings = load_settings()
+    config = _normalize_webdav_backup_config(settings.get("webdav_backup", {}))
+    if not mask_password:
+        return config
+    masked = dict(config)
+    password = masked.pop("password", "")
+    masked["password_masked"] = "******" if password else ""
+    return masked
+
+
+def save_webdav_backup_config(webdav_config):
+    """
+    保存 WebDAV 云备份配置。
+
+    前端密码字段为空时保留旧密码，避免每次保存都要求重新输入。
+    """
+    settings = load_settings()
+    current = _normalize_webdav_backup_config(settings.get("webdav_backup", {}))
+    webdav_config = dict(webdav_config or {})
+    for key in ("last_status", "last_success_at", "last_error", "last_uploaded_file"):
+        if key not in webdav_config:
+            webdav_config[key] = current.get(key, "")
+    settings["webdav_backup"] = _normalize_webdav_backup_config(
+        webdav_config,
+        existing_password=current.get("password", ""),
+    )
+    return save_settings(settings)
+
+
+def update_webdav_backup_status(status, error="", uploaded_file=""):
+    """更新最近一次 WebDAV 备份状态。"""
+    settings = load_settings()
+    config = _normalize_webdav_backup_config(settings.get("webdav_backup", {}))
+    config["last_status"] = str(status or "").strip()
+    config["last_error"] = str(error or "").strip()
+    if uploaded_file:
+        config["last_uploaded_file"] = str(uploaded_file).strip()
+    if status == "success":
+        from datetime import datetime
+        config["last_success_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        config["last_error"] = ""
+    settings["webdav_backup"] = config
+    return save_settings(settings)
 
 
 def get_schedule_config():
@@ -1314,9 +1550,10 @@ def save_prompts(prompts):
 
 
 PROFILE_REQUIRED_PROMPT_FIELDS = {
-    "basic_analysis": {"tag_candidates", "rating_criteria"},
+    "basic_analysis": {"tag_candidates"},
     "deep_reading": set(),
     "report_summary": set(),
+    "recommendation": set(),
 }
 
 

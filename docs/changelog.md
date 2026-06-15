@@ -4,9 +4,9 @@
 
 ### LLM 成本控制
 - 新增 AI 功能模型路由：基础分析、深度阅读、报告导读可分别选择供应商、模型、采样参数、输出上限和思考强度
-- 基础分析改用短 Prompt，只生成标签、评级、中文摘要和简评，不再生成 Q&A 后丢弃
+- 基础分析改用短 Prompt，只生成标签、中文摘要和简评，不再生成 Q&A 后丢弃；评级改为用户手动维护
 - 深度阅读使用独立任务配置，默认支持 high 思考强度，并按质量优先不截断 PDF 全文输入
-- 深度阅读 Prompt 改为只生成 `qa_analysis`，不再重复生成或覆盖标签、评级、中文摘要和简评
+- 深度阅读 Prompt 改为只生成 `qa_analysis`，不再重复生成或覆盖标签、手动评级、中文摘要和简评
 - Prompt 改为 profile 结构，稳定任务说明与动态论文 JSON 分离，以提高兼容供应商的缓存命中率
 - 报告生成默认不调用 LLM；任务页勾选“生成 AI 导读”时才使用报告导读模型生成摘要
 - 新增 LLM token 用量账本，按任务、供应商和模型汇总 prompt/completion/total/cached tokens
@@ -51,6 +51,47 @@
 - 思考模式新增强度档位，并按 OpenAI、DeepSeek、Qwen/MiMo 等供应商协议映射参数
 - 思考模式下自动省略 temperature/top_p/presence_penalty/frequency_penalty
 - 重做思考模型检测，返回置信度和协议类型，并保存到当前激活供应商
+
+### 个性化推荐
+- 新增「个性化推荐」功能，根据用户研究兴趣为每篇论文计算推荐分（0-100）
+- 推荐评分使用独立「个性化推荐」模型路由，只依赖论文摘要和已有基础分析字段
+- analysis 表新增 `recommendation_score`、`recommendation_reason`、`recommendation_interest_hash`、`recommendation_analyzed_at` 字段
+- 设置页新增研究兴趣输入和手动重算按钮；兴趣哈希用于自动判断推荐分是否过期
+- 报告排序自动优先按推荐分排列，推荐分相同时再按评级排序
+- 论文卡片和报告显示推荐分和推荐理由
+
+### WebDAV 云备份
+- 新增 `backup.py` 模块，使用 SQLite online backup API 生成一致性数据库快照
+- 将数据库快照、`settings.json`、`output/` 报告目录和 manifest 打包为 zip 上传到 WebDAV
+- 每次备份同时写入 `arxiv-backup-latest.zip` 和带时间戳的历史文件
+- 根据 `history_days` 自动清理过期历史备份
+- 设置页「数据库 → WebDAV 云同步备份」可启用/配置、手动立即备份
+- 每日定时任务结束后自动执行云备份；备份失败单独记录，不中断日报流程
+
+### 评级体系重构
+- AI 基础分析不再生成评级，`rating` 字段改为用户手动维护
+- 新增 `legacy_ai_rating` 字段迁移历史 AI 评级，迁移后 `rating` 清零
+- 旧默认基础分析 Prompt 抵达用户后自动迁移，去除 AI 评级输出和 `{rating_criteria}` 占位符
+- Prompt 设置不再包含 `rating_criteria`；基础分析只要求 `tags`、`summary_cn`、`value_comment`
+
+### 认证增强
+- Session secret 持久化到 `settings.json`，保证服务重启后登录状态仍有效
+- Session 有效期设为 180 天，启用 HttpOnly + SameSite=Lax
+- 管理密码版本 token（HMAC-SHA256）：修改管理密码后旧登录状态自动失效
+- 退出登录正确清除持久 session
+
+### 基础分析检测精度
+- 新增 `_basic_analysis_missing_condition()` 统一判断 tags、summary_cn、value_comment 是否缺失
+- `get_analyzed_count`、`get_unanalyzed_count`、`get_unanalyzed_papers` 改用字段级判断
+- 分类浏览「是否已分析」筛选同样使用字段级判断，修复仅有空分析记录被误判为已分析的问题
+- 批量分析时 `insert_analysis` 检测到已有完整基础分析则跳过，避免重复
+
+### 报告增强
+- 报告排序按推荐分优先，再按评级和日期排列
+- 每日报告改为按推荐分分类列表，未设置研究兴趣时按评级排列
+- 每日报告页新增「重新生成该日报告」按钮
+- 生成报告 API 支持 `?date=` 参数指定日期
+- 报告卡片新增推荐分显示（🎯 推荐 N/100）
 
 ## v0.3.0 (2026-06-01)
 

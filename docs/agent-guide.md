@@ -9,7 +9,7 @@
 这是一个**AI 论文数据库**系统，核心功能：
 
 1. 从 arXiv 抓取论文（cs.RO 等分类）
-2. 调用 AI 生成标签、评级、中文摘要，并按需补充 Q&A 深度阅读
+2. 调用 AI 生成标签、中文摘要和简评，并按需补充 Q&A 深度阅读；评级由用户手动维护
 3. 存入 SQLite 数据库
 4. 提供 Web 界面浏览、搜索、筛选
 
@@ -75,8 +75,10 @@ APScheduler cron(hour=10, minute=0)
   → daily_pipeline()
     → fetch_latest_papers(days=3)  # 近 3 日
     → analyze_pending_papers(limit=1000)
+    → recommend_pending_papers(latest_date)  # 如已设置研究兴趣
     → generate_report_content(latest_date)
-  → save_report()
+    → save_report()
+    → run_webdav_backup()  # 如已启用；失败单独记日志，不中断日报任务
 ```
 
 实际执行时间从 `settings.json` 的 `schedule` 字段读取，`config.py` 仅提供首次默认值。
@@ -99,7 +101,10 @@ if "new_field" in migrated:
 ### 2. 认证与敏感字段
 
 - 设置管理密码后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用
+- 管理登录默认持久 180 天，使用签名 cookie；`session_secret` 存在 `settings.json` 中以保证服务重启后仍有效，修改管理密码会使旧登录状态失效
 - `GET /api/providers` 只能返回 `api_key_masked`，不要返回完整 `api_key`
+- 个性化推荐的研究兴趣保存在 `settings.personalization.research_interests`；推荐评分必须使用独立 `recommendation` 任务路由，并且只有 `recommendation_interest_hash` 匹配当前兴趣时才能用于报告排序
+- WebDAV 云备份配置保存在 `settings.webdav_backup`；GET 接口只返回 `password_masked`，每日任务备份失败不能中断日报流程
 - 用户/AI/数据库内容进入 HTML 前必须转义，报告页的 `|safe` 只用于后端生成且已转义的 HTML
 ### 3. arXiv API 注意事项
 
@@ -219,6 +224,7 @@ if r.get("authors") and isinstance(r["authors"], str):
 | PDF 下载失败 | `pdf_reader.py` + 代理配置 + 令牌桶限速 |
 | 页面显示异常 | `templates/*.html` + `static/style.css` |
 | 数据库问题 | `database.py` + `data/papers.db` |
+| WebDAV 备份失败 | `backup.py` + `settings.webdav_backup` + task log `webdav_backup` |
 | 定时任务不执行 | `app.py` 的 `daily_pipeline()` + APScheduler 日志 |
 | 配置不生效 | `settings.py` 的 `load_settings()` 合并逻辑 |
 
@@ -236,6 +242,8 @@ app.py
 │   ├── database.py
 │   ├── settings.py (API 配置、prompt)
 │   └── pdf_reader.py (PDF 下载)
+├── backup.py (WebDAV 云同步备份)
+│   └── settings.py (WebDAV 配置)
 ├── markdown_gen.py (报告生成)
 │   └── database.py
 └── settings.py (配置管理)

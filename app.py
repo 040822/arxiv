@@ -15,10 +15,11 @@ Flask Web 应用主模块
 import logging
 import os
 import json
-import secrets
+import hashlib
+import hmac
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for
 from apscheduler.schedulers.background import BackgroundScheduler
 from database import (
@@ -39,18 +40,20 @@ from database import (
 from fetcher import fetch_latest_papers, fetch_paper_by_id, parse_arxiv_id
 from analyzer import (
     analyze_pending_papers, analyze_paper_basic, analyze_paper_full,
-    analyze_papers, generate_report_ai_summary
+    analyze_papers, generate_report_ai_summary, recommend_pending_papers
 )
 from settings import (
     load_settings, save_settings, get_provider_presets, get_all_providers,
     add_provider, remove_provider, switch_provider, update_provider,
     get_prompts, save_prompts, get_concurrency, get_per_page,
     get_ai_tasks, save_ai_tasks, get_prompt_profiles, save_prompt_profile,
-    set_admin_password, verify_admin_password, has_admin_password,
+    get_admin_password, get_session_secret, set_admin_password, verify_admin_password, has_admin_password,
     build_chat_completion_kwargs, get_ai_config, get_thinking_protocol,
     normalize_provider_config, get_schedule_config, save_schedule_config,
-    validate_prompt_template
+    validate_prompt_template, get_personalization_config, save_personalization_config,
+    get_webdav_backup_config, save_webdav_backup_config
 )
+from backup import get_database_file_sizes, run_webdav_backup
 from config import WEB_HOST, WEB_PORT
 
 # ==================== 日志配置 ====================
@@ -65,7 +68,13 @@ logger = logging.getLogger(__name__)
 # ==================== Flask 应用初始化 ====================
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or get_session_secret()
+app.config.update(
+    PERMANENT_SESSION_LIFETIME=timedelta(days=180),
+    SESSION_REFRESH_EACH_REQUEST=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
 
 # 进度存储：用于跟踪长时间运行任务（抓取、分析）的实时进度
 # key 为 task_id，value 为进度数据字典（含 current、total、status、message 等字段）
@@ -113,9 +122,41 @@ PUBLIC_WRITE_ENDPOINTS = {
 AUTH_ENDPOINTS = {"login_page", "api_auth_login", "api_auth_logout", "api_auth_status"}
 
 
+def _admin_auth_token(admin_password_hash=None):
+    """生成绑定当前管理密码版本的 session token。"""
+    password_hash = admin_password_hash if admin_password_hash is not None else get_admin_password()
+    if not password_hash:
+        return ""
+    return hmac.new(
+        str(app.secret_key).encode("utf-8"),
+        password_hash.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _clear_admin_session():
+    """清除当前请求里的管理登录状态。"""
+    session.permanent = False
+    session.pop("admin_authenticated", None)
+    session.pop("admin_auth_token", None)
+
+
+def _mark_admin_authenticated():
+    """写入 180 天持久管理登录状态。"""
+    session.permanent = True
+    session["admin_authenticated"] = True
+    session["admin_auth_token"] = _admin_auth_token()
+
+
 def is_authenticated():
-    """未设置管理密码时保持本地免登录；设置后检查 session。"""
-    return (not has_admin_password()) or bool(session.get("admin_authenticated"))
+    """未设置管理密码时保持本地免登录；设置后检查 session 和密码版本 token。"""
+    if not has_admin_password():
+        return True
+    if not session.get("admin_authenticated"):
+        return False
+    expected = _admin_auth_token()
+    actual = session.get("admin_auth_token", "")
+    return bool(expected and actual and hmac.compare_digest(str(actual), expected))
 
 
 def _json_auth_error():
@@ -189,6 +230,14 @@ def utility_processor():
     return {"_remove_param": _remove_param, "_build_query": _build_query}
 
 
+def _has_basic_analysis(analysis):
+    """检查 tags、中文摘要和简评是否都已由基础分析补齐。"""
+    if not analysis:
+        return False
+    tags = analysis.get("tags")
+    return bool(tags and analysis.get("summary_cn") and analysis.get("value_comment"))
+
+
 # ==================== 定时任务调度器 ====================
 
 scheduler = BackgroundScheduler()
@@ -219,6 +268,27 @@ def configure_daily_job(schedule=None):
     logger.info(f"Scheduler daily job configured: {schedule['hour']:02d}:{schedule['minute']:02d}")
 
 
+def _run_webdav_backup_task(force=False):
+    """执行 WebDAV 云备份并写入独立任务日志。"""
+    log_id = start_task_log("webdav_backup", "WebDAV 云同步备份")
+    try:
+        result = run_webdav_backup(force=force)
+        if result.get("status") == "skipped":
+            finish_task_log(log_id, "success", result.get("message", "WebDAV 云备份已跳过"))
+            return result
+        detail = (
+            f"uploaded={','.join(result.get('uploaded_files', []))}, "
+            f"deleted={','.join(result.get('deleted_files', []))}, "
+            f"archive_size={result.get('archive_size', '')}, db_size={result.get('db_size', '')}"
+        )
+        finish_task_log(log_id, "success", result.get("message", "WebDAV 备份完成"), detail)
+        return result
+    except Exception as e:
+        logger.error(f"WebDAV backup error: {e}")
+        finish_task_log(log_id, "error", f"WebDAV 备份失败：{e}")
+        raise
+
+
 def daily_pipeline():
     """
     每日定时任务主流程
@@ -239,19 +309,37 @@ def daily_pipeline():
         analyzed_count = analyze_pending_papers(limit=1000, concurrency=concurrency)
         logger.info(f"Analyzed {analyzed_count} papers.")
 
-        # 步骤3：生成报告（使用最新的论文日期）
+        # 步骤3：为报告日期补齐个性化推荐分（如已设置研究兴趣）
         from datetime import datetime
         dates = get_all_dates()
         report_date = dates[0][0] if dates else datetime.now().strftime("%Y-%m-%d")
+        recommended_count = recommend_pending_papers(limit=1000, date=report_date, concurrency=concurrency)
+        if recommended_count:
+            logger.info(f"Recommended {recommended_count} papers for {report_date}.")
+
+        # 步骤4：生成报告（使用最新的论文日期）
         content, paper_count, analyzed_count_r, avg_rating = generate_report_content(report_date)
         if content:
             save_report(report_date, content, paper_count, analyzed_count_r, avg_rating)
             logger.info(f"Report generated for {report_date}: {paper_count} papers, avg rating {avg_rating}")
 
+        # 步骤5：按配置执行 WebDAV 云备份；失败只记录，不中断日报流程
+        backup_message = "云备份未启用"
+        backup_detail = ""
+        try:
+            backup_config = get_webdav_backup_config(mask_password=False)
+            if backup_config.get("enabled"):
+                backup_result = _run_webdav_backup_task(force=False)
+                backup_message = backup_result.get("message", "云备份完成")
+                backup_detail = f", backup={backup_result.get('last_uploaded_file', '')}"
+        except Exception as backup_error:
+            backup_message = f"云备份失败：{backup_error}"
+            backup_detail = f", backup_error={backup_error}"
+
         # 记录任务完成日志
         finish_task_log(log_id, "success",
-            f"完成：抓取 {len(new_papers)} 篇（近3日），分析 {analyzed_count} 篇，报告已生成",
-            f"new_papers={len(new_papers)}, analyzed={analyzed_count}, concurrency={concurrency}")
+            f"完成：抓取 {len(new_papers)} 篇（近3日），分析 {analyzed_count} 篇，推荐评分 {recommended_count} 篇，报告已生成，{backup_message}",
+            f"new_papers={len(new_papers)}, analyzed={analyzed_count}, recommended={recommended_count}, concurrency={concurrency}{backup_detail}")
     except Exception as e:
         logger.error(f"Daily pipeline error: {e}")
         finish_task_log(log_id, "error", f"失败：{e}")
@@ -285,7 +373,7 @@ def api_auth_login():
     data = request.get_json() or {}
     password = data.get("password", "")
     if verify_admin_password(password):
-        session["admin_authenticated"] = True
+        _mark_admin_authenticated()
         return jsonify({"status": "ok", "message": "登录成功"})
     return jsonify({"status": "error", "message": "密码错误"}), 403
 
@@ -293,7 +381,7 @@ def api_auth_login():
 @app.route("/api/auth/logout", methods=["POST"])
 def api_auth_logout():
     """退出登录。"""
-    session.pop("admin_authenticated", None)
+    _clear_admin_session()
     return jsonify({"status": "ok", "message": "已退出登录"})
 
 
@@ -642,6 +730,42 @@ def api_analyze():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/api/recommendations/recalculate", methods=["POST"])
+def api_recalculate_recommendations():
+    """手动重算缺失或过期的个性化推荐分。"""
+    task_id = request.args.get("task_id", "recommend")
+    log_id = start_task_log("recommend", "手动重算个性化推荐评分")
+    try:
+        cfg = get_personalization_config()
+        if not cfg.get("research_interests"):
+            finish_task_log(log_id, "error", "未设置研究兴趣")
+            return jsonify({"status": "error", "message": "请先在设置页填写研究兴趣"}), 400
+
+        data = request.get_json(silent=True) or {}
+        limit = request.args.get("limit", data.get("limit", 200), type=int)
+        limit = max(1, min(1000, int(limit or 200)))
+        date = (request.args.get("date") or data.get("date") or "").strip() or None
+        concurrency = get_concurrency()
+
+        def progress_callback(progress):
+            update_progress(task_id, {**progress, "phase": "recommend"})
+
+        count = recommend_pending_papers(
+            limit=limit,
+            date=date,
+            concurrency=concurrency,
+            progress_callback=progress_callback,
+        )
+        scope = f"（日期 {date}）" if date else ""
+        msg = f"推荐评分完成{scope}：{count} 篇已更新"
+        finish_task_log(log_id, "success", msg, f"recommended={count}, limit={limit}, date={date or ''}, concurrency={concurrency}")
+        return jsonify({"status": "ok", "count": count, "message": msg})
+    except Exception as e:
+        finish_task_log(log_id, "error", str(e))
+        update_progress(task_id, {"status": "error", "message": str(e), "phase": "recommend"})
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/api/run", methods=["POST"])
 def api_run():
     """
@@ -654,30 +778,44 @@ def api_run():
     log_id = start_task_log("run", "一键执行全部")
     try:
         # 阶段1：抓取论文
-        update_progress(task_id, {"current": 0, "total": 3, "status": "running", "message": "正在抓取论文..."})
+        update_progress(task_id, {"current": 0, "total": 4, "status": "running", "message": "正在抓取论文..."})
         new_papers = fetch_latest_papers()
 
         # 阶段2：AI 分析
-        update_progress(task_id, {"current": 1, "total": 3, "status": "running", "message": f"抓取完成，开始分析 {len(new_papers)} 篇新论文..."})
+        update_progress(task_id, {"current": 1, "total": 4, "status": "running", "message": f"抓取完成，开始分析 {len(new_papers)} 篇新论文..."})
         concurrency = get_concurrency()
 
-        def progress_callback(data):
+        def analysis_progress_callback(data):
             update_progress(task_id, {**data, "phase": "analyze"})
 
-        analyzed_count = analyze_pending_papers(limit=100, concurrency=concurrency, progress_callback=progress_callback)
+        analyzed_count = analyze_pending_papers(limit=100, concurrency=concurrency, progress_callback=analysis_progress_callback)
 
-        # 阶段3：生成报告
-        update_progress(task_id, {"current": 2, "total": 3, "status": "running", "message": "正在生成报告..."})
         dates = get_all_dates()
         report_date = dates[0][0] if dates else datetime.now().strftime("%Y-%m-%d")
+
+        # 阶段3：个性化推荐评分
+        update_progress(task_id, {"current": 2, "total": 4, "status": "running", "message": "正在计算个性化推荐分..."})
+
+        def recommendation_progress_callback(data):
+            update_progress(task_id, {**data, "phase": "recommend"})
+
+        recommended_count = recommend_pending_papers(
+            limit=1000,
+            date=report_date,
+            concurrency=concurrency,
+            progress_callback=recommendation_progress_callback,
+        )
+
+        # 阶段4：生成报告
+        update_progress(task_id, {"current": 3, "total": 4, "status": "running", "message": "正在生成报告..."})
         content, paper_count, analyzed_count_r, avg_rating = generate_report_content(report_date)
         if content:
             save_report(report_date, content, paper_count, analyzed_count_r, avg_rating)
 
-        msg = f"完成！抓取 {len(new_papers)} 篇，分析 {analyzed_count} 篇，报告已生成"
-        finish_task_log(log_id, "success", msg, f"fetched={len(new_papers)}, analyzed={analyzed_count}, concurrency={concurrency}")
-        update_progress(task_id, {"current": 3, "total": 3, "status": "completed", "message": msg})
-        return jsonify({"status": "ok", "fetched": len(new_papers), "analyzed": analyzed_count, "concurrency": concurrency, "message": msg})
+        msg = f"完成！抓取 {len(new_papers)} 篇，分析 {analyzed_count} 篇，推荐评分 {recommended_count} 篇，报告已生成"
+        finish_task_log(log_id, "success", msg, f"fetched={len(new_papers)}, analyzed={analyzed_count}, recommended={recommended_count}, concurrency={concurrency}")
+        update_progress(task_id, {"current": 4, "total": 4, "status": "completed", "message": msg})
+        return jsonify({"status": "ok", "fetched": len(new_papers), "analyzed": analyzed_count, "recommended": recommended_count, "concurrency": concurrency, "message": msg})
     except Exception as e:
         finish_task_log(log_id, "error", str(e))
         update_progress(task_id, {"status": "error", "message": str(e)})
@@ -723,11 +861,17 @@ def api_generate():
         date_param = request.args.get("date", "").strip()
         include_ai_summary = str(request.args.get("ai_summary", "")).lower() in {"1", "true", "yes", "on"} \
             or bool(data.get("ai_summary"))
+        recommend_arg = str(request.args.get("recommend", "")).lower()
+        skip_recommend = recommend_arg in {"0", "false", "no", "off"} or data.get("recommend") is False
         if date_param:
             report_date = date_param
         else:
             dates = get_all_dates()
             report_date = dates[0][0] if dates else datetime.now().strftime("%Y-%m-%d")
+
+        recommended_count = 0
+        if not skip_recommend:
+            recommended_count = recommend_pending_papers(limit=1000, date=report_date, concurrency=get_concurrency())
 
         ai_summary = None
         if include_ai_summary:
@@ -742,10 +886,12 @@ def api_generate():
             return jsonify({"status": "error", "message": f"{report_date} 无论文数据，请先抓取该日论文"}), 400
         save_report(report_date, content, paper_count, analyzed_count, avg_rating)
         msg = f"报告生成成功（{report_date}）：{paper_count} 篇论文，{analyzed_count} 篇已分析，平均评级 {avg_rating}"
+        if recommended_count:
+            msg += f"，推荐评分 {recommended_count} 篇"
         if ai_summary:
             msg += "，包含 AI 导读"
-        finish_task_log(log_id, "success", msg)
-        return jsonify({"status": "ok", "date": report_date, "ai_summary": bool(ai_summary), "message": msg})
+        finish_task_log(log_id, "success", msg, f"date={report_date}, papers={paper_count}, analyzed={analyzed_count}, recommended={recommended_count}, ai_summary={bool(ai_summary)}")
+        return jsonify({"status": "ok", "date": report_date, "ai_summary": bool(ai_summary), "recommended": recommended_count, "message": msg})
     except Exception as e:
         finish_task_log(log_id, "error", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -757,7 +903,7 @@ def api_generate():
 
 @app.route("/api/paper/<arxiv_id>/analysis", methods=["PUT"])
 def api_update_paper_analysis(arxiv_id):
-    """更新论文的 AI 分析结果（评级、标签、摘要等）"""
+    """更新论文分析结果（手动评级、标签、摘要等）"""
     try:
         paper = get_paper_by_arxiv_id(arxiv_id)
         if not paper:
@@ -909,9 +1055,9 @@ def api_add_paper():
             update_progress(task_id, {"status": "error", "message": "论文获取失败"})
             return jsonify({"status": "error", "message": "论文获取失败，请检查编号是否正确"}), 404
 
-        # 检查论文是否已有分析结果
+        # 检查论文是否已有完整基础分析；仅手动评级记录不阻止后续 AI 补齐标签/摘要/简评。
         already_analyzed = get_analysis_by_paper_id(paper_data.get("id"))
-        if already_analyzed:
+        if _has_basic_analysis(already_analyzed):
             update_progress(task_id, {"current": 3, "total": 3, "status": "completed", "message": "论文已存在且已分析"})
             return jsonify({
                 "status": "ok",
@@ -930,13 +1076,21 @@ def api_add_paper():
             import json as _json
             paper_data["categories"] = _json.loads(paper_data["categories"])
 
-        # 先用廉价基础分析补齐标签、评级、摘要和价值评价，再用深度阅读补充 Q&A。
+        # 先用廉价基础分析补齐标签、摘要和价值评价，再用深度阅读补充 Q&A；评级由用户手动维护。
         result_data, basic_result, basic_error = analyze_paper_basic(paper_data)
         if not basic_result:
             update_progress(task_id, {"status": "error", "message": f"基础分析失败: {basic_error}"})
             return jsonify({"status": "ok", "message": f"论文已添加但基础分析失败: {basic_error}", "arxiv_id": paper_data.get("arxiv_id")})
+        basic_result["rating"] = 0
 
-        insert_analysis(paper_data["id"], basic_result)
+        inserted = insert_analysis(paper_data["id"], basic_result)
+        if not inserted:
+            update_analysis(paper_data["id"], {
+                "tags": basic_result.get("tags", []),
+                "summary_cn": basic_result.get("summary_cn", ""),
+                "summary_en": basic_result.get("summary_en", ""),
+                "value_comment": basic_result.get("value_comment", ""),
+            })
         update_progress(task_id, {"current": 2, "total": 3, "status": "running", "message": f"正在生成深度阅读 {arxiv_id}..."})
 
         result_data, deep_result, deep_error = analyze_paper_full(paper_data)
@@ -1102,6 +1256,28 @@ def api_get_ai_usage():
     return jsonify(get_ai_usage_summary(days=days, group_by=group_by))
 
 
+@app.route("/api/settings/personalization", methods=["GET"])
+def api_get_personalization():
+    """获取个性化推荐配置。"""
+    return jsonify(get_personalization_config())
+
+
+@app.route("/api/settings/personalization", methods=["POST"])
+def api_save_personalization():
+    """保存用户研究兴趣；不自动触发历史推荐分重算。"""
+    try:
+        data = request.get_json() or {}
+        if save_personalization_config(data):
+            return jsonify({
+                "status": "ok",
+                "message": "研究兴趣已保存",
+                "personalization": get_personalization_config(),
+            })
+        return jsonify({"status": "error", "message": "保存失败"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 # ====================================================================
 #                设置 API — 代理配置（Proxy Settings）
 # ====================================================================
@@ -1156,6 +1332,50 @@ def api_test_proxy():
             return jsonify({"status": "error", "message": f"arXiv 返回异常状态码: {resp.status_code}"})
     except Exception as e:
         return jsonify({"status": "error", "message": f"连接失败: {str(e)}"})
+
+
+# ====================================================================
+#              设置 API — WebDAV 云备份（WebDAV Backup）
+# ====================================================================
+
+@app.route("/api/settings/webdav-backup", methods=["GET"])
+def api_get_webdav_backup():
+    """获取 WebDAV 云备份配置；不返回明文密码。"""
+    return jsonify(get_webdav_backup_config(mask_password=True))
+
+
+@app.route("/api/settings/webdav-backup", methods=["POST"])
+def api_save_webdav_backup():
+    """保存 WebDAV 云备份配置。密码留空时保留旧密码。"""
+    try:
+        data = request.get_json() or {}
+        config = {
+            "enabled": _request_bool(data, "enabled", False),
+            "url": data.get("url", ""),
+            "username": data.get("username", ""),
+            "password": data.get("password", ""),
+            "remote_dir": data.get("remote_dir", "arxiv-backups"),
+            "history_days": _request_int(data, "history_days", 3),
+        }
+        if save_webdav_backup_config(config):
+            return jsonify({
+                "status": "ok",
+                "message": "WebDAV 云备份配置已保存",
+                "webdav_backup": get_webdav_backup_config(mask_password=True),
+            })
+        return jsonify({"status": "error", "message": "保存失败"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/backup/webdav/run", methods=["POST"])
+def api_run_webdav_backup():
+    """手动执行一次 WebDAV 云备份。"""
+    try:
+        result = _run_webdav_backup_task(force=True)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"WebDAV 备份失败: {e}"}), 500
 
 
 # ====================================================================
@@ -1599,14 +1819,9 @@ def api_db_info():
     if dates:
         date_range = f"{dates[-1][0]} ~ {dates[0][0]}"
 
-    # 计算数据库文件大小（自动选择 KB/MB 单位）
-    db_size = "N/A"
-    if os.path.exists(DB_PATH):
-        size_bytes = os.path.getsize(DB_PATH)
-        if size_bytes > 1024 * 1024:
-            db_size = f"{size_bytes / 1024 / 1024:.1f} MB"
-        else:
-            db_size = f"{size_bytes / 1024:.1f} KB"
+    # 计算数据库文件占用（包含 WAL/SHM）
+    db_file_sizes = get_database_file_sizes(DB_PATH)
+    db_size = db_file_sizes["total"]
 
     # 计算所有已分析论文的平均评级
     avg_rating = None
@@ -1618,7 +1833,7 @@ def api_db_info():
             cursor = conn.cursor()
             cursor.execute("SELECT AVG(rating) FROM analysis")
             row = cursor.fetchone()
-            if row and row[0]:
+            if row and row[0] is not None:
                 avg_rating = f"{row[0]:.1f}"
         except:
             pass
@@ -1634,6 +1849,8 @@ def api_db_info():
         "total_categories": len(categories),
         "date_range": date_range,
         "db_size": db_size,
+        "db_size_bytes": db_file_sizes["total_bytes"],
+        "db_files": db_file_sizes["files"],
         "avg_rating": avg_rating,
         "db_path": DB_PATH,
         "output_dir": OUTPUT_DIR,
@@ -1667,6 +1884,8 @@ def api_set_admin_password():
             return jsonify({"status": "error", "message": "新密码不能为空"}), 400
 
         set_admin_password(new_pwd)
+        _clear_admin_session()
+        _mark_admin_authenticated()
         return jsonify({"status": "ok", "message": "管理密码已设置"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -1680,7 +1899,7 @@ def api_clear_admin_password():
         if has_admin_password() and not verify_admin_password(data.get("current_password", "")):
             return jsonify({"status": "error", "message": "当前密码错误"}), 403
         set_admin_password("")
-        session.pop("admin_authenticated", None)
+        _clear_admin_session()
         return jsonify({"status": "ok", "message": "管理密码已清除"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
