@@ -97,12 +97,14 @@ THINKING_BUDGETS = {
 }
 OPENAI_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
 REQUIRED_PROMPT_FIELDS = {"title", "authors", "abstract", "tag_candidates", "rating_criteria"}
-AI_TASK_KEYS = ("basic_analysis", "deep_reading", "report_summary", "recommendation")
+AI_TASK_KEYS = ("basic_analysis", "deep_reading", "report_summary", "recommendation", "paper_chat", "paper_quiz")
 AI_TASK_LABELS = {
     "basic_analysis": "基础分析",
     "deep_reading": "深度阅读",
     "report_summary": "报告导读",
     "recommendation": "个性化推荐",
+    "paper_chat": "论文对话",
+    "paper_quiz": "论文问答练习",
 }
 
 DEFAULT_PROVIDER_OPTIONS = {
@@ -185,6 +187,38 @@ DEFAULT_AI_TASK_OPTIONS = {
         "max_tokens_enabled": True,
         "is_thinking": False,
         "thinking_effort": "medium",
+    },
+    "paper_chat": {
+        "provider_key": "",
+        "model": "",
+        "temperature": 0.2,
+        "temperature_enabled": False,
+        "top_p": 1.0,
+        "top_p_enabled": False,
+        "presence_penalty": 0.0,
+        "presence_penalty_enabled": False,
+        "frequency_penalty": 0.0,
+        "frequency_penalty_enabled": False,
+        "max_tokens": 4000,
+        "max_tokens_enabled": True,
+        "is_thinking": True,
+        "thinking_effort": "high",
+    },
+    "paper_quiz": {
+        "provider_key": "",
+        "model": "",
+        "temperature": 0.2,
+        "temperature_enabled": False,
+        "top_p": 1.0,
+        "top_p_enabled": False,
+        "presence_penalty": 0.0,
+        "presence_penalty_enabled": False,
+        "frequency_penalty": 0.0,
+        "frequency_penalty_enabled": False,
+        "max_tokens": 3000,
+        "max_tokens_enabled": True,
+        "is_thinking": True,
+        "thinking_effort": "high",
     },
 }
 
@@ -298,6 +332,35 @@ DEFAULT_RECOMMENDATION_INSTRUCTION = """请根据用户研究兴趣，判断论�
 - 只基于输入的论文信息判断，不要编造摘要中没有的信息
 """
 
+DEFAULT_PAPER_CHAT_SYSTEM_PROMPT = (
+    "你是一位陪用户精读论文的研究伙伴。请基于给定论文上下文回答，帮助用户澄清概念、"
+    "比较方法、检查理解和形成可复述的认识。不要编造论文中没有的内容；信息不足时明确说明。"
+)
+
+DEFAULT_PAPER_CHAT_INSTRUCTION = """你将和用户围绕同一篇论文进行多轮讨论。
+
+要求：
+- 优先引用论文上下文中的方法、实验、结论和局限
+- 回答要适合学习和复述，不要只堆砌摘要
+- 如果用户的理解有误，请温和指出并给出修正版
+- 如果用户要求扩展，请区分论文内容和你的推断
+"""
+
+DEFAULT_PAPER_QUIZ_SYSTEM_PROMPT = (
+    "你是一位严格但友善的论文学习教练。请基于给定论文上下文生成问题、追问用户、"
+    "评价答案并帮助用户补齐理解。除非任务明确要求自然语言，否则请严格返回合法 JSON。"
+)
+
+DEFAULT_PAPER_QUIZ_INSTRUCTION = """你将基于论文上下文帮助用户主动回忆。
+
+支持三类任务：
+1. 生成 quick3 或 standard6 练习题
+2. 根据用户答案给出评分和反馈
+3. 进行独立苏格拉底式追问
+
+评分反馈必须关注：用户说对了什么、漏掉了什么、有没有误解、如何改成更好的答案。
+"""
+
 DEFAULT_PROMPT_PROFILES = {
     "basic_analysis": {
         "system": DEFAULT_SYSTEM_PROMPT,
@@ -314,6 +377,14 @@ DEFAULT_PROMPT_PROFILES = {
     "recommendation": {
         "system": DEFAULT_SYSTEM_PROMPT,
         "instruction": DEFAULT_RECOMMENDATION_INSTRUCTION,
+    },
+    "paper_chat": {
+        "system": DEFAULT_PAPER_CHAT_SYSTEM_PROMPT,
+        "instruction": DEFAULT_PAPER_CHAT_INSTRUCTION,
+    },
+    "paper_quiz": {
+        "system": DEFAULT_PAPER_QUIZ_SYSTEM_PROMPT,
+        "instruction": DEFAULT_PAPER_QUIZ_INSTRUCTION,
     },
 }
 
@@ -612,7 +683,7 @@ def _migrate_basic_analysis_instruction(instruction):
 
 
 def _normalize_prompt_profiles(profiles, legacy_prompts=None):
-    """补齐基础分析、深度阅读、报告导读三套 prompt profile。"""
+    """补齐所有 AI 功能的 prompt profile。"""
     result = json.loads(json.dumps(DEFAULT_PROMPT_PROFILES))
     profiles = profiles if isinstance(profiles, dict) else {}
 
@@ -1090,7 +1161,7 @@ def get_ai_config():
 
 
 def get_ai_tasks():
-    """获取三类 AI 功能的任务级模型与参数配置。"""
+    """获取所有 AI 功能的任务级模型与参数配置。"""
     settings = load_settings()
     return _normalize_ai_tasks(
         settings.get("ai_tasks", {}),
@@ -1151,7 +1222,7 @@ def get_ai_task_config(task_key):
 
 def get_concurrency():
     """
-    获取 AI 分析的并发请迂数。
+    获取 AI 分析的并发请求数。
 
     并发数控制 ThreadPoolExecutor 同时发起的 API 请求数量，
     默认值为 5。过大会触发 API 速率限制，过小则分析速度慢。
@@ -1473,7 +1544,7 @@ def update_provider(key, config):
 # ============================================================================
 
 def get_prompt_profiles():
-    """获取基础分析、深度阅读、报告导读三套 prompt profile。"""
+    """获取所有 AI 功能的 prompt profile。"""
     settings = load_settings()
     return _normalize_prompt_profiles(
         settings.get("prompt_profiles", {}),
@@ -1568,6 +1639,8 @@ PROFILE_REQUIRED_PROMPT_FIELDS = {
     "deep_reading": set(),
     "report_summary": set(),
     "recommendation": set(),
+    "paper_chat": set(),
+    "paper_quiz": set(),
 }
 
 

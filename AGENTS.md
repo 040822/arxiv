@@ -12,7 +12,7 @@
 
 ## 1. 项目概述
 
-自动从 arXiv 抓取 AI/机器人领域论文，调用 OpenAI 兼容 API 做基础分析（标签、AI 评级、中文摘要、简评）和按需深度阅读（Q&A），存入 SQLite 数据库，通过 Flask Web 界面浏览。论文评级由 AI 初评，用户可手动修正。
+自动从 arXiv 抓取 AI/机器人领域论文，调用 OpenAI 兼容 API 做基础分析（标签、AI 评级、中文摘要、简评）和按需深度阅读（Q&A），存入 SQLite 数据库，通过 Flask Web 界面浏览。论文评级由 AI 初评，用户可手动修正。用户还可以在单篇论文学习页中基于 PDF 全文进行自由讨论、主动问答练习和苏格拉底追问。
 
 **技术栈:** Python 3.10+ / Flask / SQLite / APScheduler / arxiv-py / OpenAI SDK / PyMuPDF
 
@@ -27,10 +27,10 @@
 ```
 arxiv/
 ├── config.py           # 硬编码配置（分类、标签候选、路径）
-├── settings.py         # 运行时配置（JSON文件：供应商、prompt、并发数、定时任务、密码）
-├── database.py         # SQLite 数据库全部操作（CRUD、迁移、任务日志）
+├── settings.py         # 运行时配置（JSON文件：供应商、prompt、AI任务路由、并发数、定时任务、密码）
+├── database.py         # SQLite 数据库全部操作（CRUD、迁移、任务日志、学习记录）
 ├── fetcher.py          # arXiv API 论文抓取（去重、按分类拉取）
-├── analyzer.py         # AI 分析逻辑（并发调用、PDF全文提取、Q&A生成）
+├── analyzer.py         # AI 分析与论文学习逻辑（PDF全文、Q&A、对话、问答反馈）
 ├── backup.py           # WebDAV 云同步备份（SQLite 快照、zip 打包、上传/清理）
 ├── pdf_reader.py       # PDF 下载与文本提取（PyMuPDF，缓存到 data/pdf_cache/）
 ├── markdown_gen.py     # Markdown 报告生成（README + 每日报告）
@@ -44,6 +44,7 @@ arxiv/
 │   ├── browse.html     # 分类浏览（多条件筛选）
 │   ├── search.html     # 搜索页
 │   ├── paper.html      # 论文详情（含编辑功能）
+│   ├── paper_chat.html # 论文学习页（对话、问答、苏格拉底追问）
 │   ├── settings.html   # 设置页（AI/数据库/管理三个Tab）
 │   └── tasks.html      # 任务管理页（定时任务、统计、日志）
 ├── static/style.css    # 全局样式
@@ -114,6 +115,46 @@ CREATE TABLE task_logs (
 );
 ```
 
+### 论文学习表
+```sql
+CREATE TABLE paper_chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_id INTEGER NOT NULL,         -- FK -> papers.id (CASCADE DELETE)
+    role TEXT NOT NULL,                -- user/assistant
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE paper_quiz_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_id INTEGER NOT NULL,         -- FK -> papers.id (CASCADE DELETE)
+    mode TEXT NOT NULL,                -- quick3/standard6/socratic
+    status TEXT DEFAULT 'active',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE paper_quiz_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,       -- FK -> paper_quiz_sessions.id (CASCADE DELETE)
+    position INTEGER NOT NULL,
+    question TEXT NOT NULL,
+    expected_points TEXT,              -- JSON 数组或 socratic 标记
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE paper_quiz_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_id INTEGER NOT NULL,      -- FK -> paper_quiz_questions.id (CASCADE DELETE)
+    answer_text TEXT NOT NULL,
+    score INTEGER DEFAULT 0,           -- 0-5
+    feedback_json TEXT,                -- correct/missing/misconception/improved_answer
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+删除论文时，以上学习记录会随 papers 外键级联删除。
+
 ---
 
 ## 4. 核心数据流
@@ -149,7 +190,37 @@ analyzer.analyze_paper_full(paper_data)
   → update_analysis() 仅写入 qa_analysis，不覆盖基础分析字段
 ```
 
-### 4.3 定时任务流程
+### 4.3 论文学习流程
+```
+GET /paper/<arxiv_id>/chat
+  → 展示自由讨论、3/6题练习、苏格拉底追问
+
+POST /api/paper/<arxiv_id>/chat/messages
+  → get_paper_chat_messages(limit=12) 读取最近历史
+  → chat_about_paper()
+    → get_learning_paper_text()
+      → 优先检查 data/pdf_cache/<arxiv_id>.pdf
+      → 未命中才调用 download_pdf()
+      → PDF 下载/提取失败回退 abstract
+    → build_paper_learning_messages()
+      → system → 稳定任务说明 → 稳定论文上下文 → 历史/当前问题
+    → paper_chat 任务模型
+  → 保存 user/assistant 消息
+
+POST /api/paper/<arxiv_id>/quiz/sessions
+  → paper_quiz 任务模型生成 quick3/standard6 题目
+  → 保存 session/questions
+
+POST /api/paper/<arxiv_id>/quiz/questions/<question_id>/answer
+  → paper_quiz 任务模型评分并返回 correct/missing/misconceptions/improved_answer
+  → 保存 answer/feedback
+
+POST /api/paper/<arxiv_id>/socratic/sessions
+POST /api/paper/<arxiv_id>/socratic/sessions/<session_id>/reply
+  → paper_quiz 任务模型根据历史连续追问
+```
+
+### 4.4 定时任务流程
 ```
 APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
   → daily_pipeline()
@@ -214,13 +285,17 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
     "basic_analysis": {"system": "...", "instruction": "...{tag_candidates}..."},
     "deep_reading": {"system": "...", "instruction": "..."},
     "report_summary": {"system": "...", "instruction": "..."},
-    "recommendation": {"system": "...", "instruction": "...返回 recommendation_score/recommendation_reason..."}
+    "recommendation": {"system": "...", "instruction": "...返回 recommendation_score/recommendation_reason..."},
+    "paper_chat": {"system": "...", "instruction": "...多轮讨论..."},
+    "paper_quiz": {"system": "...", "instruction": "...主动回忆/评分/追问..."}
   },
   "ai_tasks": {
     "basic_analysis": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1200},
     "deep_reading": {"provider_key": "deepseek", "model": "deepseek-reasoner", "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 6000},
     "report_summary": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1000},
-    "recommendation": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 500}
+    "recommendation": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 500},
+    "paper_chat": {"provider_key": "deepseek", "model": "deepseek-reasoner", "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 4000},
+    "paper_quiz": {"provider_key": "deepseek", "model": "deepseek-reasoner", "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 3000}
   }
 }
 ```
@@ -229,7 +304,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 - `load_settings()` / `save_settings()` — 读写JSON（含自动迁移）
 - `get_ai_config()` — 获取当前激活供应商的 API 配置
 - `get_ai_task_config(task_key)` — 获取某个 AI 功能的实际供应商、模型和参数配置
-- `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存基础分析、深度阅读、报告导读、个性化推荐的模型路由
+- `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的模型路由
 - `build_chat_completion_kwargs()` — 统一构建 Chat Completions 参数（思考模型会省略采样参数）
 - `normalize_provider_config()` — 补齐供应商配置字段，兼容旧版 settings.json
 - `get_prompt_profile()` / `get_prompt_profiles()` — 获取任务级 Prompt Profile；`get_prompts()` 保留旧接口兼容
@@ -257,6 +332,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 | `GET /browse` | 分类浏览（多条件筛选） |
 | `GET /search?q=` | 搜索 |
 | `GET /paper/<arxiv_id>` | 论文详情（含编辑） |
+| `GET /paper/<arxiv_id>/chat` | 论文学习页（对话/问答/苏格拉底追问） |
 | `GET /settings` | 设置页（AI/数据库/管理） |
 | `GET /tasks` | 任务管理页 |
 
@@ -280,6 +356,17 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 | `/api/paper/<id>` | DELETE | 删除论文 |
 | `/api/paper/<id>/reanalyze` | POST | 重新AI分析 |
 | `/api/paper/<id>/todo/status` | GET | 检查阅读清单状态 |
+
+### 论文学习 API
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/paper/<id>/chat/messages` | GET | 读取自由讨论历史 |
+| `/api/paper/<id>/chat/messages` | POST | 发送讨论消息并保存模型回复 |
+| `/api/paper/<id>/quiz/sessions` | POST | 创建 quick3/standard6 练习并生成题目 |
+| `/api/paper/<id>/quiz/sessions/<session_id>` | GET | 读取练习题、答案和反馈 |
+| `/api/paper/<id>/quiz/questions/<question_id>/answer` | POST | 提交单题答案并返回评分反馈 |
+| `/api/paper/<id>/socratic/sessions` | POST | 创建独立苏格拉底追问会话 |
+| `/api/paper/<id>/socratic/sessions/<session_id>/reply` | POST | 提交回答并返回反馈和下一问 |
 
 ### 设置 API
 | 端点 | 方法 | 说明 |
@@ -356,11 +443,13 @@ if "new_column" not in columns:
 管理密码设置后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用。登录状态通过签名 cookie 持久保存 180 天，默认使用 `settings.json` 中的 `session_secret` 保证服务重启后仍有效；如果设置了 `FLASK_SECRET_KEY` 则优先使用环境变量。修改管理密码会使旧登录状态失效。`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
 
 ### 7.4 修改 Prompt
-- 新版 prompt 主要存储在 `data/settings.json` 的 `prompt_profiles` 字段，按 `basic_analysis`、`deep_reading`、`report_summary` 拆分
+- 新版 prompt 主要存储在 `data/settings.json` 的 `prompt_profiles` 字段，按 `basic_analysis`、`deep_reading`、`report_summary`、`recommendation`、`paper_chat`、`paper_quiz` 拆分
 - 旧版 `prompts.system_prompt/user_prompt` 保留为兼容字段，并映射到 `deep_reading`
-- 基础分析 Prompt Profile 可使用 `{tag_candidates}`、`{rating_criteria}`，并返回 `tags`、`rating`、`summary_cn`、`value_comment`；深度阅读只描述 Q&A 输出；论文标题、作者、摘要、PDF 全文会作为最后一条动态 JSON message 传入
+- 基础分析 Prompt Profile 可使用 `{tag_candidates}`、`{rating_criteria}`，并返回 `tags`、`rating`、`summary_cn`、`value_comment`；深度阅读只描述 Q&A 输出；论文标题、作者、摘要、PDF 全文由后端作为独立 JSON message 传入
 - 修改 AI 调用逻辑时不要重新把动态论文内容拼回稳定 instruction，否则会降低 prompt cache 命中率
 - 深度阅读按质量优先调用 `get_paper_full_text(max_chars=None)`，不截断 PDF 全文；基础分析只使用摘要以降低成本
+- 论文学习功能必须通过 `build_paper_learning_messages()` 构造消息，保持 `system → 稳定任务说明 → 稳定论文上下文 → 动态历史/用户输入` 的顺序；不要把时间戳、session id、当前问题等易变内容放进稳定论文上下文
+- 论文学习 PDF 文本必须通过 `get_learning_paper_text()` 获取，优先复用 `data/pdf_cache/<arxiv_id>.pdf`，未命中才下载，失败时回退摘要
 
 ### 7.5 添加新标签
 在 `config.py` 的 `TAG_CANDIDATES` 列表中添加。注意：
@@ -421,7 +510,7 @@ cp data/papers.db data/papers.db.bak
 - PDF 提取依赖 PyMuPDF，扫描版 PDF 无法提取文本
 - arXiv API 有速率限制，大量抓取时需增加 delay_seconds
 - SQLite 在高并发写入时可能有锁竞争（已用 WAL 模式缓解）
-- 无用户登录系统，管理密码仅保护设置页
+- 无多用户隔离系统，管理密码只提供本地单用户访问保护
 
 ### 可扩展方向
 - 添加更多 arXiv 分类到 `config.py` 的 `ARXIV_CATEGORIES`

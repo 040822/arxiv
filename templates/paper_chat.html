@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>讨论论文 - {{ paper.title }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div></div>
+                <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+            </div>
+            <h1>🤖 AI 论文数据库</h1>
+        </header>
+
+        <nav class="nav-bar">
+            <a href="/paper/{{ paper.arxiv_id }}" class="nav-link">← 返回论文详情</a>
+            <a href="/" class="nav-link">📅 每日论文</a>
+            <a href="/reading-list" class="nav-link">📌 阅读清单</a>
+        </nav>
+
+        <article class="paper-detail learning-page">
+            <div class="learning-hero">
+                <div>
+                    <h1>{{ paper.title }}</h1>
+                    <div class="detail-meta">
+                        <span class="meta-item">🔗 <a href="{{ paper.url }}" target="_blank" class="meta-link">{{ paper.arxiv_id }}</a></span>
+                        {% if paper.pdf_url %}<span class="meta-item">📥 <a href="{{ paper.pdf_url }}" target="_blank" class="meta-link">PDF</a></span>{% endif %}
+                        {% if analysis and analysis.rating is not none %}<span class="meta-item rating">评级 {{ analysis.rating }}/5</span>{% endif %}
+                    </div>
+                </div>
+                <p class="section-desc">这里不是让 AI 替你读完就结束，而是用对话、答题和追问把论文变成你能复述的东西。</p>
+            </div>
+
+            <div class="learning-grid">
+                <section class="learning-panel">
+                    <h3>💬 自由讨论</h3>
+                    <p class="section-desc">适合追问方法细节、实验设计、和你自己的研究方向有什么关系。</p>
+                    <div id="chat-messages" class="learning-chat"></div>
+                    <div class="learning-input-row">
+                        <textarea id="chat-input" rows="3" placeholder="例如：这篇论文的方法和 VLA 有什么关系？"></textarea>
+                        <button class="action-btn btn-primary" id="chat-send-btn" onclick="sendChat()">发送</button>
+                    </div>
+                    <div id="chat-status" class="action-status"></div>
+                </section>
+
+                <section class="learning-panel">
+                    <h3>🧠 主动问答练习</h3>
+                    <p class="section-desc">先自己答，再看模型评分、纠错和改进版答案。</p>
+                    <div class="action-buttons">
+                        <button class="action-btn btn-primary" onclick="createQuiz('quick3')">生成 3 题快速练习</button>
+                        <button class="action-btn" onclick="createQuiz('standard6')">生成 6 题标准练习</button>
+                    </div>
+                    {% if quiz_sessions %}
+                    <div class="learning-session-list">
+                        <span class="section-desc">最近练习：</span>
+                        {% for session in quiz_sessions %}
+                        <button class="btn-sm" onclick="loadQuizSession({{ session.id }})">
+                            {{ session.mode }} · {{ session.question_count }}题
+                        </button>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    <div id="quiz-status" class="action-status"></div>
+                    <div id="quiz-session" class="learning-quiz"></div>
+                </section>
+
+                <section class="learning-panel">
+                    <h3>🔎 苏格拉底追问</h3>
+                    <p class="section-desc">不预设题目，模型会根据你的回答继续追问，适合重要论文精读。</p>
+                    <div class="action-buttons">
+                        <button class="action-btn btn-primary" onclick="startSocratic()">开始追问</button>
+                    </div>
+                    <div id="socratic-status" class="action-status"></div>
+                    <div id="socratic-session" class="learning-quiz"></div>
+                </section>
+            </div>
+        </article>
+
+        <footer>
+            <p>AI 论文数据库 · 每日自动更新 · Powered by arXiv API + OpenAI</p>
+        </footer>
+    </div>
+
+    <script>
+        const ARXIV_ID = {{ paper.arxiv_id | tojson }};
+        let activeQuizSession = null;
+        let activeSocraticSession = null;
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        function handleAuthRequired(resp, data) {
+            if (resp.status === 401 || data.auth_required) {
+                if (confirm('需要登录后才能使用论文学习功能。现在去登录？')) {
+                    window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        function renderMeta(meta) {
+            if (!meta) return '';
+            const total = Number(meta.total_tokens || 0).toLocaleString('en-US');
+            const cached = Number(meta.cached_tokens || 0).toLocaleString('en-US');
+            const miss = Number(meta.cache_miss_tokens || 0).toLocaleString('en-US');
+            const pdf = meta.used_pdf_full_text ? (meta.used_pdf_cache ? 'PDF缓存' : 'PDF下载') : '摘要回退';
+            return ` · ${pdf} · tokens ${total} · 缓存 ${cached} / 未命中 ${miss}`;
+        }
+
+        async function fetchJson(url, options = {}) {
+            const resp = await fetch(url, options);
+            const data = await resp.json();
+            if (handleAuthRequired(resp, data)) throw new Error('auth_required');
+            if (!resp.ok || data.status === 'error') throw new Error(data.message || '请求失败');
+            return data;
+        }
+
+        function renderChat(messages) {
+            const box = document.getElementById('chat-messages');
+            if (!messages || !messages.length) {
+                box.innerHTML = '<div class="empty-state compact"><p>还没有讨论记录，问一个你真正想弄懂的问题吧。</p></div>';
+                return;
+            }
+            box.innerHTML = messages.map(m => `
+                <div class="learning-message ${m.role === 'assistant' ? 'assistant' : 'user'}">
+                    <div class="learning-message-role">${m.role === 'assistant' ? 'AI' : '你'}</div>
+                    <div class="learning-message-body">${escapeHtml(m.content).replace(/\n/g, '<br>')}</div>
+                </div>
+            `).join('');
+            box.scrollTop = box.scrollHeight;
+        }
+
+        async function loadChatMessages() {
+            try {
+                const data = await fetchJson(`/api/paper/${ARXIV_ID}/chat/messages`);
+                renderChat(data.messages || []);
+            } catch (e) {
+                if (e.message !== 'auth_required') document.getElementById('chat-status').textContent = '加载失败：' + e.message;
+            }
+        }
+
+        async function sendChat() {
+            const input = document.getElementById('chat-input');
+            const btn = document.getElementById('chat-send-btn');
+            const status = document.getElementById('chat-status');
+            const message = input.value.trim();
+            if (!message) return;
+            btn.disabled = true;
+            status.className = 'action-status info';
+            status.textContent = '正在载入论文上下文并回答...';
+            try {
+                const data = await fetchJson(`/api/paper/${ARXIV_ID}/chat/messages`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({message})
+                });
+                input.value = '';
+                renderChat(data.messages || []);
+                status.className = 'action-status success';
+                status.textContent = '已回复' + renderMeta(data.meta);
+            } catch (e) {
+                if (e.message !== 'auth_required') {
+                    status.className = 'action-status error';
+                    status.textContent = e.message;
+                }
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function feedbackHtml(feedback) {
+            if (!feedback) return '';
+            const list = key => (feedback[key] || []).map(v => `<li>${escapeHtml(v)}</li>`).join('');
+            return `<div class="learning-feedback">
+                <div><strong>评分：</strong>${escapeHtml(feedback.score ?? 0)}/5</div>
+                ${feedback.feedback ? `<p>${escapeHtml(feedback.feedback)}</p>` : ''}
+                ${list('correct_points') ? `<strong>答对的点</strong><ul>${list('correct_points')}</ul>` : ''}
+                ${list('missing_points') ? `<strong>缺失的点</strong><ul>${list('missing_points')}</ul>` : ''}
+                ${list('misconceptions') ? `<strong>可能误解</strong><ul>${list('misconceptions')}</ul>` : ''}
+                ${feedback.improved_answer ? `<strong>改进版答案</strong><p>${escapeHtml(feedback.improved_answer)}</p>` : ''}
+            </div>`;
+        }
+
+        function renderQuizSession(session, targetId, socratic = false) {
+            const box = document.getElementById(targetId);
+            if (!session) {
+                box.innerHTML = '';
+                return;
+            }
+            const questions = session.questions || [];
+            box.innerHTML = questions.map((q, idx) => {
+                const answered = !!q.feedback;
+                const canAnswer = socratic ? idx === questions.length - 1 && !answered : !answered;
+                return `<div class="learning-question">
+                    <div class="learning-question-title">Q${idx + 1}: ${escapeHtml(q.question)}</div>
+                    ${q.answer_text ? `<div class="learning-answer"><strong>你的回答：</strong><br>${escapeHtml(q.answer_text).replace(/\n/g, '<br>')}</div>` : ''}
+                    ${feedbackHtml(q.feedback)}
+                    ${canAnswer ? `<textarea id="answer-${q.id}" rows="4" placeholder="先用自己的话回答，再提交给模型反馈"></textarea>
+                    <button class="action-btn btn-primary" onclick="${socratic ? `replySocratic(${session.id}, ${q.id})` : `submitQuizAnswer(${q.id})`}">提交回答</button>` : ''}
+                </div>`;
+            }).join('');
+        }
+
+        async function createQuiz(mode) {
+            const status = document.getElementById('quiz-status');
+            status.className = 'action-status info';
+            status.textContent = '正在生成练习题...';
+            try {
+                const data = await fetchJson(`/api/paper/${ARXIV_ID}/quiz/sessions`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mode})
+                });
+                activeQuizSession = data.session;
+                renderQuizSession(activeQuizSession, 'quiz-session');
+                status.className = 'action-status success';
+                status.textContent = '题目已生成' + renderMeta(data.meta);
+            } catch (e) {
+                if (e.message !== 'auth_required') {
+                    status.className = 'action-status error';
+                    status.textContent = e.message;
+                }
+            }
+        }
+
+        async function loadQuizSession(sessionId) {
+            const status = document.getElementById('quiz-status');
+            try {
+                const data = await fetchJson(`/api/paper/${ARXIV_ID}/quiz/sessions/${sessionId}`);
+                activeQuizSession = data.session;
+                renderQuizSession(activeQuizSession, 'quiz-session', activeQuizSession.mode === 'socratic');
+                status.className = 'action-status success';
+                status.textContent = '已载入练习记录';
+            } catch (e) {
+                if (e.message !== 'auth_required') {
+                    status.className = 'action-status error';
+                    status.textContent = e.message;
+                }
+            }
+        }
+
+        async function submitQuizAnswer(questionId) {
+            const answer = document.getElementById(`answer-${questionId}`).value.trim();
+            if (!answer) return;
+            const status = document.getElementById('quiz-status');
+            status.className = 'action-status info';
+            status.textContent = '正在评分...';
+            try {
+                const data = await fetchJson(`/api/paper/${ARXIV_ID}/quiz/questions/${questionId}/answer`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({answer})
+                });
+                activeQuizSession = data.session;
+                renderQuizSession(activeQuizSession, 'quiz-session');
+                status.className = 'action-status success';
+                status.textContent = '已反馈' + renderMeta(data.meta);
+            } catch (e) {
+                if (e.message !== 'auth_required') {
+                    status.className = 'action-status error';
+                    status.textContent = e.message;
+                }
+            }
+        }
+
+        async function startSocratic() {
+            const status = document.getElementById('socratic-status');
+            status.className = 'action-status info';
+            status.textContent = '正在生成第一问...';
+            try {
+                const data = await fetchJson(`/api/paper/${ARXIV_ID}/socratic/sessions`, {method: 'POST'});
+                activeSocraticSession = data.session;
+                renderQuizSession(activeSocraticSession, 'socratic-session', true);
+                status.className = 'action-status success';
+                status.textContent = '追问已开始' + renderMeta(data.meta);
+            } catch (e) {
+                if (e.message !== 'auth_required') {
+                    status.className = 'action-status error';
+                    status.textContent = e.message;
+                }
+            }
+        }
+
+        async function replySocratic(sessionId, questionId) {
+            const answer = document.getElementById(`answer-${questionId}`).value.trim();
+            if (!answer) return;
+            const status = document.getElementById('socratic-status');
+            status.className = 'action-status info';
+            status.textContent = '正在追问...';
+            try {
+                const data = await fetchJson(`/api/paper/${ARXIV_ID}/socratic/sessions/${sessionId}/reply`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({answer})
+                });
+                activeSocraticSession = data.session;
+                renderQuizSession(activeSocraticSession, 'socratic-session', true);
+                status.className = 'action-status success';
+                status.textContent = '已生成下一问' + renderMeta(data.meta);
+            } catch (e) {
+                if (e.message !== 'auth_required') {
+                    status.className = 'action-status error';
+                    status.textContent = e.message;
+                }
+            }
+        }
+
+        loadChatMessages();
+    </script>
+</body>
+</html>

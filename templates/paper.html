@@ -35,6 +35,7 @@
                 {% if paper.pdf_url %}
                 <span class="meta-item">📥 <a href="{{ paper.pdf_url }}" target="_blank" class="meta-link">下载 PDF</a></span>
                 {% endif %}
+                <span class="meta-item">💬 <a href="/paper/{{ paper.arxiv_id }}/chat" class="meta-link">讨论论文</a></span>
                 <span class="meta-item">📌 <a href="javascript:void(0)" class="meta-link" id="todo-toggle" onclick='toggleTodo({{ paper.arxiv_id | tojson }})'>加入阅读清单</a></span>
                 {% if paper.hidden %}
                 <span class="meta-item" style="color:#dc3545;">🚫 已隐藏</span>

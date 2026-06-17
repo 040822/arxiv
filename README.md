@@ -6,6 +6,7 @@
 
 - **每日自动抓取** — 默认从 arXiv 拉取 cs.RO 分类论文，可在 `config.py` 中增减分类
 - **AI 快速阅读** — 自动调用 OpenAI 兼容 API，为每篇论文生成标签（VLA、World Model 等）、中文摘要翻译和精炼总结
+- **论文学习页** — 单篇论文支持基于 PDF 全文的自由讨论、3/6 题主动问答练习和苏格拉底追问
 - **Web 报告** — 自动生成数据库内的每日结构化报告；CLI 可生成 Markdown 总览和日报
 - **Web 浏览** — Flask 本地 Web 服务，支持按标签/评级筛选、关键词搜索
 - **定时任务** — 内置 APScheduler，每天定时自动执行抓取、分析和报告生成
@@ -56,7 +57,7 @@ pip install -r requirements.txt
 
 ### 2. 配置 API
 
-启动 Web 服务后进入 `http://localhost:5000/settings`，在「AI 设置」中添加 OpenAI 兼容供应商，填写 API Key、Base URL 和模型名称。
+启动 Web 服务后进入 `http://localhost:5000/settings`，在「AI 设置」中添加 OpenAI 兼容供应商，填写 API Key、Base URL 和模型名称。基础分析、深度阅读、论文对话、论文问答练习等功能可分别配置模型路由。
 
 运行时配置保存在 `data/settings.json`，该文件包含 API Key，已被 `.gitignore` 排除，请不要提交到 GitHub。`config.py` 中的 API 相关变量只作为首次默认值或环境变量 fallback。
 
@@ -111,6 +112,7 @@ python app.py
 |------|------|------|
 | `/` | GET | 首页，论文列表（支持 `?tag=`、`?min_rating=`、`?date=`、`?page=`） |
 | `/paper/<arxiv_id>` | GET | 论文详情页 |
+| `/paper/<arxiv_id>/chat` | GET | 单篇论文学习页：自由讨论、主动问答、苏格拉底追问 |
 | `/search?q=关键词` | GET | 搜索论文 |
 | `/api/papers` | GET | JSON 格式论文列表 |
 | `/api/tags` | GET | 所有标签及计数 |
@@ -118,6 +120,8 @@ python app.py
 | `/api/fetch` | POST | 触发论文抓取 |
 | `/api/analyze` | POST | 触发 AI 分析 |
 | `/api/generate` | POST | 触发报告生成 |
+
+论文学习功能会优先复用 `data/pdf_cache/<arxiv_id>.pdf` 中的本地 PDF 缓存；未命中才下载，PDF 提取失败时会回退摘要。学习请求会把稳定 PDF 全文上下文放在动态对话之前，便于支持 prompt cache 的供应商降低多轮讨论成本。
 
 ## 定时任务配置
 

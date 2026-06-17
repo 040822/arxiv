@@ -3,6 +3,7 @@ Flask Web 应用主模块
 
 本模块是 arXiv 论文数据库项目的核心 Web 服务，提供以下功能：
 - 论文浏览、搜索、分类筛选等页面路由
+- 论文学习页（自由讨论、主动问答、苏格拉底追问）
 - 论文抓取、AI 分析、报告生成等任务 API
 - 论文 CRUD、批量操作、阅读清单等论文管理 API
 - AI 供应商、Prompt、代理等设置 API
@@ -35,12 +36,17 @@ from database import (
     save_report, get_reports, get_report_by_date, get_report_dates,
     generate_report_content, get_ai_usage_summary,
     add_to_reading_list, remove_from_reading_list, is_in_reading_list,
-    mark_as_read, mark_as_unread, get_reading_list, get_reading_list_count
+    mark_as_read, mark_as_unread, get_reading_list, get_reading_list_count,
+    add_paper_chat_message, get_paper_chat_messages,
+    create_paper_quiz_session, get_paper_quiz_session_detail, get_latest_paper_quiz_sessions,
+    add_paper_quiz_questions, add_paper_quiz_question, get_paper_quiz_question,
+    add_paper_quiz_attempt
 )
 from fetcher import fetch_latest_papers, fetch_paper_by_id, parse_arxiv_id
 from analyzer import (
     analyze_pending_papers, analyze_paper_basic, analyze_paper_full,
-    analyze_papers, generate_report_ai_summary, recommend_pending_papers
+    analyze_papers, generate_report_ai_summary, recommend_pending_papers,
+    chat_about_paper, generate_paper_quiz, grade_quiz_answer, socratic_reply
 )
 from settings import (
     load_settings, save_settings, get_provider_presets, get_all_providers,
@@ -468,6 +474,33 @@ def paper_detail(arxiv_id):
     analysis = get_analysis_by_paper_id(paper["id"])
 
     return render_template("paper.html", paper=paper, analysis=analysis)
+
+
+def _prepare_paper_for_view(paper):
+    """解析论文 JSON 字段，返回可直接传给模板/AI 的 dict。"""
+    paper_data = dict(paper)
+    if paper_data.get("authors") and isinstance(paper_data["authors"], str):
+        paper_data["authors"] = json.loads(paper_data["authors"])
+    if paper_data.get("categories") and isinstance(paper_data["categories"], str):
+        paper_data["categories"] = json.loads(paper_data["categories"])
+    return paper_data
+
+
+@app.route("/paper/<arxiv_id>/chat")
+def paper_chat_page(arxiv_id):
+    """单篇论文学习页：自由讨论、主动问答和苏格拉底追问。"""
+    paper = get_paper_by_arxiv_id(arxiv_id)
+    if not paper:
+        return "Paper not found", 404
+    paper_data = _prepare_paper_for_view(paper)
+    analysis = get_analysis_by_paper_id(paper_data["id"])
+    quiz_sessions = get_latest_paper_quiz_sessions(paper_data["id"], limit=10)
+    return render_template(
+        "paper_chat.html",
+        paper=paper_data,
+        analysis=analysis,
+        quiz_sessions=quiz_sessions,
+    )
 
 
 @app.route("/search")
@@ -1190,6 +1223,188 @@ def api_reading_list():
 
 
 # ====================================================================
+#                论文学习 API（Paper Learning API）
+# ====================================================================
+
+def _get_learning_paper_or_response(arxiv_id):
+    paper = get_paper_by_arxiv_id(arxiv_id)
+    if not paper:
+        return None, (jsonify({"status": "error", "message": "论文不存在"}), 404)
+    return _prepare_paper_for_view(paper), None
+
+
+@app.route("/api/paper/<arxiv_id>/chat/messages", methods=["GET"])
+def api_paper_chat_messages(arxiv_id):
+    """读取单篇论文自由讨论历史。"""
+    paper, error_response = _get_learning_paper_or_response(arxiv_id)
+    if error_response:
+        return error_response
+    return jsonify({
+        "status": "ok",
+        "messages": get_paper_chat_messages(paper["id"]),
+    })
+
+
+@app.route("/api/paper/<arxiv_id>/chat/messages", methods=["POST"])
+def api_paper_chat_send(arxiv_id):
+    """发送一条论文讨论消息，并保存模型回复。"""
+    paper, error_response = _get_learning_paper_or_response(arxiv_id)
+    if error_response:
+        return error_response
+    data = request.get_json() or {}
+    message = str(data.get("message") or "").strip()
+    if not message:
+        return jsonify({"status": "error", "message": "消息不能为空"}), 400
+
+    history = get_paper_chat_messages(paper["id"], limit=12)
+    reply, error, meta = chat_about_paper(paper, message, history=history)
+    if error:
+        return jsonify({"status": "error", "message": f"模型对话失败: {error}", "meta": meta}), 500
+
+    add_paper_chat_message(paper["id"], "user", message)
+    add_paper_chat_message(paper["id"], "assistant", reply)
+    return jsonify({
+        "status": "ok",
+        "reply": reply,
+        "messages": get_paper_chat_messages(paper["id"]),
+        "meta": meta,
+    })
+
+
+@app.route("/api/paper/<arxiv_id>/quiz/sessions", methods=["POST"])
+def api_create_quiz_session(arxiv_id):
+    """创建 3 题或 6 题主动问答练习。"""
+    paper, error_response = _get_learning_paper_or_response(arxiv_id)
+    if error_response:
+        return error_response
+    data = request.get_json() or {}
+    mode = data.get("mode", "quick3")
+    if mode not in {"quick3", "standard6"}:
+        return jsonify({"status": "error", "message": "无效的练习模式"}), 400
+
+    questions, error, meta = generate_paper_quiz(paper, mode=mode)
+    if error:
+        return jsonify({"status": "error", "message": f"生成题目失败: {error}", "meta": meta}), 500
+
+    session_id = create_paper_quiz_session(paper["id"], mode)
+    add_paper_quiz_questions(session_id, questions)
+    return jsonify({
+        "status": "ok",
+        "session": get_paper_quiz_session_detail(session_id, paper_id=paper["id"]),
+        "meta": meta,
+    })
+
+
+@app.route("/api/paper/<arxiv_id>/quiz/sessions/<int:session_id>", methods=["GET"])
+def api_get_quiz_session(arxiv_id, session_id):
+    """读取练习会话详情。"""
+    paper, error_response = _get_learning_paper_or_response(arxiv_id)
+    if error_response:
+        return error_response
+    session_detail = get_paper_quiz_session_detail(session_id, paper_id=paper["id"])
+    if not session_detail:
+        return jsonify({"status": "error", "message": "练习会话不存在"}), 404
+    return jsonify({"status": "ok", "session": session_detail})
+
+
+@app.route("/api/paper/<arxiv_id>/quiz/questions/<int:question_id>/answer", methods=["POST"])
+def api_answer_quiz_question(arxiv_id, question_id):
+    """提交单题答案并返回评分反馈。"""
+    paper, error_response = _get_learning_paper_or_response(arxiv_id)
+    if error_response:
+        return error_response
+    question = get_paper_quiz_question(question_id, paper_id=paper["id"])
+    if not question:
+        return jsonify({"status": "error", "message": "题目不存在"}), 404
+    data = request.get_json() or {}
+    answer = str(data.get("answer") or "").strip()
+    if not answer:
+        return jsonify({"status": "error", "message": "答案不能为空"}), 400
+
+    feedback, error, meta = grade_quiz_answer(paper, question, answer)
+    if error:
+        return jsonify({"status": "error", "message": f"评分失败: {error}", "meta": meta}), 500
+    add_paper_quiz_attempt(question_id, answer, feedback.get("score", 0), feedback)
+    return jsonify({
+        "status": "ok",
+        "feedback": feedback,
+        "session": get_paper_quiz_session_detail(question["session_id"], paper_id=paper["id"]),
+        "meta": meta,
+    })
+
+
+def _socratic_history_from_session(session_detail):
+    history = []
+    for q in (session_detail or {}).get("questions", []):
+        item = {"question": q.get("question", "")}
+        if q.get("answer_text"):
+            item["answer"] = q.get("answer_text", "")
+        if q.get("feedback"):
+            item["feedback"] = q.get("feedback")
+        history.append(item)
+    return history
+
+
+@app.route("/api/paper/<arxiv_id>/socratic/sessions", methods=["POST"])
+def api_create_socratic_session(arxiv_id):
+    """创建独立苏格拉底追问会话，并返回第一问。"""
+    paper, error_response = _get_learning_paper_or_response(arxiv_id)
+    if error_response:
+        return error_response
+
+    result, error, meta = socratic_reply(paper, session_history=[], user_answer=None)
+    if error:
+        return jsonify({"status": "error", "message": f"创建追问失败: {error}", "meta": meta}), 500
+
+    session_id = create_paper_quiz_session(paper["id"], "socratic")
+    add_paper_quiz_question(session_id, 1, result.get("next_question", ""), "socratic")
+    return jsonify({
+        "status": "ok",
+        "session": get_paper_quiz_session_detail(session_id, paper_id=paper["id"]),
+        "feedback": result,
+        "meta": meta,
+    })
+
+
+@app.route("/api/paper/<arxiv_id>/socratic/sessions/<int:session_id>/reply", methods=["POST"])
+def api_reply_socratic_session(arxiv_id, session_id):
+    """提交苏格拉底会话回答，并返回反馈和下一问。"""
+    paper, error_response = _get_learning_paper_or_response(arxiv_id)
+    if error_response:
+        return error_response
+    session_detail = get_paper_quiz_session_detail(session_id, paper_id=paper["id"])
+    if not session_detail or session_detail.get("mode") != "socratic":
+        return jsonify({"status": "error", "message": "苏格拉底会话不存在"}), 404
+    questions = session_detail.get("questions", [])
+    if not questions:
+        return jsonify({"status": "error", "message": "会话缺少追问"}), 400
+    data = request.get_json() or {}
+    answer = str(data.get("answer") or "").strip()
+    if not answer:
+        return jsonify({"status": "error", "message": "答案不能为空"}), 400
+
+    current_question = questions[-1]
+    history = _socratic_history_from_session(session_detail)
+    result, error, meta = socratic_reply(paper, session_history=history, user_answer=answer)
+    if error:
+        return jsonify({"status": "error", "message": f"追问失败: {error}", "meta": meta}), 500
+
+    add_paper_quiz_attempt(current_question["id"], answer, result.get("score", 0), result)
+    add_paper_quiz_question(
+        session_id,
+        len(questions) + 1,
+        result.get("next_question", ""),
+        "socratic",
+    )
+    return jsonify({
+        "status": "ok",
+        "feedback": result,
+        "session": get_paper_quiz_session_detail(session_id, paper_id=paper["id"]),
+        "meta": meta,
+    })
+
+
+# ====================================================================
 #                 设置 API — 并发与分页（Settings API）
 # ====================================================================
 
@@ -1227,7 +1442,7 @@ def api_save_per_page():
 
 @app.route("/api/settings/ai-tasks", methods=["GET"])
 def api_get_ai_tasks():
-    """获取基础分析、深度阅读、报告导读的任务级模型路由。"""
+    """获取所有 AI 功能的任务级模型路由。"""
     return jsonify({
         "tasks": get_ai_tasks(),
     })

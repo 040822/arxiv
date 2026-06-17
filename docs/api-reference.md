@@ -8,6 +8,7 @@
 - [任务 API](#任务-api)
 - [论文 API](#论文-api)
 - [阅读清单 API](#阅读清单-api)
+- [论文学习 API](#论文学习-api)
 - [设置 API](#设置-api)
 - [任务日志 API](#任务日志-api)
 
@@ -21,6 +22,7 @@
 |------|------|------|------|
 | `GET /` | GET | index.html | 首页，论文列表 |
 | `GET /paper/<arxiv_id>` | GET | paper.html | 论文详情 |
+| `GET /paper/<arxiv_id>/chat` | GET | paper_chat.html | 单篇论文学习页（对话、问答、苏格拉底追问；设置管理密码后需登录） |
 | `GET /search?q=` | GET | search.html | 搜索 |
 | `GET /browse` | GET | browse.html | 分类浏览 |
 | `GET /settings` | GET | settings.html | 设置（设置管理密码后需登录） |
@@ -34,7 +36,7 @@
 
 ## 认证
 
-未设置管理密码时，系统保持本地免登录兼容。设置管理密码后，`/settings`、`/tasks`、所有 `POST/PUT/DELETE` 写接口、设置读取接口、任务日志接口都需要登录。
+未设置管理密码时，系统保持本地免登录兼容。设置管理密码后，`/settings`、`/tasks`、`/paper/<arxiv_id>/chat`、所有 `POST/PUT/DELETE` 写接口、设置读取接口、任务日志接口都需要登录。
 
 管理登录默认通过签名 cookie 持久保存 180 天，不需要“记住我”开关。默认使用 `data/settings.json` 内部字段 `session_secret` 作为 Flask session 签名密钥，因此服务重启后仍可保持登录；如果部署环境设置了 `FLASK_SECRET_KEY`，则优先使用该环境变量。修改管理密码后，旧 cookie 会因密码版本 token 不匹配而失效。
 
@@ -266,7 +268,7 @@ POST /api/paper/<arxiv_id>/unhide
 DELETE /api/paper/<arxiv_id>
 ```
 
-级联删除关联的 analysis 和 reading_list 记录。
+级联删除关联的 analysis、reading_list、论文对话和问答练习记录。
 
 ### 重新生成深度阅读
 
@@ -364,6 +366,137 @@ GET /api/reading-list
 
 ---
 
+## 论文学习 API
+
+学习接口用于单篇论文的自由讨论、主动问答练习和苏格拉底追问。设置管理密码后，这些接口均需要登录。
+
+学习功能会优先读取 `data/pdf_cache/<arxiv_id>.pdf`；缓存不存在时才调用 PDF 下载逻辑。PDF 下载或文本提取失败时回退到摘要，不阻断接口。模型请求的消息顺序固定为：`system` → 稳定任务说明 → 稳定论文上下文（标题、作者、摘要、PDF 全文/摘要回退）→ 动态历史/用户输入。
+
+学习 API 的写响应通常包含 `meta`：
+
+```json
+{
+  "used_pdf_cache": true,
+  "used_pdf_full_text": true,
+  "prompt_tokens": 12000,
+  "completion_tokens": 800,
+  "total_tokens": 12800,
+  "cached_tokens": 9500,
+  "cache_miss_tokens": 2500
+}
+```
+
+### 自由讨论历史
+
+```
+GET /api/paper/<arxiv_id>/chat/messages
+```
+
+返回该论文的自由讨论历史：
+
+```json
+{
+  "status": "ok",
+  "messages": [
+    {"id": 1, "role": "user", "content": "...", "created_at": "..."},
+    {"id": 2, "role": "assistant", "content": "...", "created_at": "..."}
+  ]
+}
+```
+
+### 发送论文讨论消息
+
+```
+POST /api/paper/<arxiv_id>/chat/messages
+```
+
+Body：
+
+```json
+{"message": "这篇论文的核心方法和 VLA 有什么关系？"}
+```
+
+接口只把最近 12 条历史消息放在稳定论文上下文之后，并保存本轮用户消息和模型回复。
+
+### 创建问答练习
+
+```
+POST /api/paper/<arxiv_id>/quiz/sessions
+```
+
+Body：
+
+```json
+{"mode": "quick3"}
+```
+
+`mode` 支持：
+
+- `quick3`：生成 3 道快速主动回忆题
+- `standard6`：生成 6 道标准主动回忆题
+
+返回 `session.questions`，每题包含 `question` 和 `expected_points`。
+
+### 读取练习会话
+
+```
+GET /api/paper/<arxiv_id>/quiz/sessions/<session_id>
+```
+
+返回题目、每题最近一次用户答案和反馈。
+
+### 提交单题答案
+
+```
+POST /api/paper/<arxiv_id>/quiz/questions/<question_id>/answer
+```
+
+Body：
+
+```json
+{"answer": "我的理解是..."}
+```
+
+返回结构化反馈：
+
+```json
+{
+  "status": "ok",
+  "feedback": {
+    "score": 4,
+    "feedback": "总体反馈",
+    "correct_points": ["..."],
+    "missing_points": ["..."],
+    "misconceptions": ["..."],
+    "improved_answer": "..."
+  }
+}
+```
+
+### 创建苏格拉底追问会话
+
+```
+POST /api/paper/<arxiv_id>/socratic/sessions
+```
+
+创建独立追问会话并返回第一问。该模式使用 `paper_quiz` 模型路由，不预生成固定题目。
+
+### 回复苏格拉底追问
+
+```
+POST /api/paper/<arxiv_id>/socratic/sessions/<session_id>/reply
+```
+
+Body：
+
+```json
+{"answer": "我的回答..."}
+```
+
+接口会保存用户回答，对本轮回答给出反馈，并追加下一问。
+
+---
+
 ## 设置 API
 
 ### 供应商管理
@@ -423,7 +556,7 @@ POST /api/prompts                # 保存 prompt
 }
 ```
 
-旧版 `system_prompt/user_prompt` 保存仍可用，会映射到 `deep_reading`。新版 Profile 中论文动态内容不写入 instruction，而是由后端作为最后一条 JSON message 传入；`basic_analysis` 可使用 `{tag_candidates}` 和 `{rating_criteria}`，并返回 AI 初评 `rating`；`deep_reading` 只需要描述 Q&A 输出。
+旧版 `system_prompt/user_prompt` 保存仍可用，会映射到 `deep_reading`。新版 Profile 中论文动态内容不写入 instruction，而是由后端作为独立 JSON message 传入；`basic_analysis` 可使用 `{tag_candidates}` 和 `{rating_criteria}`，并返回 AI 初评 `rating`；`deep_reading` 只需要描述 Q&A 输出；`paper_chat` 和 `paper_quiz` 用于论文学习页，稳定 PDF 上下文由后端统一拼接。
 
 ### 配置管理
 
@@ -450,7 +583,7 @@ POST /api/settings/webdav-backup # 保存 WebDAV 云备份配置
 - `days`：统计天数，默认 `7`，范围 `1-365`
 - `group_by`：趋势图分组方式，`task` 或 `model`，默认 `task`
 
-返回中 `items` 保留按任务/模型的明细汇总；`dates`、`groups`、`totals` 用于账单页趋势图。
+返回中 `items` 保留按任务/模型的明细汇总；`dates`、`groups`、`totals` 用于账单页趋势图。token 明细包含 `cached_tokens` 和 `cache_miss_tokens`，用于观察 DeepSeek/OpenAI 等供应商的 prompt cache 命中情况。
 
 `POST /api/settings/schedule` Body：
 
@@ -485,6 +618,8 @@ POST /api/settings/webdav-backup # 保存 WebDAV 云备份配置
 - `deep_reading`：单篇 Q&A 深度阅读，默认可启用 high 思考，不覆盖基础分析字段
 - `report_summary`：报告 AI 导读，只在生成报告时显式启用
 - `recommendation`：个性化推荐评分，按研究兴趣返回 `recommendation_score` 和 `recommendation_reason`，模型路由独立配置
+- `paper_chat`：单篇论文自由讨论，复用稳定论文全文上下文
+- `paper_quiz`：主动问答练习、答案评分和苏格拉底追问，复用稳定论文全文上下文
 
 每个任务支持独立的 `provider_key`、`model`、`is_thinking`、`thinking_effort`、`max_tokens_enabled/max_tokens`、`temperature/top_p/presence_penalty/frequency_penalty` 及其启用开关。
 

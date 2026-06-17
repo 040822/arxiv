@@ -11,7 +11,7 @@
 1. 从 arXiv 抓取论文（cs.RO 等分类）
 2. 调用 AI 生成标签、评级、中文摘要和简评，并按需补充 Q&A 深度阅读；评级可由用户手动修正
 3. 存入 SQLite 数据库
-4. 提供 Web 界面浏览、搜索、筛选
+4. 提供 Web 界面浏览、搜索、筛选、论文对话和主动问答学习
 
 **技术栈：** Python + Flask + SQLite + arxiv-py + OpenAI SDK
 
@@ -22,14 +22,14 @@
 | 文件 | 行数 | 职责 | 修改频率 |
 |------|------|------|----------|
 | `config.py` | ~96 | 硬编码配置（分类、标签、路径、延迟） | 低 |
-| `settings.py` | ~283 | 运行时配置（供应商、prompt、代理） | 中 |
-| `database.py` | ~1010 | 所有数据库操作（5 张表） | 高 |
+| `settings.py` | ~283 | 运行时配置（供应商、prompt、代理、学习任务路由） | 中 |
+| `database.py` | ~1010 | 所有数据库操作（论文、分析、报告、学习记录等表） | 高 |
 | `fetcher.py` | ~343 | arXiv 论文抓取 | 中 |
 | `analyzer.py` | ~204 | AI 分析（基础/完整） | 中 |
 | `pdf_reader.py` | ~107 | PDF 下载与文本提取 | 低 |
 | `app.py` | ~1058 | Flask 路由 + 定时任务 + SSE | 高 |
 | `main.py` | ~97 | CLI 入口 | 低 |
-| `templates/*.html` | ~9 文件 | 前端页面 | 高 |
+| `templates/*.html` | ~10+ 文件 | 前端页面 | 高 |
 | `static/style.css` | ~1860 | 全局样式 | 中 |
 
 ---
@@ -68,7 +68,22 @@ analyzer.analyze_paper_full(paper_data)
   → update_analysis() 仅更新 qa_analysis
 ```
 
-### 4. 定时任务流程
+### 4. 论文学习流程（单篇）
+
+```
+详情页点击“讨论论文” → GET /paper/<arxiv_id>/chat
+  → 自由讨论 / 问答练习 / 苏格拉底追问
+  → get_learning_paper_text()
+    → 优先检查 data/pdf_cache/<arxiv_id>.pdf
+    → 缓存不存在时才 download_pdf()
+    → PDF 提取失败则回退摘要
+  → build_paper_learning_messages()
+    → system → 稳定任务说明 → 稳定论文上下文 → 最近历史/用户输入
+  → paper_chat 或 paper_quiz 任务模型
+  → 保存 chat messages / quiz sessions / questions / attempts
+```
+
+### 5. 定时任务流程
 
 ```
 APScheduler cron(hour=10, minute=0)
@@ -100,7 +115,7 @@ if "new_field" in migrated:
 
 ### 2. 认证与敏感字段
 
-- 设置管理密码后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用
+- 设置管理密码后，`/settings`、`/tasks`、论文学习页、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用
 - 管理登录默认持久 180 天，使用签名 cookie；`session_secret` 存在 `settings.json` 中以保证服务重启后仍有效，修改管理密码会使旧登录状态失效
 - `GET /api/providers` 只能返回 `api_key_masked`，不要返回完整 `api_key`
 - 个性化推荐的研究兴趣保存在 `settings.personalization.research_interests`；推荐评分必须使用独立 `recommendation` 任务路由，并且只有 `recommendation_interest_hash` 匹配当前兴趣时才能用于报告排序
@@ -132,14 +147,16 @@ if "new_column" not in columns:
 {"status": "error", "message": "..."}
 ```
 
-### 5. 两种分析模式
+### 5. AI 任务模式
 
-| 模式 | 函数 | PDF | Q&A | 使用场景 |
-|------|------|-----|-----|----------|
-| 基础 | `analyze_paper_basic()` | ❌ | ❌ | 批量分析、定时任务；使用 `basic_analysis` 任务模型 |
-| 深度阅读 | `analyze_paper_full()` | ✅ | ✅ | 单篇论文详情页；使用 `deep_reading` 任务模型且不截断 PDF 全文，只补充 Q&A |
+| 模式 | 函数 | PDF | 输出 | 使用场景 |
+|------|------|-----|------|----------|
+| 基础 | `analyze_paper_basic()` | 否 | tags/rating/summary/value_comment | 批量分析、定时任务；使用 `basic_analysis` 任务模型 |
+| 深度阅读 | `analyze_paper_full()` | 是 | qa_analysis | 单篇论文详情页；使用 `deep_reading` 任务模型且不截断 PDF 全文，只补充 Q&A |
+| 论文对话 | `chat_about_paper()` | 缓存优先 | 自然语言回复 | 学习页自由讨论；使用 `paper_chat` 任务模型 |
+| 主动问答 | `generate_paper_quiz()` / `grade_quiz_answer()` / `socratic_reply()` | 缓存优先 | 题目、评分反馈、追问 | 学习页练习和苏格拉底模式；使用 `paper_quiz` 任务模型 |
 
-Prompt 已拆为 `prompt_profiles`。稳定 instruction 放在前缀，论文标题、摘要、PDF 全文等动态内容作为最后一条 JSON message 传入，以提高 prompt cache 命中率。
+Prompt 已拆为 `prompt_profiles`。学习功能必须通过 `build_paper_learning_messages()` 构造消息，稳定 instruction 和稳定论文上下文放在前缀，最近 12 条历史、题目状态和当前用户输入只追加在 PDF 上下文之后，以提高 prompt cache 命中率。
 
 ---
 

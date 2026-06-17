@@ -128,6 +128,13 @@ def _get_proxy_dict():
     return proxies or None
 
 
+def get_cached_pdf_path(arxiv_id):
+    """返回本地 PDF 缓存路径；文件不存在时返回 None。"""
+    _ensure_cache_dir()
+    cache_path = os.path.join(PDF_CACHE_DIR, f"{str(arxiv_id or '').replace('/', '_')}.pdf")
+    return cache_path if os.path.exists(cache_path) else None
+
+
 def download_pdf(pdf_url, arxiv_id):
     """
     下载论文 PDF 文件

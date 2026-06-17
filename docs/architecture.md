@@ -5,7 +5,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      用户浏览器                               │
-│  (首页/分类浏览/搜索/论文详情/任务管理/报告/阅读清单/设置)      │
+│  (首页/分类浏览/搜索/论文详情/论文学习/任务管理/报告/清单/设置)│
 └─────────────────────────┬───────────────────────────────────┘
                           │ HTTP
                           ▼
@@ -39,6 +39,8 @@
 │  ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌─────────┐ ┌─────┐│
 │  │ papers  │ │ analysis │ │task_logs │ │ reports │ │ todo ││
 │  └─────────┘ └──────────┘ └──────────┘ └─────────┘ └─────┘│
+│  ┌──────────────── paper_chat / paper_quiz ───────────────┐│
+│  └─────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -95,6 +97,21 @@
   → get_papers_for_recommendation() 仅取已有基础分析且缺失/过期推荐分的非隐藏论文
   → recommendation 任务模型返回 recommendation_score/reason
   → update_recommendation_result() 写入当前兴趣 hash
+```
+
+#### 论文学习（单篇）
+
+```
+详情页点击“讨论论文” → GET /paper/<arxiv_id>/chat
+  → 自由讨论 / 主动问答练习 / 苏格拉底追问
+  → analyzer.get_learning_paper_text()
+    → 优先读取 data/pdf_cache/<arxiv_id>.pdf
+    → 缓存不存在时 download_pdf()
+    → PDF 下载或提取失败时回退 abstract
+  → analyzer.build_paper_learning_messages()
+    → system → 稳定任务说明 → 稳定论文上下文 → 动态历史/用户输入
+  → paper_chat 或 paper_quiz 任务模型
+  → paper_chat_messages / paper_quiz_sessions / paper_quiz_questions / paper_quiz_attempts
 ```
 
 ### 3. 报告生成流
@@ -199,6 +216,16 @@ app.py
 - settings.json 存放用户可改的配置（供应商、prompt、任务级模型路由、个性化研究兴趣、WebDAV 云备份、代理、抓取参数、定时任务）
 - 两者合并使用，优先级 settings.json > config.py
 
+### 6. 论文学习的缓存友好前缀
+
+**决策：** 论文学习不做向量检索或分块 RAG，先直接把论文全文作为稳定上下文前缀传给长上下文模型。
+
+**原因：**
+- 用户通常先触发深度阅读，PDF 已缓存在 `data/pdf_cache/`
+- 同一篇论文的多轮讨论、答题评分和苏格拉底追问共享稳定 PDF 上下文，支持 DeepSeek/OpenAI 等供应商的 prompt cache 命中
+- 动态历史和当前用户输入只放在 PDF 上下文之后，避免破坏缓存前缀
+- PDF 提取失败时回退摘要，保证学习页可用性优先
+
 ---
 
 ## 性能考量
@@ -217,6 +244,7 @@ app.py
 ### 缓存
 
 - PDF 文件缓存到 `data/pdf_cache/`，避免重复下载
+- 论文学习请求优先复用 PDF 缓存，并在 API 响应中返回 PDF 来源、缓存命中 tokens 和未命中 tokens
 - 数据库查询无缓存（SQLite 足够快）
 
 ### 数据库优化

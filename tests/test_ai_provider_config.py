@@ -142,12 +142,18 @@ class AiTaskSettingsTests(unittest.TestCase):
         self.assertFalse(loaded["ai_tasks"]["basic_analysis"]["is_thinking"])
         self.assertEqual(loaded["ai_tasks"]["deep_reading"]["thinking_effort"], "high")
         self.assertTrue(loaded["ai_tasks"]["deep_reading"]["is_thinking"])
+        self.assertEqual(loaded["ai_tasks"]["paper_chat"]["provider_key"], "cheap")
+        self.assertTrue(loaded["ai_tasks"]["paper_chat"]["is_thinking"])
+        self.assertEqual(loaded["ai_tasks"]["paper_quiz"]["provider_key"], "cheap")
+        self.assertTrue(loaded["ai_tasks"]["paper_quiz"]["is_thinking"])
         self.assertEqual(loaded["ai_tasks"]["recommendation"]["provider_key"], "cheap")
         self.assertEqual(loaded["ai_tasks"]["recommendation"]["max_tokens"], 500)
         self.assertEqual(loaded["prompt_profiles"]["deep_reading"]["system"], "legacy system")
         self.assertIn('"rating"', loaded["prompt_profiles"]["basic_analysis"]["instruction"])
         self.assertIn("{rating_criteria}", loaded["prompt_profiles"]["basic_analysis"]["instruction"])
         self.assertIn("recommendation_score", loaded["prompt_profiles"]["recommendation"]["instruction"])
+        self.assertIn("多轮讨论", loaded["prompt_profiles"]["paper_chat"]["instruction"])
+        self.assertIn("主动回忆", loaded["prompt_profiles"]["paper_quiz"]["instruction"])
         self.assertEqual(loaded["personalization"]["research_interests"], "")
 
     def test_load_settings_preserves_session_secret(self):
@@ -782,6 +788,22 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertTrue(result["auth_required"])
 
+    def test_learning_write_api_requires_login_when_password_enabled(self):
+        app_module = self.app_module
+        app_module.session.clear()
+        app_module.request = FakeRequest(
+            {"message": "请解释这篇论文"},
+            endpoint="api_paper_chat_send",
+            method="POST",
+            path="/api/paper/2601.00001/chat/messages",
+        )
+
+        with patch.object(app_module, "has_admin_password", return_value=True):
+            result, status = app_module.require_auth_for_protected_routes()
+
+        self.assertEqual(status, 401)
+        self.assertTrue(result["auth_required"])
+
     def test_clear_admin_password_requires_current_password(self):
         app_module = self.app_module
         app_module.request = FakeRequest({"current_password": "wrong"})
@@ -1235,6 +1257,128 @@ class AiCallRoutingTests(unittest.TestCase):
         self.assertIn('"research_interests": "VLA and robot learning"', messages[2]["content"])
         self.assertIn('"tags": [', messages[2]["content"])
 
+    def test_learning_text_prefers_cached_pdf_without_download(self):
+        paper = {
+            "id": 1,
+            "arxiv_id": "2601.00001",
+            "title": "A Robot Paper",
+            "authors": ["Alice"],
+            "abstract": "Abstract fallback",
+            "pdf_url": "https://arxiv.org/pdf/2601.00001",
+        }
+
+        with patch.object(self.analyzer, "get_cached_pdf_path", return_value="/tmp/cached.pdf"), \
+             patch.object(self.analyzer, "extract_text_from_pdf", return_value="PDF TEXT") as extract_text, \
+             patch.object(self.analyzer, "download_pdf") as download_pdf:
+            info = self.analyzer.get_learning_paper_text(paper)
+
+        self.assertEqual(info["paper_text"], "PDF TEXT")
+        self.assertTrue(info["used_pdf_cache"])
+        self.assertTrue(info["used_pdf_full_text"])
+        extract_text.assert_called_once_with("/tmp/cached.pdf")
+        download_pdf.assert_not_called()
+
+    def test_learning_text_falls_back_to_abstract_when_pdf_unavailable(self):
+        paper = {
+            "id": 1,
+            "arxiv_id": "2601.00001",
+            "title": "A Robot Paper",
+            "authors": ["Alice"],
+            "abstract": "Abstract fallback",
+            "pdf_url": "https://arxiv.org/pdf/2601.00001",
+        }
+
+        with patch.object(self.analyzer, "get_cached_pdf_path", return_value=None), \
+             patch.object(self.analyzer, "download_pdf", return_value="/tmp/missing.pdf"), \
+             patch.object(self.analyzer, "extract_text_from_pdf", side_effect=RuntimeError("bad pdf")):
+            info = self.analyzer.get_learning_paper_text(paper)
+
+        self.assertEqual(info["paper_text"], "Abstract fallback")
+        self.assertFalse(info["used_pdf_cache"])
+        self.assertFalse(info["used_pdf_full_text"])
+
+    def test_learning_messages_keep_volatile_content_after_stable_pdf_prefix(self):
+        paper = {
+            "id": 1,
+            "arxiv_id": "2601.00001",
+            "title": "A Robot Paper",
+            "authors": ["Alice"],
+            "abstract": "Abstract",
+        }
+        text_info = {"paper_text": "FULL PDF TEXT", "used_pdf_cache": True, "used_pdf_full_text": True}
+
+        messages_a, _ = self.analyzer.build_paper_learning_messages(
+            paper,
+            "paper_chat",
+            "stable instruction",
+            [{"role": "user", "content": "first dynamic question"}],
+            text_info=text_info,
+        )
+        messages_b, _ = self.analyzer.build_paper_learning_messages(
+            paper,
+            "paper_chat",
+            "stable instruction",
+            [{"role": "user", "content": "second dynamic question"}],
+            text_info=text_info,
+        )
+
+        self.assertEqual(messages_a[:3], messages_b[:3])
+        self.assertIn("FULL PDF TEXT", messages_a[2]["content"])
+        self.assertNotIn("first dynamic question", messages_a[2]["content"])
+        self.assertEqual(messages_a[3]["content"], "first dynamic question")
+        self.assertEqual(messages_b[3]["content"], "second dynamic question")
+
+    def test_generate_paper_quiz_uses_paper_quiz_route_and_parses_questions(self):
+        paper = {
+            "id": 1,
+            "arxiv_id": "2601.00001",
+            "title": "A Robot Paper",
+            "authors": ["Alice"],
+            "abstract": "Abstract",
+        }
+        response = json.dumps({
+            "questions": [
+                {"question": "Q1?", "expected_points": ["p1"]},
+                {"question": "Q2?", "expected_points": ["p2"]},
+                {"question": "Q3?", "expected_points": ["p3"]},
+            ]
+        }, ensure_ascii=False)
+
+        with patch.object(self.analyzer, "get_learning_paper_text", return_value={
+            "paper_text": "FULL PDF TEXT",
+            "used_pdf_cache": True,
+            "used_pdf_full_text": True,
+        }), patch.object(self.analyzer, "_call_ai_raw", return_value=(response, {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+            "cached_tokens": 80,
+            "cache_miss_tokens": 20,
+        })) as call:
+            questions, error, meta = self.analyzer.generate_paper_quiz(paper, mode="quick3")
+
+        self.assertIsNone(error)
+        self.assertEqual(len(questions), 3)
+        self.assertEqual(questions[0]["question"], "Q1?")
+        messages, _, task_key = call.call_args.args
+        self.assertEqual(task_key, "paper_quiz")
+        self.assertIn("FULL PDF TEXT", messages[2]["content"])
+        self.assertEqual(meta["cached_tokens"], 80)
+        self.assertEqual(meta["cache_miss_tokens"], 20)
+
+    def test_extract_usage_reads_deepseek_cache_hit_and_miss_tokens(self):
+        usage = types.SimpleNamespace(
+            prompt_tokens=120,
+            completion_tokens=30,
+            total_tokens=150,
+            prompt_cache_hit_tokens=90,
+            prompt_cache_miss_tokens=30,
+        )
+        extracted = self.analyzer._extract_usage(types.SimpleNamespace(usage=usage))
+
+        self.assertEqual(extracted["cached_tokens"], 90)
+        self.assertEqual(extracted["cache_miss_tokens"], 30)
+
 
 class PromptAndReportSafetyTests(unittest.TestCase):
     def test_prompt_validation_rejects_missing_required_field(self):
@@ -1686,6 +1830,7 @@ class PromptAndReportSafetyTests(unittest.TestCase):
                 "completion_tokens": 20,
                 "total_tokens": 120,
                 "cached_tokens": 50,
+                "cache_miss_tokens": 50,
             })
             database.record_ai_usage({
                 "task_key": "deep_reading",
@@ -1697,6 +1842,7 @@ class PromptAndReportSafetyTests(unittest.TestCase):
                 "completion_tokens": 30,
                 "total_tokens": 80,
                 "cached_tokens": 80,
+                "cache_miss_tokens": 0,
             })
             summary = database.get_ai_usage_summary(days=7)
             summary_by_model = database.get_ai_usage_summary(days=7, group_by="model")
@@ -1707,9 +1853,11 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         self.assertEqual(summary["items"][0]["task_key"], "basic_analysis")
         self.assertEqual(summary["items"][0]["total_tokens"], 120)
         self.assertEqual(summary["items"][0]["cached_tokens"], 50)
+        self.assertEqual(summary["items"][0]["cache_miss_tokens"], 50)
         self.assertEqual(summary["group_by"], "task")
         self.assertEqual(len(summary["dates"]), 7)
         self.assertEqual(summary["totals"]["total_tokens"], 200)
+        self.assertEqual(summary["totals"]["cache_miss_tokens"], 50)
         self.assertEqual(summary["groups"][0]["key"], "basic_analysis")
         self.assertEqual(len(summary["groups"][0]["points"]), 7)
         self.assertTrue(any(point["total_tokens"] == 120 for point in summary["groups"][0]["points"]))
@@ -1718,6 +1866,62 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         self.assertEqual(len(summary_by_model["groups"]), 2)
         self.assertEqual(sum(group["total_tokens"] for group in summary_by_model["groups"]), 200)
         self.assertTrue(any(group["key"] == "smart-model" and group["cached_tokens"] == 80 for group in summary_by_model["groups"]))
+
+    def test_paper_learning_tables_store_history_and_cascade_delete(self):
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            database.DB_DIR = tmp
+            database.DB_PATH = os.path.join(tmp, "papers.db")
+            database.init_db()
+            paper_id = database.insert_paper({
+                "arxiv_id": "2601.00001",
+                "title": "Learning Paper",
+                "authors": ["Alice"],
+                "abstract": "abstract",
+                "categories": ["cs.RO"],
+                "primary_category": "cs.RO",
+                "url": "https://arxiv.org/abs/2601.00001",
+                "pdf_url": "https://arxiv.org/pdf/2601.00001",
+                "published_date": "2026-01-01",
+                "updated_date": "2026-01-01",
+            })
+
+            database.add_paper_chat_message(paper_id, "user", "问题")
+            database.add_paper_chat_message(paper_id, "assistant", "回答")
+            session_id = database.create_paper_quiz_session(paper_id, "quick3")
+            question_ids = database.add_paper_quiz_questions(session_id, [
+                {"question": "Q1?", "expected_points": ["A"]},
+                {"question": "Q2?", "expected_points": ["B"]},
+            ])
+            database.add_paper_quiz_attempt(question_ids[0], "我的答案", 4, {"feedback": "不错"})
+            database.add_paper_quiz_attempt(question_ids[0], "第二版答案", 5, {"feedback": "更好"})
+
+            messages = database.get_paper_chat_messages(paper_id)
+            session = database.get_paper_quiz_session_detail(session_id, paper_id=paper_id)
+            latest_sessions = database.get_latest_paper_quiz_sessions(paper_id)
+
+            database.delete_paper("2601.00001")
+            conn = database.get_connection()
+            counts = {
+                "chat": conn.execute("SELECT COUNT(*) FROM paper_chat_messages").fetchone()[0],
+                "sessions": conn.execute("SELECT COUNT(*) FROM paper_quiz_sessions").fetchone()[0],
+                "questions": conn.execute("SELECT COUNT(*) FROM paper_quiz_questions").fetchone()[0],
+                "attempts": conn.execute("SELECT COUNT(*) FROM paper_quiz_attempts").fetchone()[0],
+            }
+            conn.close()
+
+        database.DB_DIR = original_dir
+        database.DB_PATH = original_path
+
+        self.assertEqual([m["role"] for m in messages], ["user", "assistant"])
+        self.assertEqual(len(session["questions"]), 2)
+        self.assertEqual(session["questions"][0]["feedback"], {"feedback": "更好"})
+        self.assertEqual(latest_sessions[0]["question_count"], 2)
+        self.assertEqual(latest_sessions[0]["attempt_count"], 2)
+        self.assertEqual(counts, {"chat": 0, "sessions": 0, "questions": 0, "attempts": 0})
 
 
 class FetchBatchTests(unittest.TestCase):

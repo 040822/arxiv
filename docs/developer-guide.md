@@ -32,10 +32,10 @@
 ```
 arxiv/
 ├── config.py           # 硬编码配置（分类、标签、路径、延迟参数）
-├── settings.py         # 运行时配置（JSON：供应商、prompt、代理）
-├── database.py         # SQLite 数据库全部操作（~1000 行）
+├── settings.py         # 运行时配置（JSON：供应商、prompt、代理、AI任务路由）
+├── database.py         # SQLite 数据库全部操作（论文/分析/报告/学习记录）
 ├── fetcher.py          # arXiv API 论文抓取（支持分批）
-├── analyzer.py         # AI 分析（基础/完整两种模式）
+├── analyzer.py         # AI 分析与论文学习对话/问答
 ├── pdf_reader.py       # PDF 下载与文本提取（令牌桶限速）
 ├── markdown_gen.py     # Markdown 报告生成
 ├── app.py              # Flask Web 服务 + APScheduler（~1050 行）
@@ -50,7 +50,8 @@ arxiv/
 │   ├── tasks.html      # 任务管理
 │   ├── reports.html    # 报告列表
 │   ├── report_detail.html  # 报告详情
-│   └── reading_list.html   # 阅读清单
+│   ├── reading_list.html   # 阅读清单
+│   └── paper_chat.html     # 单篇论文学习页
 ├── static/style.css    # 全局样式（~1860 行）
 ├── data/               # 运行时数据（不提交 git）
 │   ├── papers.db       # SQLite 数据库
@@ -86,7 +87,7 @@ python app.py
 
 ## 数据库设计
 
-### 5 张表
+### 核心表
 
 #### papers — 论文表
 
@@ -171,6 +172,47 @@ CREATE TABLE reading_list (
 );
 ```
 
+#### 论文学习相关表
+
+```sql
+CREATE TABLE paper_chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_id INTEGER NOT NULL,         -- FK -> papers.id (CASCADE DELETE)
+    role TEXT NOT NULL,                -- user/assistant
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE paper_quiz_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_id INTEGER NOT NULL,         -- FK -> papers.id (CASCADE DELETE)
+    mode TEXT NOT NULL,                -- quick3/standard6/socratic
+    status TEXT DEFAULT 'active',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE paper_quiz_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,       -- FK -> paper_quiz_sessions.id (CASCADE DELETE)
+    position INTEGER NOT NULL,
+    question TEXT NOT NULL,
+    expected_points TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE paper_quiz_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_id INTEGER NOT NULL,      -- FK -> paper_quiz_questions.id (CASCADE DELETE)
+    answer_text TEXT NOT NULL,
+    score INTEGER DEFAULT 0,
+    feedback_json TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+删除论文时会级联删除对话消息、练习会话、题目和作答记录。
+
 ---
 
 ## 配置系统
@@ -199,7 +241,7 @@ CREATE TABLE reading_list (
 |--------|------|
 | `active_provider` | 当前激活的 AI 供应商 |
 | `providers` | 供应商配置（API key、model、参数开关、思考模式、模型缓存等） |
-| `ai_tasks` | 基础分析、深度阅读、报告导读、个性化推荐的任务级供应商/模型/参数路由 |
+| `ai_tasks` | 基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的任务级供应商/模型/参数路由 |
 | `prompt_profiles` | 按 AI 功能拆分的稳定 system/instruction prompt |
 | `personalization` | 个性化推荐配置，当前包含 `research_interests` |
 | `webdav_backup` | WebDAV 云同步备份配置，包含地址、账号、远端目录、历史保留天数和最近备份状态 |
@@ -214,7 +256,7 @@ CREATE TABLE reading_list (
 
 > **⚠️ 重要：** 在 `load_settings()` 中添加新字段时，必须在合并逻辑中显式添加 `if "key" in migrated: merged["key"] = migrated["key"]`，否则新字段在读取时会丢失！
 
-AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要绕过任务级模型路由。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。
+AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要绕过任务级模型路由。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
 
 设置管理密码后，写接口和敏感设置读取接口需要登录；管理登录默认通过签名 cookie 持久保存 180 天，修改管理密码后旧登录状态失效。供应商列表接口只能返回脱敏后的 `api_key_masked`。
 

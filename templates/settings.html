@@ -198,6 +198,8 @@
                         <option value="deep_reading" selected>深度阅读</option>
                         <option value="report_summary">报告导读</option>
                         <option value="recommendation">个性化推荐</option>
+                        <option value="paper_chat">论文对话</option>
+                        <option value="paper_quiz">论文问答练习</option>
                     </select>
                 </div>
                 <div class="form-group"><label>System Prompt</label><textarea id="system-prompt" rows="4"></textarea></div>
@@ -418,6 +420,8 @@
             deep_reading: {title: '深度阅读', desc: '单篇生成/刷新 Q&A 深度阅读使用，不覆盖基础分析字段。可使用高智能模型和 high 思考。'},
             report_summary: {title: '报告导读', desc: '仅在任务页勾选“生成 AI 导读”时调用。建议廉价模型。'},
             recommendation: {title: '个性化推荐', desc: '根据研究兴趣计算 0-100 推荐评分和推荐理由。独立于基础分析模型，可单独配置廉价模型。'},
+            paper_chat: {title: '论文对话', desc: '单篇论文自由讨论使用，会把稳定 PDF 全文上下文放在前缀以提升缓存命中。建议高智能/长上下文模型。'},
+            paper_quiz: {title: '论文问答练习', desc: '生成练习题、评分反馈和苏格拉底追问使用。建议高智能模型，可与论文对话分开配置。'},
         };
 
         function taskFieldId(taskKey, name) {
@@ -555,7 +559,8 @@
         function tokenParts(point) {
             const prompt = Math.max(0, Number(point?.prompt_tokens || 0));
             const cached = Math.min(prompt, Math.max(0, Number(point?.cached_tokens || 0)));
-            const uncached = Math.max(prompt - cached, 0);
+            const reportedMiss = Math.max(0, Number(point?.cache_miss_tokens || 0));
+            const uncached = reportedMiss || Math.max(prompt - cached, 0);
             const output = Math.max(0, Number(point?.completion_tokens || 0));
             return {cached, uncached, output, total: cached + uncached + output};
         }

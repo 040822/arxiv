@@ -66,7 +66,7 @@ def init_db():
     """初始化数据库，创建所有表和索引。
     
     功能：
-    1. 创建 5 张表（如果不存在）
+    1. 创建核心业务表、学习记录表和用量日志表（如果不存在）
     2. 创建索引优化查询性能
     3. 执行数据库迁移（添加新字段）
     
@@ -214,6 +214,63 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_list_paper ON reading_list(paper_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_reading_list_status ON reading_list(status)")
 
+    # ==================== paper_chat_messages 表：论文自由讨论历史 ====================
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS paper_chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paper_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_paper_chat_paper ON paper_chat_messages(paper_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_paper_chat_created ON paper_chat_messages(created_at)")
+
+    # ==================== paper_quiz_sessions 表：论文主动问答/苏格拉底会话 ====================
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS paper_quiz_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paper_id INTEGER NOT NULL,
+            mode TEXT NOT NULL,
+            status TEXT DEFAULT 'active',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_paper_quiz_sessions_paper ON paper_quiz_sessions(paper_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_paper_quiz_sessions_mode ON paper_quiz_sessions(mode)")
+
+    # ==================== paper_quiz_questions 表：练习题与参考要点 ====================
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS paper_quiz_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            question TEXT NOT NULL,
+            expected_points TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES paper_quiz_sessions(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_paper_quiz_questions_session ON paper_quiz_questions(session_id)")
+
+    # ==================== paper_quiz_attempts 表：用户答案与模型反馈 ====================
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS paper_quiz_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question_id INTEGER NOT NULL,
+            answer_text TEXT NOT NULL,
+            score INTEGER DEFAULT 0,
+            feedback_json TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (question_id) REFERENCES paper_quiz_questions(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_paper_quiz_attempts_question ON paper_quiz_attempts(question_id)")
+
     # ==================== ai_usage_logs 表：LLM 调用用量账本 ====================
     # 只记录 token 用量和路由信息，不内置价格表，避免价格变化造成误导
     cursor.execute("""
@@ -229,9 +286,14 @@ def init_db():
             completion_tokens INTEGER DEFAULT 0,
             total_tokens INTEGER DEFAULT 0,
             cached_tokens INTEGER DEFAULT 0,
+            cache_miss_tokens INTEGER DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    cursor.execute("PRAGMA table_info(ai_usage_logs)")
+    usage_columns = [row["name"] for row in cursor.fetchall()]
+    if "cache_miss_tokens" not in usage_columns:
+        cursor.execute("ALTER TABLE ai_usage_logs ADD COLUMN cache_miss_tokens INTEGER DEFAULT 0")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_task ON ai_usage_logs(task_key)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage_logs(created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_usage_model ON ai_usage_logs(model)")
@@ -1469,9 +1531,9 @@ def record_ai_usage(usage):
     cursor.execute("""
         INSERT INTO ai_usage_logs (
             task_key, provider_key, provider_name, model, paper_id, arxiv_id,
-            prompt_tokens, completion_tokens, total_tokens, cached_tokens
+            prompt_tokens, completion_tokens, total_tokens, cached_tokens, cache_miss_tokens
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         usage.get("task_key", ""),
         usage.get("provider_key", ""),
@@ -1483,6 +1545,7 @@ def record_ai_usage(usage):
         _safe_int(usage.get("completion_tokens")),
         _safe_int(usage.get("total_tokens")),
         _safe_int(usage.get("cached_tokens")),
+        _safe_int(usage.get("cache_miss_tokens")),
     ))
     conn.commit()
     conn.close()
@@ -1502,6 +1565,7 @@ def _empty_usage_point(day):
         "completion_tokens": 0,
         "total_tokens": 0,
         "cached_tokens": 0,
+        "cache_miss_tokens": 0,
     }
 
 
@@ -1522,7 +1586,8 @@ def get_ai_usage_summary(days=7, group_by="task"):
             SUM(prompt_tokens) AS prompt_tokens,
             SUM(completion_tokens) AS completion_tokens,
             SUM(total_tokens) AS total_tokens,
-            SUM(cached_tokens) AS cached_tokens
+            SUM(cached_tokens) AS cached_tokens,
+            SUM(cache_miss_tokens) AS cache_miss_tokens
         FROM ai_usage_logs
         WHERE created_at >= datetime('now', ?)
         GROUP BY task_key, provider_key, provider_name, model
@@ -1540,7 +1605,8 @@ def get_ai_usage_summary(days=7, group_by="task"):
                 SUM(prompt_tokens) AS prompt_tokens,
                 SUM(completion_tokens) AS completion_tokens,
                 SUM(total_tokens) AS total_tokens,
-                SUM(cached_tokens) AS cached_tokens
+                SUM(cached_tokens) AS cached_tokens,
+                SUM(cache_miss_tokens) AS cache_miss_tokens
             FROM ai_usage_logs
             WHERE created_at >= datetime('now', ?)
             GROUP BY usage_date, group_key
@@ -1556,7 +1622,8 @@ def get_ai_usage_summary(days=7, group_by="task"):
                 SUM(prompt_tokens) AS prompt_tokens,
                 SUM(completion_tokens) AS completion_tokens,
                 SUM(total_tokens) AS total_tokens,
-                SUM(cached_tokens) AS cached_tokens
+                SUM(cached_tokens) AS cached_tokens,
+                SUM(cache_miss_tokens) AS cache_miss_tokens
             FROM ai_usage_logs
             WHERE created_at >= datetime('now', ?)
             GROUP BY usage_date, group_key
@@ -1578,10 +1645,11 @@ def get_ai_usage_summary(days=7, group_by="task"):
                 "completion_tokens": 0,
                 "total_tokens": 0,
                 "cached_tokens": 0,
+                "cache_miss_tokens": 0,
                 "points": {day: _empty_usage_point(day) for day in dates},
             }
         point = groups[key]["points"].setdefault(item["usage_date"], _empty_usage_point(item["usage_date"]))
-        for field in ("call_count", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens"):
+        for field in ("call_count", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "cache_miss_tokens"):
             value = _safe_int(item.get(field))
             point[field] = value
             groups[key][field] += value
@@ -1598,6 +1666,7 @@ def get_ai_usage_summary(days=7, group_by="task"):
         "completion_tokens": sum(_safe_int(row["completion_tokens"]) for row in rows),
         "total_tokens": sum(_safe_int(row["total_tokens"]) for row in rows),
         "cached_tokens": sum(_safe_int(row["cached_tokens"]) for row in rows),
+        "cache_miss_tokens": sum(_safe_int(row["cache_miss_tokens"]) for row in rows),
     }
     return {
         "days": days,
@@ -1974,3 +2043,216 @@ def get_reading_list_count():
     row = cursor.fetchone()
     conn.close()
     return {"total": row["total"] or 0, "unread": row["unread"] or 0}
+
+
+# ==================== 论文学习：对话与主动问答 ====================
+
+def add_paper_chat_message(paper_id, role, content):
+    """保存一条论文自由讨论消息。"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO paper_chat_messages (paper_id, role, content)
+        VALUES (?, ?, ?)
+    """, (paper_id, str(role or ""), str(content or "")))
+    conn.commit()
+    message_id = cursor.lastrowid
+    conn.close()
+    return message_id
+
+
+def get_paper_chat_messages(paper_id, limit=200):
+    """按时间顺序读取论文自由讨论历史。"""
+    limit = max(1, min(1000, _safe_int(limit) or 200))
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM (
+            SELECT id, paper_id, role, content, created_at
+            FROM paper_chat_messages
+            WHERE paper_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+        )
+        ORDER BY id ASC
+    """, (paper_id, limit))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def create_paper_quiz_session(paper_id, mode):
+    """创建一轮论文问答或苏格拉底练习会话。"""
+    mode = str(mode or "quick3")
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO paper_quiz_sessions (paper_id, mode, status, updated_at)
+        VALUES (?, ?, 'active', CURRENT_TIMESTAMP)
+    """, (paper_id, mode))
+    conn.commit()
+    session_id = cursor.lastrowid
+    conn.close()
+    return session_id
+
+
+def get_paper_quiz_session(session_id, paper_id=None):
+    """读取单个练习会话元数据。"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if paper_id is None:
+        cursor.execute("SELECT * FROM paper_quiz_sessions WHERE id = ?", (session_id,))
+    else:
+        cursor.execute("SELECT * FROM paper_quiz_sessions WHERE id = ? AND paper_id = ?", (session_id, paper_id))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def add_paper_quiz_questions(session_id, questions):
+    """批量保存练习题。questions 元素包含 question/expected_points。"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    saved = []
+    for idx, question in enumerate(questions or [], start=1):
+        if not isinstance(question, dict):
+            continue
+        text = str(question.get("question") or "").strip()
+        if not text:
+            continue
+        expected = question.get("expected_points", [])
+        if not isinstance(expected, str):
+            expected = json.dumps(expected or [], ensure_ascii=False)
+        cursor.execute("""
+            INSERT INTO paper_quiz_questions (session_id, position, question, expected_points)
+            VALUES (?, ?, ?, ?)
+        """, (session_id, idx, text, expected))
+        saved.append(cursor.lastrowid)
+    cursor.execute("UPDATE paper_quiz_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+    return saved
+
+
+def add_paper_quiz_question(session_id, position, question, expected_points=""):
+    """保存单个练习题或苏格拉底追问。"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO paper_quiz_questions (session_id, position, question, expected_points)
+        VALUES (?, ?, ?, ?)
+    """, (session_id, int(position or 1), str(question or ""), str(expected_points or "")))
+    cursor.execute("UPDATE paper_quiz_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (session_id,))
+    conn.commit()
+    question_id = cursor.lastrowid
+    conn.close()
+    return question_id
+
+
+def add_paper_quiz_attempt(question_id, answer_text, score, feedback):
+    """保存用户答案和模型反馈。"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    feedback_json = feedback if isinstance(feedback, str) else json.dumps(feedback or {}, ensure_ascii=False)
+    cursor.execute("""
+        INSERT INTO paper_quiz_attempts (question_id, answer_text, score, feedback_json)
+        VALUES (?, ?, ?, ?)
+    """, (question_id, str(answer_text or ""), max(0, min(5, _safe_int(score))), feedback_json))
+    cursor.execute("""
+        UPDATE paper_quiz_sessions
+        SET updated_at = CURRENT_TIMESTAMP
+        WHERE id = (
+            SELECT session_id FROM paper_quiz_questions WHERE id = ?
+        )
+    """, (question_id,))
+    conn.commit()
+    attempt_id = cursor.lastrowid
+    conn.close()
+    return attempt_id
+
+
+def get_paper_quiz_question(question_id, paper_id=None):
+    """读取单个题目，可选校验所属论文。"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT q.*, s.paper_id, s.mode, s.status
+        FROM paper_quiz_questions q
+        JOIN paper_quiz_sessions s ON q.session_id = s.id
+        WHERE q.id = ?
+    """
+    params = [question_id]
+    if paper_id is not None:
+        query += " AND s.paper_id = ?"
+        params.append(paper_id)
+    cursor.execute(query, params)
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_paper_quiz_session_detail(session_id, paper_id=None):
+    """读取练习会话、题目和每题最新一次作答反馈。"""
+    session = get_paper_quiz_session(session_id, paper_id=paper_id)
+    if not session:
+        return None
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT q.*, a.id AS attempt_id, a.answer_text, a.score, a.feedback_json, a.created_at AS answered_at
+        FROM paper_quiz_questions q
+        LEFT JOIN paper_quiz_attempts a ON a.id = (
+            SELECT id FROM paper_quiz_attempts
+            WHERE question_id = q.id
+            ORDER BY id DESC
+            LIMIT 1
+        )
+        WHERE q.session_id = ?
+        ORDER BY q.position ASC, q.id ASC
+    """, (session_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    questions = []
+    for row in rows:
+        item = dict(row)
+        expected = item.get("expected_points")
+        if expected:
+            try:
+                item["expected_points"] = json.loads(expected)
+            except json.JSONDecodeError:
+                item["expected_points"] = expected
+        feedback = item.get("feedback_json")
+        if feedback:
+            try:
+                item["feedback"] = json.loads(feedback)
+            except json.JSONDecodeError:
+                item["feedback"] = {"feedback": feedback}
+        else:
+            item["feedback"] = None
+        questions.append(item)
+    session["questions"] = questions
+    return session
+
+
+def get_latest_paper_quiz_sessions(paper_id, limit=20):
+    """读取某篇论文最近的学习会话列表。"""
+    limit = max(1, min(100, _safe_int(limit) or 20))
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT s.*,
+               COUNT(DISTINCT q.id) AS question_count,
+               COUNT(DISTINCT a.id) AS attempt_count
+        FROM paper_quiz_sessions s
+        LEFT JOIN paper_quiz_questions q ON s.id = q.session_id
+        LEFT JOIN paper_quiz_attempts a ON q.id = a.question_id
+        WHERE s.paper_id = ?
+        GROUP BY s.id
+        ORDER BY s.updated_at DESC, s.id DESC
+        LIMIT ?
+    """, (paper_id, limit))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]

@@ -1,10 +1,11 @@
 """
 AI 论文分析模块
 
-本模块负责调用 OpenAI 兼容 API 对 arXiv 论文进行深度阅读分析。
-支持两种分析模式：
+本模块负责调用 OpenAI 兼容 API 对 arXiv 论文进行分析与学习辅助。
+支持以下任务：
   - 基础分析（basic）：仅使用论文摘要，生成标签、中文翻译和简评，不含 Q&A 深度阅读
   - 深度阅读（full）：下载 PDF 提取全文，只生成 Q&A 深度阅读，不覆盖基础分析字段
+  - 论文学习：复用 PDF 缓存，支持自由讨论、主动问答评分和苏格拉底追问
 
 核心流程：
   1. 从数据库获取未分析的论文
@@ -26,7 +27,7 @@ from database import (
     get_connection, insert_analysis, update_analysis, get_unanalyzed_papers, record_ai_usage,
     get_papers_for_recommendation, update_recommendation_result
 )
-from pdf_reader import get_paper_full_text
+from pdf_reader import get_paper_full_text, get_cached_pdf_path, download_pdf, extract_text_from_pdf
 
 # 模块级日志记录器
 logger = logging.getLogger(__name__)
@@ -169,12 +170,20 @@ def _extract_usage(response):
     completion_tokens = _int_value(usage, "completion_tokens")
     total_tokens = _int_value(usage, "total_tokens")
     details = _value(usage, "prompt_tokens_details", None) or _value(usage, "input_tokens_details", None) or {}
-    cached_tokens = _int_value(details, "cached_tokens") or _int_value(details, "cache_read_input_tokens")
+    cached_tokens = (
+        _int_value(usage, "prompt_cache_hit_tokens")
+        or _int_value(details, "cached_tokens")
+        or _int_value(details, "cache_read_input_tokens")
+    )
+    cache_miss_tokens = _int_value(usage, "prompt_cache_miss_tokens")
+    if not cache_miss_tokens and prompt_tokens:
+        cache_miss_tokens = max(prompt_tokens - cached_tokens, 0)
     return {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
         "cached_tokens": cached_tokens,
+        "cache_miss_tokens": cache_miss_tokens,
     }
 
 
@@ -223,6 +232,79 @@ def _build_task_messages(task_key, payload):
             "content": "动态输入数据（JSON，固定字段顺序）：\n" + json.dumps(payload, ensure_ascii=False, indent=2),
         },
     ]
+
+
+def _paper_context_payload(paper_data, text_info):
+    return {
+        "arxiv_id": paper_data.get("arxiv_id", ""),
+        "title": paper_data.get("title", ""),
+        "authors": _authors_text(paper_data),
+        "abstract": paper_data.get("abstract", ""),
+        "used_pdf_cache": bool(text_info.get("used_pdf_cache")),
+        "used_pdf_full_text": bool(text_info.get("used_pdf_full_text")),
+        "paper_text": text_info.get("paper_text", ""),
+    }
+
+
+def get_learning_paper_text(paper_data):
+    """获取论文学习上下文：优先复用本地 PDF 缓存，失败时回退摘要。"""
+    arxiv_id = paper_data.get("arxiv_id", "")
+    pdf_url = paper_data.get("pdf_url", "")
+    try:
+        cached_path = get_cached_pdf_path(arxiv_id) if arxiv_id else None
+    except Exception as e:
+        logger.warning(f"Failed to inspect PDF cache for {arxiv_id}: {e}")
+        cached_path = None
+    used_pdf_cache = bool(cached_path)
+    pdf_path = cached_path
+
+    if not pdf_path and pdf_url and arxiv_id:
+        try:
+            pdf_path = download_pdf(pdf_url, arxiv_id)
+        except Exception as e:
+            logger.warning(f"Failed to download learning PDF for {arxiv_id}: {e}")
+            pdf_path = None
+
+    paper_text = ""
+    if pdf_path:
+        try:
+            paper_text = extract_text_from_pdf(pdf_path) or ""
+        except Exception as e:
+            logger.warning(f"Failed to extract learning PDF text for {arxiv_id}: {e}")
+            paper_text = ""
+
+    used_pdf_full_text = bool(paper_text)
+    if not paper_text:
+        paper_text = paper_data.get("abstract", "")
+
+    return {
+        "paper_text": paper_text,
+        "used_pdf_cache": used_pdf_cache,
+        "used_pdf_full_text": used_pdf_full_text,
+    }
+
+
+def build_paper_learning_messages(paper_data, task_key, task_instruction, volatile_messages, text_info=None):
+    """
+    构造缓存友好的论文学习消息。
+
+    稳定消息固定在前：system -> 任务说明 -> 论文上下文。
+    动态历史、题目、用户答案只追加在后面，避免破坏长 PDF 前缀缓存。
+    """
+    profile = get_prompt_profile(task_key)
+    text_info = text_info or get_learning_paper_text(paper_data)
+    payload = _paper_context_payload(paper_data, text_info)
+    messages = [
+        {"role": "system", "content": profile.get("system", "")},
+        {"role": "user", "content": (task_instruction or profile.get("instruction", "") or "").strip()},
+        {
+            "role": "user",
+            "content": "稳定论文上下文（JSON，固定字段顺序；后续消息不得改变此前缀）：\n"
+            + json.dumps(payload, ensure_ascii=False, indent=2),
+        },
+    ]
+    messages.extend(volatile_messages or [])
+    return messages, text_info
 
 
 def _normalise_analysis_result(result):
@@ -295,17 +377,7 @@ def _call_ai(messages, paper_data, task_key):
     client = get_openai_client(cfg)
 
     try:
-        kwargs = build_chat_completion_kwargs(cfg, messages)
-
-        # 调用 AI API：请求参数由 settings.build_chat_completion_kwargs 统一处理
-        response = client.chat.completions.create(**kwargs)
-        _record_usage(task_key, cfg, paper_data, response)
-
-        # 提取响应文本内容并去除首尾空白，兼容 SDK 对象和测试中的 dict
-        choices = _value(response, "choices", []) or []
-        first_choice = choices[0] if choices else {}
-        message = _value(first_choice, "message", {}) or {}
-        content = (_value(message, "content", "") or "").strip()
+        content, usage = _call_ai_raw(messages, paper_data, task_key, cfg=cfg, client=client)
 
         # 清理 AI 返回的 JSON 内容
         content = _clean_json_content(content)
@@ -322,6 +394,22 @@ def _call_ai(messages, paper_data, task_key):
     except Exception as e:
         logger.error(f"API error for paper {paper_data.get('arxiv_id', 'unknown')}: {e}")
         return None, str(e)
+
+
+def _call_ai_raw(messages, paper_data, task_key, cfg=None, client=None):
+    """调用模型并返回原始文本和 usage；同时记录用量。"""
+    cfg = cfg or get_ai_task_config(task_key)
+    client = client or get_openai_client(cfg)
+    kwargs = build_chat_completion_kwargs(cfg, messages)
+    response = client.chat.completions.create(**kwargs)
+    usage = _extract_usage(response)
+    _record_usage(task_key, cfg, paper_data, response)
+
+    choices = _value(response, "choices", []) or []
+    first_choice = choices[0] if choices else {}
+    message = _value(first_choice, "message", {}) or {}
+    content = (_value(message, "content", "") or "").strip()
+    return content, usage
 
 
 # ============================================================
@@ -430,6 +518,233 @@ def analyze_paper_recommendation(paper_data, research_interests=None, interest_h
         result = _normalise_recommendation_result(result)
         result["recommendation_interest_hash"] = interest_hash
     return paper_data, result, error
+
+
+def _parse_ai_json(content):
+    cleaned = _clean_json_content(content)
+    return json.loads(cleaned)
+
+
+def _learning_meta(text_info, usage):
+    return {
+        "used_pdf_cache": bool(text_info.get("used_pdf_cache")),
+        "used_pdf_full_text": bool(text_info.get("used_pdf_full_text")),
+        **(usage or {}),
+    }
+
+
+def _quiz_question_count(mode):
+    return 6 if mode == "standard6" else 3
+
+
+def _normalise_quiz_questions(result, mode):
+    count = _quiz_question_count(mode)
+    questions = result.get("questions", []) if isinstance(result, dict) else []
+    normalised = []
+    for item in questions:
+        if not isinstance(item, dict):
+            continue
+        question = str(item.get("question") or "").strip()
+        if not question:
+            continue
+        expected = item.get("expected_points", [])
+        if isinstance(expected, str):
+            expected = [expected]
+        elif not isinstance(expected, list):
+            expected = []
+        normalised.append({
+            "question": question,
+            "expected_points": [str(point).strip() for point in expected if str(point).strip()],
+        })
+        if len(normalised) >= count:
+            break
+    return normalised
+
+
+def _normalise_feedback_result(result):
+    result = result if isinstance(result, dict) else {}
+    try:
+        score = int(round(float(result.get("score", 0) or 0)))
+    except (TypeError, ValueError):
+        score = 0
+
+    def list_value(key):
+        value = result.get(key, [])
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if value:
+            return [str(value).strip()]
+        return []
+
+    return {
+        "score": max(0, min(5, score)),
+        "feedback": str(result.get("feedback") or "").strip(),
+        "correct_points": list_value("correct_points"),
+        "missing_points": list_value("missing_points"),
+        "misconceptions": list_value("misconceptions"),
+        "improved_answer": str(result.get("improved_answer") or "").strip(),
+    }
+
+
+def _normalise_socratic_result(result):
+    feedback = _normalise_feedback_result(result)
+    feedback["next_question"] = str((result or {}).get("next_question") or "").strip()
+    if not feedback["next_question"]:
+        feedback["next_question"] = "请你先用自己的话概括这篇论文最核心的问题和方法。"
+    return feedback
+
+
+def chat_about_paper(paper_data, user_message, history=None):
+    """基于 PDF 全文上下文与用户自由讨论论文。"""
+    history = (history or [])[-12:]
+    volatile = []
+    for item in history:
+        role = item.get("role") if isinstance(item, dict) else ""
+        if role not in {"user", "assistant"}:
+            continue
+        volatile.append({"role": role, "content": str(item.get("content") or "")})
+    volatile.append({"role": "user", "content": str(user_message or "").strip()})
+
+    profile = get_prompt_profile("paper_chat")
+    messages, text_info = build_paper_learning_messages(
+        paper_data,
+        "paper_chat",
+        "论文自由讨论任务说明：\n" + profile.get("instruction", ""),
+        volatile,
+    )
+    try:
+        content, usage = _call_ai_raw(messages, paper_data, "paper_chat")
+        return content.strip(), None, _learning_meta(text_info, usage)
+    except Exception as e:
+        logger.error(f"Paper chat error for {paper_data.get('arxiv_id', 'unknown')}: {e}")
+        return None, str(e), _learning_meta(text_info, {})
+
+
+def generate_paper_quiz(paper_data, mode="quick3"):
+    """按需生成 3 题或 6 题主动回忆练习。"""
+    mode = mode if mode in {"quick3", "standard6"} else "quick3"
+    count = _quiz_question_count(mode)
+    profile = get_prompt_profile("paper_quiz")
+    volatile = [{
+        "role": "user",
+        "content": f"""本轮任务：生成 {count} 道论文主动回忆练习题。
+
+请严格返回合法 JSON，不要返回额外解释：
+{{
+  "questions": [
+    {{"question": "问题文本", "expected_points": ["参考要点1", "参考要点2"]}}
+  ]
+}}
+
+要求：
+- 题目必须覆盖论文主线、核心方法、关键实验、局限或适用边界
+- 问题应促使用户用自己的话解释，不要只问名词定义
+- expected_points 用于后续评分，写成简短要点
+- 必须恰好返回 {count} 道题
+""",
+    }]
+    messages, text_info = build_paper_learning_messages(
+        paper_data,
+        "paper_quiz",
+        "论文主动问答任务说明：\n" + profile.get("instruction", ""),
+        volatile,
+    )
+    try:
+        content, usage = _call_ai_raw(messages, paper_data, "paper_quiz")
+        questions = _normalise_quiz_questions(_parse_ai_json(content), mode)
+        if len(questions) != count:
+            return None, f"模型返回题目数量不正确：{len(questions)}/{count}", _learning_meta(text_info, usage)
+        return questions, None, _learning_meta(text_info, usage)
+    except Exception as e:
+        logger.error(f"Paper quiz generation error for {paper_data.get('arxiv_id', 'unknown')}: {e}")
+        return None, str(e), _learning_meta(text_info, {})
+
+
+def grade_quiz_answer(paper_data, question, answer_text):
+    """评价用户对单题的回答，并给出纠错反馈。"""
+    profile = get_prompt_profile("paper_quiz")
+    volatile = [{
+        "role": "user",
+        "content": "本轮任务：评价用户答案。\n"
+        + json.dumps({
+            "question": question.get("question", ""),
+            "expected_points": question.get("expected_points", ""),
+            "user_answer": answer_text,
+        }, ensure_ascii=False, indent=2)
+        + """
+
+请严格返回合法 JSON，不要返回额外解释：
+{
+  "score": 0,
+  "feedback": "总体反馈",
+  "correct_points": ["用户答对的点"],
+  "missing_points": ["用户漏掉的关键点"],
+  "misconceptions": ["用户可能存在的误解"],
+  "improved_answer": "一段更好的参考答案"
+}
+
+score 必须是 0 到 5 的整数。
+""",
+    }]
+    messages, text_info = build_paper_learning_messages(
+        paper_data,
+        "paper_quiz",
+        "论文主动问答任务说明：\n" + profile.get("instruction", ""),
+        volatile,
+    )
+    try:
+        content, usage = _call_ai_raw(messages, paper_data, "paper_quiz")
+        feedback = _normalise_feedback_result(_parse_ai_json(content))
+        return feedback, None, _learning_meta(text_info, usage)
+    except Exception as e:
+        logger.error(f"Paper quiz grading error for {paper_data.get('arxiv_id', 'unknown')}: {e}")
+        return None, str(e), _learning_meta(text_info, {})
+
+
+def socratic_reply(paper_data, session_history=None, user_answer=None):
+    """独立苏格拉底追问模式：根据历史和用户回答生成反馈与下一问。"""
+    profile = get_prompt_profile("paper_quiz")
+    volatile_payload = {
+        "session_history": session_history or [],
+        "user_answer": user_answer or "",
+        "is_first_turn": not session_history and not user_answer,
+    }
+    volatile = [{
+        "role": "user",
+        "content": "本轮任务：进行独立苏格拉底式论文追问。\n"
+        + json.dumps(volatile_payload, ensure_ascii=False, indent=2)
+        + """
+
+请严格返回合法 JSON，不要返回额外解释：
+{
+  "score": 0,
+  "feedback": "如果这是第一轮，可为空；否则指出用户答案的亮点、缺口或误解",
+  "correct_points": [],
+  "missing_points": [],
+  "misconceptions": [],
+  "improved_answer": "如果这是第一轮，可为空；否则给出更好的回答",
+  "next_question": "下一轮追问"
+}
+
+要求：
+- 第一轮只提出一个能打开论文主线的问题
+- 后续轮次根据用户回答继续追问，不要直接讲完整答案
+- next_question 必须具体、可回答，避免泛泛而谈
+""",
+    }]
+    messages, text_info = build_paper_learning_messages(
+        paper_data,
+        "paper_quiz",
+        "论文主动问答任务说明：\n" + profile.get("instruction", ""),
+        volatile,
+    )
+    try:
+        content, usage = _call_ai_raw(messages, paper_data, "paper_quiz")
+        feedback = _normalise_socratic_result(_parse_ai_json(content))
+        return feedback, None, _learning_meta(text_info, usage)
+    except Exception as e:
+        logger.error(f"Paper Socratic error for {paper_data.get('arxiv_id', 'unknown')}: {e}")
+        return None, str(e), _learning_meta(text_info, {})
 
 
 def _get_report_summary_context(report_date, limit=30):

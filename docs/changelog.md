@@ -2,7 +2,19 @@
 
 ## 未发布
 
-暂无。
+### 论文学习
+- 新增单篇论文学习页 `/paper/<arxiv_id>/chat`，论文详情页提供“讨论论文”入口
+- 新增自由讨论功能，保存同一论文的用户/AI 对话历史，刷新后可继续追问
+- 新增主动问答练习，支持 3 题快速模式和 6 题标准模式，并保存题目、用户答案、0-5 分评分和结构化反馈
+- 新增独立苏格拉底追问模式，模型根据用户回答连续生成反馈和下一问
+- 学习功能优先复用 `data/pdf_cache/<arxiv_id>.pdf` 中的本地 PDF 缓存，缓存不存在时才下载；PDF 下载或提取失败时回退摘要
+- 学习请求统一把稳定论文上下文放在动态历史和用户输入之前，提升兼容供应商的 prompt/cache 命中率
+
+### AI 配置与用量
+- 新增 `paper_chat` 和 `paper_quiz` 两个 AI 功能模型路由，可在设置页独立配置供应商、模型、思考强度和输出上限
+- 新增 `paper_chat`、`paper_quiz` Prompt Profile，和现有基础分析/深度阅读/报告导读/推荐任务分离
+- LLM 用量账本兼容 DeepSeek `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`，并继续兼容 OpenAI `cached_tokens`
+- 账单页和学习 API 响应展示缓存命中 tokens、未命中 tokens、总 tokens 与 PDF 上下文来源
 
 ---
 
