@@ -117,8 +117,9 @@ CREATE TABLE analysis (
     tags TEXT,                         -- JSON 数组
     summary_cn TEXT,                   -- 中文摘要翻译
     summary_en TEXT,                   -- 英文摘要（未使用）
-    rating INTEGER DEFAULT 0,          -- 用户手动评级（0-5 星）
+    rating INTEGER DEFAULT 0,          -- AI 初评 + 用户可手动修正（0-5 星）
     legacy_ai_rating INTEGER,          -- 历史 AI 自动评级备份
+    rating_restored_from_legacy INTEGER DEFAULT 0, -- 是否已从历史 AI 评级恢复
     value_comment TEXT,                -- 评价
     qa_analysis TEXT,                  -- Q&A 深度阅读（Markdown）
     recommendation_score INTEGER,      -- 个性化推荐分（0-100）
@@ -183,7 +184,7 @@ CREATE TABLE reading_list (
 | `ARXIV_CATEGORIES` | 监控的 arXiv 分类列表 |
 | `MAX_PAPERS_PER_CATEGORY` | 每分类每次拉取上限 |
 | `TAG_CANDIDATES` | AI 标签候选列表 |
-| `RATING_CRITERIA` | 旧版评级标准兼容文本；当前 AI 基础分析不再使用 |
+| `RATING_CRITERIA` | AI 基础分析评级标准（0-5 星校准锚点） |
 | `SCHEDULE_HOUR/MINUTE` | 定时任务首次默认时间；运行后以 `settings.json.schedule` 为准 |
 | `FETCH_REQUEST_DELAY` | API 请求间隔 |
 | `FETCH_BATCH_DAYS` | 分批抓取每批天数 |
@@ -213,7 +214,7 @@ CREATE TABLE reading_list (
 
 > **⚠️ 重要：** 在 `load_settings()` 中添加新字段时，必须在合并逻辑中显式添加 `if "key" in migrated: merged["key"] = migrated["key"]`，否则新字段在读取时会丢失！
 
-AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要绕过任务级模型路由。个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。
+AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要绕过任务级模型路由。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。
 
 设置管理密码后，写接口和敏感设置读取接口需要登录；管理登录默认通过签名 cookie 持久保存 180 天，修改管理密码后旧登录状态失效。供应商列表接口只能返回脱敏后的 `api_key_masked`。
 

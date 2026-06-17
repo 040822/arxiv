@@ -47,7 +47,7 @@
                     <button class="action-btn" id="ai-task-toggle-btn" onclick="toggleAiTaskRoutes()">展开</button>
                 </div>
                 <div id="ai-task-route-body" style="display:none;margin-top:12px;">
-                    <p class="section-desc">为不同 AI 功能单独选择供应商、模型和参数。基础分析负责标签、中文摘要和简评，建议廉价模型；评级由用户手动维护；深度阅读只补充 Q&A，可使用高智能/高思考模型；报告导读默认只在任务页勾选时调用。</p>
+                    <p class="section-desc">为不同 AI 功能单独选择供应商、模型和参数。基础分析负责标签、中文摘要、简评和 AI 初评，建议廉价模型；深度阅读只补充 Q&A，可使用高智能/高思考模型；报告导读默认只在任务页勾选时调用。</p>
                     <div id="ai-task-routes"></div>
                     <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveAiTasks()">💾 保存功能模型路由</button></div>
                     <div id="ai-task-status" class="action-status"></div>
@@ -224,7 +224,7 @@
             </div>
             <div class="settings-section">
                 <h3>📂 存储路径</h3>
-                <div id="db-paths" class="db-info-grid"></div>
+                <div id="db-paths" class="db-paths-list"></div>
             </div>
             <div class="settings-section">
                 <h3>☁️ WebDAV 云同步备份</h3>
@@ -414,7 +414,7 @@
 
         /* ---- AI Task Routing ---- */
         const AI_TASK_META = {
-            basic_analysis: {title: '基础分析', desc: '批量/自动分析使用，生成标签、中文摘要和简评。评级由用户手动维护。建议廉价模型，默认不使用思考。'},
+            basic_analysis: {title: '基础分析', desc: '批量/自动分析使用，生成标签、中文摘要、简评和 AI 初评。用户仍可在详情页手动修正星级。建议廉价模型，默认不使用思考。'},
             deep_reading: {title: '深度阅读', desc: '单篇生成/刷新 Q&A 深度阅读使用，不覆盖基础分析字段。可使用高智能模型和 high 思考。'},
             report_summary: {title: '报告导读', desc: '仅在任务页勾选“生成 AI 导读”时调用。建议廉价模型。'},
             recommendation: {title: '个性化推荐', desc: '根据研究兴趣计算 0-100 推荐评分和推荐理由。独立于基础分析模型，可单独配置廉价模型。'},
@@ -1255,7 +1255,7 @@
             document.getElementById('webdav-backup-status').innerHTML = `
                 <div class="db-stat"><div class="${statusClass}">${escapeHtml(statusText)}</div><div class="db-stat-label">最近状态</div></div>
                 <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.last_success_at || 'N/A')}</div><div class="db-stat-label">最近成功</div></div>
-                <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.last_uploaded_file || 'N/A')}</div><div class="db-stat-label">最近文件</div></div>
+                <div class="db-stat db-stat-wide"><div class="db-stat-label">最近文件</div><div class="db-stat-value">${escapeHtml(data.last_uploaded_file || 'N/A')}</div></div>
                 <div class="db-stat db-stat-wide"><div class="db-stat-label">错误信息</div><div class="db-stat-value">${escapeHtml(data.last_error || '无')}</div></div>
             `;
         }

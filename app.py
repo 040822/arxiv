@@ -903,7 +903,7 @@ def api_generate():
 
 @app.route("/api/paper/<arxiv_id>/analysis", methods=["PUT"])
 def api_update_paper_analysis(arxiv_id):
-    """更新论文分析结果（手动评级、标签、摘要等）"""
+    """更新论文分析结果（星级修正、标签、摘要等）"""
     try:
         paper = get_paper_by_arxiv_id(arxiv_id)
         if not paper:
@@ -1055,7 +1055,7 @@ def api_add_paper():
             update_progress(task_id, {"status": "error", "message": "论文获取失败"})
             return jsonify({"status": "error", "message": "论文获取失败，请检查编号是否正确"}), 404
 
-        # 检查论文是否已有完整基础分析；仅手动评级记录不阻止后续 AI 补齐标签/摘要/简评。
+        # 检查论文是否已有完整基础分析；仅有星级但缺少标签/摘要/简评时继续补齐。
         already_analyzed = get_analysis_by_paper_id(paper_data.get("id"))
         if _has_basic_analysis(already_analyzed):
             update_progress(task_id, {"current": 3, "total": 3, "status": "completed", "message": "论文已存在且已分析"})
@@ -1076,16 +1076,16 @@ def api_add_paper():
             import json as _json
             paper_data["categories"] = _json.loads(paper_data["categories"])
 
-        # 先用廉价基础分析补齐标签、摘要和价值评价，再用深度阅读补充 Q&A；评级由用户手动维护。
+        # 先用廉价基础分析补齐标签、摘要、价值评价和 AI 初评，再用深度阅读补充 Q&A。
         result_data, basic_result, basic_error = analyze_paper_basic(paper_data)
         if not basic_result:
             update_progress(task_id, {"status": "error", "message": f"基础分析失败: {basic_error}"})
             return jsonify({"status": "ok", "message": f"论文已添加但基础分析失败: {basic_error}", "arxiv_id": paper_data.get("arxiv_id")})
-        basic_result["rating"] = 0
 
         inserted = insert_analysis(paper_data["id"], basic_result)
         if not inserted:
             update_analysis(paper_data["id"], {
+                "rating": basic_result.get("rating", 0),
                 "tags": basic_result.get("tags", []),
                 "summary_cn": basic_result.get("summary_cn", ""),
                 "summary_en": basic_result.get("summary_en", ""),

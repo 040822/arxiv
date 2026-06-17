@@ -105,8 +105,9 @@ def init_db():
             tags TEXT,                         -- 标签（JSON 数组，如 ["VLA", "World Model"]）
             summary_cn TEXT,                   -- 摘要中文翻译
             summary_en TEXT,                   -- 英文摘要（当前未使用）
-            rating INTEGER DEFAULT 0,          -- 用户手动评级（0-5 星）
+            rating INTEGER DEFAULT 0,          -- AI 初评 + 用户可手动修正（0-5 星）
             legacy_ai_rating INTEGER,          -- 历史 AI 自动评级备份
+            rating_restored_from_legacy INTEGER DEFAULT 0, -- 是否已从历史 AI 评级恢复
             value_comment TEXT,                -- 价值评价（2-3 句话）
             qa_analysis TEXT,                  -- Q&A 深度阅读（Markdown 格式）
             recommendation_score INTEGER,      -- 个性化推荐分（0-100）
@@ -137,7 +138,16 @@ def init_db():
         cursor.execute("ALTER TABLE analysis ADD COLUMN qa_analysis TEXT")
     if "legacy_ai_rating" not in columns:
         cursor.execute("ALTER TABLE analysis ADD COLUMN legacy_ai_rating INTEGER")
-        cursor.execute("UPDATE analysis SET legacy_ai_rating = rating, rating = 0")
+        cursor.execute("UPDATE analysis SET legacy_ai_rating = rating")
+    if "rating_restored_from_legacy" not in columns:
+        cursor.execute("ALTER TABLE analysis ADD COLUMN rating_restored_from_legacy INTEGER DEFAULT 0")
+    cursor.execute("""
+        UPDATE analysis
+        SET rating = legacy_ai_rating,
+            rating_restored_from_legacy = 1
+        WHERE legacy_ai_rating IS NOT NULL
+          AND COALESCE(rating_restored_from_legacy, 0) = 0
+    """)
     if "recommendation_score" not in columns:
         cursor.execute("ALTER TABLE analysis ADD COLUMN recommendation_score INTEGER")
     if "recommendation_reason" not in columns:
@@ -311,7 +321,7 @@ def insert_analysis(paper_id, analysis_data):
             - tags: 标签列表（如 ["VLA", "World Model"]）
             - summary_cn: 中文摘要
             - summary_en: 英文摘要
-            - rating: 用户手动评级（0-5），基础分析默认写入 0
+            - rating: AI 初评（0-5），用户可在详情页手动修正
             - value_comment: 价值评价
             - qa_analysis: Q&A 深度阅读（可选，默认为空字符串）
             - recommendation_score/reason/interest_hash: 个性化推荐字段（可选）
@@ -897,7 +907,7 @@ def update_analysis(paper_id, data):
     参数：
         paper_id (int): 论文 ID
         data (dict): 要更新的数据，可包含以下字段：
-            - rating: 用户手动评级（0-5）
+            - rating: AI 初评或用户手动修正（0-5）
             - tags: 标签列表
             - summary_cn: 中文摘要
             - value_comment: 价值评价
@@ -1646,6 +1656,10 @@ def generate_report_content(date, ai_summary=None):
     def esc(value):
         return html_module.escape(str(value or ""), quote=True)
 
+    def format_stars(value):
+        rating = max(0, min(5, int(value or 0)))
+        return " ".join("★" if i < rating else "☆" for i in range(5))
+
     def current_recommendation_score(paper):
         if not current_interest_hash or paper.get("recommendation_interest_hash") != current_interest_hash:
             return None
@@ -1722,8 +1736,7 @@ def generate_report_content(date, ai_summary=None):
             interest_html = f'<div class="report-paper-summary"><strong>研究兴趣:</strong><br>{interest_text}</div>'
         html += f'<div class="report-section"><h3>🎯 个性化推荐</h3>{interest_html}<div class="report-papers">'
         for p in recommended[:20]:
-            rating = max(0, min(5, int(p.get('rating') or 0)))
-            stars = '★' * rating + '☆' * (5 - rating) + f' {rating}★'
+            stars = format_stars(p.get('rating'))
             score = p.get("current_recommendation_score") or 0
             authors = ', '.join(esc(a) for a in p['authors'][:3]) if isinstance(p.get('authors'), list) else esc(p.get('authors', ''))
             cats = ' '.join(f'<span class="category-tag">{esc(c)}</span>' for c in (p.get('categories') or [])[:3])
@@ -1760,8 +1773,7 @@ def generate_report_content(date, ai_summary=None):
     for p in papers:
         stars = ''
         if p.get('rating') is not None:
-            rating = max(0, min(5, int(p.get('rating') or 0)))
-            stars = f'<span class="rating">{"★" * rating}{"☆" * (5 - rating)} {rating}★</span>'
+            stars = f'<span class="rating">{format_stars(p.get("rating"))}</span>'
         rec = ''
         if p.get("current_recommendation_score") is not None:
             rec = f'<span class="rating">推荐 {int(p["current_recommendation_score"])}/100</span>'

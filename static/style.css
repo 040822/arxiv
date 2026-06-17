@@ -1451,18 +1451,27 @@ footer {
     font-style: normal;
 }
 
+.db-paths-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
 .db-path-item {
     padding: 10px 14px;
     font-size: 0.9em;
     color: #555;
     background: #f8f9fb;
     border-radius: 8px;
-    margin-bottom: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 8px;
 }
 
 .db-path-item strong {
-    display: inline-block;
-    min-width: 80px;
+    flex-shrink: 0;
+    min-width: 90px;
     color: #333;
 }
 
@@ -1473,6 +1482,7 @@ footer {
     font-size: 0.9em;
     word-break: break-all;
     color: #1a73e8;
+    overflow-wrap: anywhere;
 }
 
 .task-stats-grid {

@@ -89,14 +89,64 @@ def _clean_json_content(content):
     if json_match:
         content = json_match.group(0)
 
-    # 步骤 3：修复无效的反斜杠转义
-    # AI 有时会在 LaTeX 公式或特殊字符中使用无效的 JSON 转义
-    # 有效转义：\" \\ \/ \b \f \n \r \t \uXXXX
-    # 无效转义：\_ \[ \] \{ \} \* \+ \. 等
-    # 策略：将无效转义中的反斜杠移除
-    content = re.sub(r'\\(?!["\\/bfnrtu])', '', content)
+    # 步骤 3：修复 JSON 字符串内部的无效反斜杠转义。
+    # 不能用简单正则全局替换：合法的 "\\alpha" 会被误改成 "\alpha"。
+    content = _repair_invalid_json_escapes(content)
 
     return content
+
+
+def _repair_invalid_json_escapes(content):
+    """只移除 JSON 字符串内无效 escape 的反斜杠，保留合法转义。"""
+    result = []
+    in_string = False
+    escaped = False
+    i = 0
+    valid_simple_escapes = set('"\\/bfnrt')
+
+    while i < len(content):
+        char = content[i]
+
+        if not in_string:
+            result.append(char)
+            if char == '"':
+                in_string = True
+            i += 1
+            continue
+
+        if escaped:
+            if char in valid_simple_escapes:
+                result.append(char)
+            elif char == "u":
+                hex_part = content[i + 1:i + 5]
+                if len(hex_part) == 4 and all(c in "0123456789abcdefABCDEF" for c in hex_part):
+                    result.append(char)
+                    result.append(hex_part)
+                    i += 4
+                else:
+                    result.pop()
+                    result.append(char)
+            else:
+                result.pop()
+                result.append(char)
+            escaped = False
+            i += 1
+            continue
+
+        if char == "\\":
+            result.append(char)
+            escaped = True
+            i += 1
+            continue
+
+        result.append(char)
+        if char == '"':
+            in_string = False
+        i += 1
+
+    if escaped and result and result[-1] == "\\":
+        result.pop()
+    return "".join(result)
 
 
 def _value(obj, key, default=None):
@@ -185,8 +235,10 @@ def _normalise_analysis_result(result):
         result["summary_en"] = ""
     if "value_comment" not in result:
         result["value_comment"] = ""
-    # rating is now user-maintained only. Ignore any rating returned by old prompts/models.
-    result["rating"] = 0
+    try:
+        result["rating"] = max(0, min(5, int(result.get("rating", 0))))
+    except (TypeError, ValueError):
+        result["rating"] = 0
     result.pop("qa_analysis", None)
     return result
 
@@ -519,10 +571,11 @@ def analyze_papers(papers, concurrency=None, progress_callback=None):
                 if inserted:
                     success_count += 1
                     logger.info(f"[{completed_count}/{total}] ✅ {arxiv_id} | "
-                                f"{', '.join(result['tags'])}")
+                                f"{result.get('rating', 0)}★ | {', '.join(result['tags'])}")
                 else:
-                    # 已有手动评分等 analysis 记录时，补齐基础分析字段但不覆盖用户评分。
+                    # 已有 analysis 记录时，按当前基础分析结果刷新标签、摘要、评价和 AI 初评。
                     update_analysis(paper_data["id"], {
+                        "rating": result.get("rating", 0),
                         "tags": result.get("tags", []),
                         "summary_cn": result.get("summary_cn", ""),
                         "summary_en": result.get("summary_en", ""),
@@ -530,7 +583,7 @@ def analyze_papers(papers, concurrency=None, progress_callback=None):
                     })
                     success_count += 1
                     logger.info(f"[{completed_count}/{total}] ✅ {arxiv_id} updated basic analysis | "
-                                f"{', '.join(result['tags'])}")
+                                f"{result.get('rating', 0)}★ | {', '.join(result['tags'])}")
             else:
                 # AI 调用失败或 JSON 解析失败
                 fail_count += 1
@@ -546,7 +599,7 @@ def analyze_papers(papers, concurrency=None, progress_callback=None):
                     "skip": skip_count,
                     "fail": fail_count,
                     "arxiv_id": arxiv_id,
-                    "rating": 0,
+                    "rating": result.get("rating", 0) if result else 0,
                     "tags": result.get("tags", []) if result else [],
                     "message": f"[{completed_count}/{total}] {arxiv_id}"
                 })

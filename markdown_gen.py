@@ -46,13 +46,13 @@ def format_rating(rating):
         rating (int 或 None): 数字评级，范围 0-5，None 表示未评级
         
     Returns:
-        str: 格式化的评级字符串，如 "★★★☆☆" 表示 3 星评级
+        str: 格式化的评级字符串，如 "★ ★ ★ ☆ ☆" 表示 3 星评级
              "N/A" 表示未评级
     """
     if rating is None:
         return "N/A"
     rating = max(0, min(5, int(rating)))
-    return f"{'★' * rating}{'☆' * (5 - rating)} {rating}星"
+    return " ".join("★" if i < rating else "☆" for i in range(5))
 
 
 def current_recommendation_score(paper, interest_hash=None):

@@ -249,7 +249,7 @@ Body (JSON)：
 }
 ```
 
-`rating` 为用户手动评级字段。AI 基础分析不再自动生成或覆盖该字段；旧版 AI 评级迁移时备份到 `legacy_ai_rating`。
+`rating` 为 AI 初评 + 用户可手动修正字段。基础分析会生成并写入 0-5 星评分；用户仍可通过该接口手动调整。`legacy_ai_rating` 仅作为历史 AI 评级备份/恢复字段。
 
 字段均可选，只传需要更新的字段。
 
@@ -274,7 +274,7 @@ DELETE /api/paper/<arxiv_id>
 POST /api/paper/<arxiv_id>/reanalyze
 ```
 
-下载 PDF，生成/刷新 Q&A 深度阅读；不会覆盖已有标签、手动评级、中文摘要和简评。
+下载 PDF，生成/刷新 Q&A 深度阅读；不会覆盖已有标签、AI 评级/人工修正、中文摘要和简评。
 
 ### 添加指定论文
 
@@ -423,7 +423,7 @@ POST /api/prompts                # 保存 prompt
 }
 ```
 
-旧版 `system_prompt/user_prompt` 保存仍可用，会映射到 `deep_reading`。新版 Profile 中论文动态内容不写入 instruction，而是由后端作为最后一条 JSON message 传入；`basic_analysis` 可使用 `{tag_candidates}`，评级由用户手动维护，`deep_reading` 只需要描述 Q&A 输出。
+旧版 `system_prompt/user_prompt` 保存仍可用，会映射到 `deep_reading`。新版 Profile 中论文动态内容不写入 instruction，而是由后端作为最后一条 JSON message 传入；`basic_analysis` 可使用 `{tag_candidates}` 和 `{rating_criteria}`，并返回 AI 初评 `rating`；`deep_reading` 只需要描述 Q&A 输出。
 
 ### 配置管理
 

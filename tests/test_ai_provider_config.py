@@ -145,8 +145,8 @@ class AiTaskSettingsTests(unittest.TestCase):
         self.assertEqual(loaded["ai_tasks"]["recommendation"]["provider_key"], "cheap")
         self.assertEqual(loaded["ai_tasks"]["recommendation"]["max_tokens"], 500)
         self.assertEqual(loaded["prompt_profiles"]["deep_reading"]["system"], "legacy system")
-        self.assertNotIn('"rating"', loaded["prompt_profiles"]["basic_analysis"]["instruction"])
-        self.assertNotIn("{rating_criteria}", loaded["prompt_profiles"]["basic_analysis"]["instruction"])
+        self.assertIn('"rating"', loaded["prompt_profiles"]["basic_analysis"]["instruction"])
+        self.assertIn("{rating_criteria}", loaded["prompt_profiles"]["basic_analysis"]["instruction"])
         self.assertIn("recommendation_score", loaded["prompt_profiles"]["recommendation"]["instruction"])
         self.assertEqual(loaded["personalization"]["research_interests"], "")
 
@@ -1077,7 +1077,7 @@ class ProviderEndpointTests(unittest.TestCase):
             result = app_module.api_add_paper()
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["rating"], 0)
+        self.assertEqual(result["rating"], 4)
         self.assertEqual(result["tags"], ["VLA"])
         self.assertEqual(events, ["basic", "insert", "deep", "update"])
 
@@ -1106,7 +1106,7 @@ class ProviderEndpointTests(unittest.TestCase):
             result = app_module.api_add_paper()
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["rating"], 0)
+        self.assertEqual(result["rating"], 4)
         basic.assert_called_once()
         insert.assert_called_once()
 
@@ -1133,13 +1133,44 @@ class AiCallRoutingTests(unittest.TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(result["tags"], ["VLA"])
-        self.assertEqual(result["rating"], 0)
+        self.assertEqual(result["rating"], 4)
         messages, _, task_key = call.call_args.args
         self.assertEqual(task_key, "basic_analysis")
         self.assertNotIn("qa_analysis", messages[1]["content"])
-        self.assertNotIn('"rating"', messages[1]["content"])
+        self.assertIn('"rating"', messages[1]["content"])
+        self.assertIn("不要把 3 星作为默认安全分", messages[1]["content"])
         self.assertNotIn("{rating_criteria}", messages[1]["content"])
         self.assertIn('"abstract": "This is the abstract."', messages[2]["content"])
+
+    def test_basic_analysis_clamps_out_of_range_rating(self):
+        paper = {
+            "id": 1,
+            "arxiv_id": "2601.00001",
+            "title": "A Robot Paper",
+            "authors": ["Alice"],
+            "abstract": "This is the abstract.",
+        }
+        fake_result = {"tags": ["VLA"], "rating": 9, "summary_cn": "摘要", "value_comment": "有价值"}
+
+        with patch.object(self.analyzer, "_call_ai", return_value=(fake_result, None)):
+            _, result, error = self.analyzer.analyze_paper_basic(paper)
+
+        self.assertIsNone(error)
+        self.assertEqual(result["rating"], 5)
+
+    def test_json_cleaner_repairs_invalid_escapes_without_breaking_latex(self):
+        content = (
+            '{"qa_analysis": "valid latex: \\\\alpha and unicode \\\\u03b1; '
+            'invalid markdown \\_ and latex \\uparrow"}'
+        )
+
+        cleaned = self.analyzer._clean_json_content(content)
+        parsed = json.loads(cleaned)
+
+        self.assertIn(r"\alpha", parsed["qa_analysis"])
+        self.assertIn(r"\u03b1", cleaned)
+        self.assertIn("invalid markdown _", parsed["qa_analysis"])
+        self.assertIn("latex uparrow", parsed["qa_analysis"])
 
     def test_deep_reading_uses_full_pdf_without_text_limit(self):
         paper = {
@@ -1226,6 +1257,7 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         ok, message = validate_prompt_template("只做基础分析", profile_key="basic_analysis")
         self.assertFalse(ok)
         self.assertIn("{tag_candidates}", message)
+        self.assertIn("{rating_criteria}", message)
 
     def test_report_generation_escapes_database_content(self):
         import database
@@ -1272,7 +1304,7 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         self.assertNotIn("<img", content)
         self.assertNotIn("<i>", content)
 
-    def test_rating_migration_backs_up_legacy_ai_rating_once(self):
+    def test_rating_migration_restores_legacy_ai_rating_once(self):
         import sqlite3
         import database
 
@@ -1301,8 +1333,10 @@ class PromptAndReportSafetyTests(unittest.TestCase):
 
             database.init_db()
             conn = sqlite3.connect(database.DB_PATH)
-            rows = conn.execute("SELECT id, rating, legacy_ai_rating FROM analysis ORDER BY id").fetchall()
-            self.assertEqual(rows, [(1, 0, 3), (2, 0, 5)])
+            rows = conn.execute(
+                "SELECT id, rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis ORDER BY id"
+            ).fetchall()
+            self.assertEqual(rows, [(1, 3, 3, 1), (2, 5, 5, 1)])
 
             conn.execute("UPDATE analysis SET rating = 4 WHERE id = 1")
             conn.commit()
@@ -1310,12 +1344,62 @@ class PromptAndReportSafetyTests(unittest.TestCase):
 
             database.init_db()
             conn = sqlite3.connect(database.DB_PATH)
-            rows = conn.execute("SELECT id, rating, legacy_ai_rating FROM analysis ORDER BY id").fetchall()
+            rows = conn.execute(
+                "SELECT id, rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis ORDER BY id"
+            ).fetchall()
             conn.close()
 
         database.DB_DIR = original_dir
         database.DB_PATH = original_path
-        self.assertEqual(rows, [(1, 4, 3), (2, 0, 5)])
+        self.assertEqual(rows, [(1, 4, 3, 1), (2, 5, 5, 1)])
+
+    def test_rating_restore_overwrites_current_rating_when_legacy_exists(self):
+        import sqlite3
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            database.DB_DIR = tmp
+            database.DB_PATH = os.path.join(tmp, "papers.db")
+            conn = sqlite3.connect(database.DB_PATH)
+            conn.execute("""
+                CREATE TABLE analysis (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    paper_id INTEGER NOT NULL,
+                    tags TEXT,
+                    summary_cn TEXT,
+                    summary_en TEXT,
+                    rating INTEGER DEFAULT 0,
+                    legacy_ai_rating INTEGER,
+                    value_comment TEXT,
+                    analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("INSERT INTO analysis (paper_id, rating, legacy_ai_rating) VALUES (1, 1, 4)")
+            conn.commit()
+            conn.close()
+
+            database.init_db()
+            conn = sqlite3.connect(database.DB_PATH)
+            row = conn.execute(
+                "SELECT rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis WHERE paper_id = 1"
+            ).fetchone()
+            conn.execute("UPDATE analysis SET rating = 2 WHERE paper_id = 1")
+            conn.commit()
+            conn.close()
+
+            database.init_db()
+            conn = sqlite3.connect(database.DB_PATH)
+            row_after_second_init = conn.execute(
+                "SELECT rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis WHERE paper_id = 1"
+            ).fetchone()
+            conn.close()
+
+        database.DB_DIR = original_dir
+        database.DB_PATH = original_path
+        self.assertEqual(row, (4, 4, 1))
+        self.assertEqual(row_after_second_init, (2, 4, 1))
 
     def test_new_analysis_defaults_to_zero_manual_rating_without_legacy_backup(self):
         import sqlite3
@@ -1447,6 +1531,9 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         self.assertIn("个性化推荐", content)
         self.assertIn("<strong>研究兴趣:</strong><br>机器人基础模型<br>VLA", content)
         self.assertIn("推荐 95/100", content)
+        self.assertIn("★ ★ ★ ☆ ☆", content)
+        self.assertNotIn("3★", content)
+        self.assertNotIn("5★", content)
         self.assertIn("<strong>中文摘要:</strong> 高兴趣中文摘要", content)
         self.assertIn("<strong>推荐语:</strong> 强相关", content)
         self.assertIn("<strong>评价:</strong> 相关", content)
@@ -1521,6 +1608,9 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         self.assertIn("**研究兴趣:**", content)
         self.assertIn("> 机器人基础模型", content)
         self.assertIn("> VLA", content)
+        self.assertIn("⭐ ★ ★ ★ ☆ ☆", content)
+        self.assertNotIn("3星", content)
+        self.assertNotIn("5星", content)
         self.assertIn("**中文摘要:** 高兴趣中文摘要", content)
         self.assertIn("**推荐语:** 强相关", content)
         self.assertIn("**评价:** 相关评价", content)
@@ -1796,6 +1886,7 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
 
         self.assertEqual(count, 1)
         update_analysis.assert_called_once_with(1, {
+            "rating": 0,
             "tags": ["VLA"],
             "summary_cn": "摘要",
             "summary_en": "",
@@ -1995,12 +2086,18 @@ class TemplateSafetyTests(unittest.TestCase):
         self.assertIn("/api/generate?date=${encodeURIComponent(reportDate)}", html)
         self.assertIn("window.location.reload()", html)
 
-    def test_list_templates_show_numeric_zero_star_rating(self):
+    def test_list_templates_show_spaced_star_rating_without_numeric_suffix(self):
         for path in ("templates/index.html", "templates/browse.html", "templates/search.html", "templates/reading_list.html"):
             with self.subTest(path=path):
                 with open(path, "r", encoding="utf-8") as f:
                     html = f.read()
-                self.assertIn("{{ paper.rating }}★", html)
+                self.assertIn("{% if not loop.last %} {% endif %}", html)
+                self.assertNotIn("{{ paper.rating }}★", html)
+        with open("templates/browse.html", "r", encoding="utf-8") as f:
+            browse_html = f.read()
+        self.assertNotIn("{{ i }}★", browse_html)
+        self.assertNotIn("{{ min_rating }}★", browse_html)
+        self.assertNotIn("{{ max_rating }}★", browse_html)
 
 
 if __name__ == "__main__":

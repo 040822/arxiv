@@ -12,7 +12,7 @@
 
 ## 1. 项目概述
 
-自动从 arXiv 抓取 AI/机器人领域论文，调用 OpenAI 兼容 API 做基础分析（标签、中文摘要、简评）和按需深度阅读（Q&A），存入 SQLite 数据库，通过 Flask Web 界面浏览。论文评级由用户手动维护。
+自动从 arXiv 抓取 AI/机器人领域论文，调用 OpenAI 兼容 API 做基础分析（标签、AI 评级、中文摘要、简评）和按需深度阅读（Q&A），存入 SQLite 数据库，通过 Flask Web 界面浏览。论文评级由 AI 初评，用户可手动修正。
 
 **技术栈:** Python 3.10+ / Flask / SQLite / APScheduler / arxiv-py / OpenAI SDK / PyMuPDF
 
@@ -87,8 +87,9 @@ CREATE TABLE analysis (
     tags TEXT,                         -- JSON 数组，如 ["VLA","World Model"]
     summary_cn TEXT,                   -- Abstract 中文翻译
     summary_en TEXT,                   -- 英文摘要（当前未使用）
-    rating INTEGER DEFAULT 0,          -- 用户手动评级（0-5 星）
+    rating INTEGER DEFAULT 0,          -- AI 初评 + 用户可手动修正（0-5 星）
     legacy_ai_rating INTEGER,          -- 历史 AI 自动评级备份
+    rating_restored_from_legacy INTEGER DEFAULT 0, -- 是否已从历史 AI 评级恢复
     value_comment TEXT,                -- 评价
     qa_analysis TEXT,                  -- Q&A 深度阅读（Markdown 格式）
     recommendation_score INTEGER,      -- 个性化推荐分（0-100）
@@ -168,7 +169,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 ### 5.1 config.py（硬编码，需改代码）
 - `ARXIV_CATEGORIES` — 监控的 arXiv 分类
 - `TAG_CANDIDATES` — AI 标签候选列表
-- `RATING_CRITERIA` — 旧版评级标准兼容文本；当前 AI 基础分析不再使用
+- `RATING_CRITERIA` — AI 基础分析评级标准（0-5 星校准锚点）
 - `ANALYSIS_CONCURRENCY` — 默认并发数
 - `SCHEDULE_HOUR/MINUTE` — 定时任务首次默认时间；运行后以 `settings.json` 的 `schedule` 为准
 - `WEB_HOST/PORT` — Web 服务地址
@@ -357,7 +358,7 @@ if "new_column" not in columns:
 ### 7.4 修改 Prompt
 - 新版 prompt 主要存储在 `data/settings.json` 的 `prompt_profiles` 字段，按 `basic_analysis`、`deep_reading`、`report_summary` 拆分
 - 旧版 `prompts.system_prompt/user_prompt` 保留为兼容字段，并映射到 `deep_reading`
-- 基础分析 Prompt Profile 可使用 `{tag_candidates}`；AI 不再自动生成评级，`rating` 由用户手动维护；深度阅读只描述 Q&A 输出；论文标题、作者、摘要、PDF 全文会作为最后一条动态 JSON message 传入
+- 基础分析 Prompt Profile 可使用 `{tag_candidates}`、`{rating_criteria}`，并返回 `tags`、`rating`、`summary_cn`、`value_comment`；深度阅读只描述 Q&A 输出；论文标题、作者、摘要、PDF 全文会作为最后一条动态 JSON message 传入
 - 修改 AI 调用逻辑时不要重新把动态论文内容拼回稳定 instruction，否则会降低 prompt cache 命中率
 - 深度阅读按质量优先调用 `get_paper_full_text(max_chars=None)`，不截断 PDF 全文；基础分析只使用摘要以降低成本
 

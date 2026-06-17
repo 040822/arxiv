@@ -7,6 +7,11 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+    {% macro stars(value) -%}
+        {%- for i in range(5) -%}
+            {%- if i < value -%}★{%- else -%}☆{%- endif -%}{%- if not loop.last %} {% endif -%}
+        {%- endfor -%}
+    {%- endmacro %}
     <div class="container">
         <header>
             <div class="header-top">
@@ -57,14 +62,14 @@
                             <select name="min_rating" onchange="this.form.submit()">
                                 <option value="">最低</option>
                                 {% for i in range(6) %}
-                                <option value="{{ i }}" {% if min_rating is not none and min_rating == i %}selected{% endif %}>{{ i }}★</option>
+                                <option value="{{ i }}" {% if min_rating is not none and min_rating == i %}selected{% endif %}>{{ stars(i) }}</option>
                                 {% endfor %}
                             </select>
                             <span>~</span>
                             <select name="max_rating" onchange="this.form.submit()">
                                 <option value="">最高</option>
                                 {% for i in range(6) %}
-                                <option value="{{ i }}" {% if max_rating is not none and max_rating == i %}selected{% endif %}>{{ i }}★</option>
+                                <option value="{{ i }}" {% if max_rating is not none and max_rating == i %}selected{% endif %}>{{ stars(i) }}</option>
                                 {% endfor %}
                             </select>
                         </div>
@@ -120,8 +125,8 @@
                         {% if date %}<span class="filter-tag">日期: {{ date }} <a href="/browse?{{ _remove_param('date') }}">✕</a></span>{% endif %}
                         {% if category %}<span class="filter-tag">分类: {{ category }} <a href="/browse?{{ _remove_param('category') }}">✕</a></span>{% endif %}
                         {% if tag %}<span class="filter-tag">标签: {{ tag }} <a href="/browse?{{ _remove_param('tag') }}">✕</a></span>{% endif %}
-                        {% if min_rating is not none %}<span class="filter-tag">最低: {{ min_rating }}★ <a href="/browse?{{ _remove_param('min_rating') }}">✕</a></span>{% endif %}
-                        {% if max_rating is not none %}<span class="filter-tag">最高: {{ max_rating }}★ <a href="/browse?{{ _remove_param('max_rating') }}">✕</a></span>{% endif %}
+                        {% if min_rating is not none %}<span class="filter-tag">最低: {{ stars(min_rating) }} <a href="/browse?{{ _remove_param('min_rating') }}">✕</a></span>{% endif %}
+                        {% if max_rating is not none %}<span class="filter-tag">最高: {{ stars(max_rating) }} <a href="/browse?{{ _remove_param('max_rating') }}">✕</a></span>{% endif %}
                         {% if has_analysis %}<span class="filter-tag">报告: {% if has_analysis == 'yes' %}已有{% else %}未分析{% endif %} <a href="/browse?{{ _remove_param('has_analysis') }}">✕</a></span>{% endif %}
                         {% if has_deep_analysis %}<span class="filter-tag">深度分析: {% if has_deep_analysis == 'yes' %}已有{% else %}无{% endif %} <a href="/browse?{{ _remove_param('has_deep_analysis') }}">✕</a></span>{% endif %}
                         {% if hidden %}<span class="filter-tag">可见性: 已隐藏 <a href="/browse?{{ _remove_param('hidden') }}">✕</a></span>{% endif %}
@@ -142,7 +147,7 @@
                     <div id="batch-status" class="action-status" style="display:inline-block;margin:0;padding:4px 10px;font-size:0.85em;"></div>
                 </div>
                 <p class="section-desc" style="margin:8px 0 0;font-size:0.82em;color:#64748b;">
-                    🤖 批量分析 = 普通 AI 报告（标签/中文摘要/简评，不下载 PDF，评级手动维护）。深度分析（Q&A）请在论文详情页点击「📝 生成报告」。
+                    🤖 批量分析 = 普通 AI 报告（标签/中文摘要/AI 评级/简评，不下载 PDF）。深度分析（Q&A）请在论文详情页点击「📝 生成报告」。
                 </p>
 
                 <div class="papers-list">
@@ -163,9 +168,8 @@
                                     {% if paper.rating is not none %}
                                     <span class="meta-item rating">
                                         {% for i in range(5) %}
-                                            {% if i < paper.rating %}★{% else %}☆{% endif %}
+                                            {% if i < paper.rating %}★{% else %}☆{% endif %}{% if not loop.last %} {% endif %}
                                         {% endfor %}
-                                        {{ paper.rating }}★
                                     </span>
                                     {% else %}
                                     <span class="meta-item" style="color:#ccc">未分析</span>

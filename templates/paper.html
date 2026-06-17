@@ -74,7 +74,7 @@
                     {% for i in range(5) %}
                     <span class="star-btn {% if i < r %}active{% endif %}" data-val="{{ i+1 }}" onclick="setRating({{ i+1 }})">{% if i < r %}★{% else %}☆{% endif %}</span>
                     {% endfor %}
-                    <span class="rating-text" id="rating-text">({{ r }}/5)</span>
+                    <span class="rating-text" id="rating-text"></span>
                 </div>
             </div>
 
@@ -342,7 +342,6 @@
                     el.classList.toggle('active', i < val);
                     el.textContent = i < val ? '★' : '☆';
                 });
-                document.getElementById('rating-text').textContent = `(${val}/5)`;
             }
         }
 

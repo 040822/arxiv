@@ -96,7 +96,7 @@ THINKING_BUDGETS = {
     "max": 16384,
 }
 OPENAI_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
-REQUIRED_PROMPT_FIELDS = {"title", "authors", "abstract", "tag_candidates"}
+REQUIRED_PROMPT_FIELDS = {"title", "authors", "abstract", "tag_candidates", "rating_criteria"}
 AI_TASK_KEYS = ("basic_analysis", "deep_reading", "report_summary", "recommendation")
 AI_TASK_LABELS = {
     "basic_analysis": "基础分析",
@@ -199,6 +199,7 @@ DEFAULT_BASIC_ANALYSIS_INSTRUCTION = """请完成低成本基础论文分析。�
 
 {
   "tags": ["标签1", "标签2"],
+  "rating": 3,
   "summary_cn": "将论文摘要完整翻译为中文，要求忠实原文、语句通顺、术语准确。",
   "value_comment": "对论文价值的简短评价（2-3句话）"
 }
@@ -209,6 +210,15 @@ DEFAULT_BASIC_ANALYSIS_INSTRUCTION = """请完成低成本基础论文分析。�
 标签精度要求：
 - 避免过于宽泛的标签，例如 Robot Learning、Embodied AI、Transformer、LLM、Agent、Multimodal
 - 优先使用具体技术方法、任务、架构或数据集名称
+
+评级标准：
+{rating_criteria}
+
+评级校准要求：
+- 必须充分使用 0-5 星，不要把 3 星作为默认安全分
+- 普通增量或证据不足的工作应给 1-2 星
+- 3 星表示扎实合格但非突出；4 星需要明显强于同类工作
+- 5 星非常罕见，只给可能形成方向级影响且证据充分的论文
 """
 
 DEFAULT_DEEP_READING_QUESTIONS = [
@@ -578,20 +588,24 @@ def _migrate_deep_reading_instruction(instruction):
 
 
 def _is_legacy_basic_analysis_instruction(instruction):
-    """判断是否为旧默认基础分析 prompt（包含 AI 自动评级）。"""
+    """判断是否为旧默认/上一版默认基础分析 prompt，需要迁移到校准评级版。"""
     text = instruction or ""
     return (
         "请完成低成本基础论文分析" in text
         and '"tags"' in text
-        and '"rating"' in text
         and '"summary_cn"' in text
         and '"value_comment"' in text
-        and ("{rating_criteria}" in text or "评级标准" in text)
+        and "标签精度要求" in text
+        and (
+            '"rating"' not in text
+            or "不要把 3 星作为默认安全分" not in text
+            or "{rating_criteria}" not in text
+        )
     )
 
 
 def _migrate_basic_analysis_instruction(instruction):
-    """旧默认基础分析 prompt 去除 AI 自动评级；自定义 prompt 原样保留。"""
+    """旧默认/上一版默认基础分析 prompt 迁移到校准 AI 评级版；自定义 prompt 原样保留。"""
     if _is_legacy_basic_analysis_instruction(instruction):
         return DEFAULT_BASIC_ANALYSIS_INSTRUCTION
     return instruction
@@ -1550,7 +1564,7 @@ def save_prompts(prompts):
 
 
 PROFILE_REQUIRED_PROMPT_FIELDS = {
-    "basic_analysis": {"tag_candidates"},
+    "basic_analysis": {"tag_candidates", "rating_criteria"},
     "deep_reading": set(),
     "report_summary": set(),
     "recommendation": set(),

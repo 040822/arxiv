@@ -69,9 +69,8 @@
                         {% if paper.rating is not none %}
                         <span class="meta-item rating">
                             {% for i in range(5) %}
-                                {% if i < paper.rating %}★{% else %}☆{% endif %}
+                                {% if i < paper.rating %}★{% else %}☆{% endif %}{% if not loop.last %} {% endif %}
                             {% endfor %}
-                            {{ paper.rating }}★
                         </span>
                         {% endif %}
                     </div>
