@@ -32,10 +32,12 @@
 ```
 arxiv/
 ├── config.py           # 硬编码配置（分类、标签、路径、延迟参数）
-├── settings.py         # 运行时配置（JSON：供应商、prompt、代理、AI任务路由）
+├── settings.py         # 运行时配置（JSON：供应商、prompt、代理、AI任务路由、邮件/备份）
 ├── database.py         # SQLite 数据库全部操作（论文/分析/报告/学习记录）
 ├── fetcher.py          # arXiv API 论文抓取（支持分批）
 ├── analyzer.py         # AI 分析与论文学习对话/问答
+├── backup.py           # WebDAV 云同步备份
+├── email_report.py     # 每日报告 SMTP 邮件发送
 ├── pdf_reader.py       # PDF 下载与文本提取（令牌桶限速）
 ├── markdown_gen.py     # Markdown 报告生成
 ├── app.py              # Flask Web 服务 + APScheduler（~1050 行）
@@ -245,6 +247,7 @@ CREATE TABLE paper_quiz_attempts (
 | `prompt_profiles` | 按 AI 功能拆分的稳定 system/instruction prompt |
 | `personalization` | 个性化推荐配置，当前包含 `research_interests` |
 | `webdav_backup` | WebDAV 云同步备份配置，包含地址、账号、远端目录、历史保留天数和最近备份状态 |
+| `email_report` | 每日报告邮件配置，包含 SMTP、收件人、主题模板、站点地址和最近发送状态 |
 | `prompts` | 旧版 system/user prompt 兼容字段，映射到 `deep_reading` |
 | `concurrency` | AI 分析并发数 |
 | `per_page` | 首页每页论文数 |
@@ -261,6 +264,8 @@ AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.b
 设置管理密码后，写接口和敏感设置读取接口需要登录；管理登录默认通过签名 cookie 持久保存 180 天，修改管理密码后旧登录状态失效。供应商列表接口只能返回脱敏后的 `api_key_masked`。
 
 WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 `output/` 打包上传。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。
+
+报告邮件发送由 `email_report.py` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分 `>80` 的论文进入重点精读区，其余论文最多展示 20 篇速览，并可按 `site_url` 生成论文详情和完整报告链接。发送任务会先调用现有 `report_summary` 模型生成邮件导读，导读失败只写入任务 detail 并降级展示。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。每日任务中的邮件失败只记录 `email_report` 任务日志和最近错误，不中断日报流程。
 
 ---
 

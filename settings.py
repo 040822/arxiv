@@ -417,6 +417,22 @@ DEFAULT_SETTINGS = {
         "last_error": "",
         "last_uploaded_file": "",
     },
+    "email_report": {
+        "enabled": False,
+        "smtp_host": "",
+        "smtp_port": 587,
+        "security": "starttls",
+        "username": "",
+        "password": "",
+        "sender": "",
+        "recipients": [],
+        "subject_template": "AI 论文日报 {date} - {paper_count} 篇论文",
+        "site_url": "",
+        "last_status": "",
+        "last_success_at": "",
+        "last_error": "",
+        "last_sent_report_date": "",
+    },
     "schedule": {
         "enabled": True,
         "hour": SCHEDULE_HOUR,
@@ -544,6 +560,58 @@ def _normalize_webdav_backup_config(config, existing_password=None):
         "last_success_at": str(config.get("last_success_at") or "").strip(),
         "last_error": str(config.get("last_error") or "").strip(),
         "last_uploaded_file": str(config.get("last_uploaded_file") or "").strip(),
+    }
+
+
+def _normalize_email_recipients(value):
+    """将逗号/分号/换行分隔的收件人规范化为列表。"""
+    if isinstance(value, str):
+        parts = re.split(r"[,;\n\r]+", value)
+    elif isinstance(value, (list, tuple)):
+        parts = value
+    else:
+        parts = []
+    recipients = []
+    seen = set()
+    for part in parts:
+        email = str(part or "").strip()
+        if not email or email in seen:
+            continue
+        recipients.append(email)
+        seen.add(email)
+    return recipients
+
+
+def _normalize_email_report_config(config, existing_password=None):
+    """补齐并约束每日报告邮件配置。"""
+    config = dict(config or {})
+    password = config.get("password")
+    if password in (None, "") and existing_password is not None:
+        password = existing_password
+    security = str(config.get("security") or "starttls").strip().lower()
+    if security not in {"starttls", "ssl", "none"}:
+        security = "starttls"
+    default_port = 465 if security == "ssl" else 587
+    smtp_port = _as_int(config.get("smtp_port"), default_port)
+    subject_template = str(config.get("subject_template") or "").strip()
+    if not subject_template:
+        subject_template = DEFAULT_SETTINGS["email_report"]["subject_template"]
+    site_url = str(config.get("site_url") or "").strip().rstrip("/")
+    return {
+        "enabled": _as_bool(config.get("enabled"), False),
+        "smtp_host": str(config.get("smtp_host") or "").strip(),
+        "smtp_port": max(1, min(65535, smtp_port)),
+        "security": security,
+        "username": str(config.get("username") or "").strip(),
+        "password": str(password or ""),
+        "sender": str(config.get("sender") or "").strip(),
+        "recipients": _normalize_email_recipients(config.get("recipients")),
+        "subject_template": subject_template[:300],
+        "site_url": site_url,
+        "last_status": str(config.get("last_status") or "").strip(),
+        "last_success_at": str(config.get("last_success_at") or "").strip(),
+        "last_error": str(config.get("last_error") or "").strip(),
+        "last_sent_report_date": str(config.get("last_sent_report_date") or "").strip(),
     }
 
 
@@ -992,6 +1060,7 @@ def _migrate_old_settings(data):
         "session_secret",
         "personalization",
         "webdav_backup",
+        "email_report",
         "prompts",
         "prompt_profiles",
         "ai_tasks",
@@ -1053,6 +1122,8 @@ def load_settings():
             merged["personalization"] = _normalize_personalization_config(migrated["personalization"])
         if "webdav_backup" in migrated:
             merged["webdav_backup"] = _normalize_webdav_backup_config(migrated["webdav_backup"])
+        if "email_report" in migrated:
+            merged["email_report"] = _normalize_email_report_config(migrated["email_report"])
         if "schedule" in migrated:
             merged["schedule"] = _normalize_schedule(migrated["schedule"])
         if "proxy" in migrated:
@@ -1349,6 +1420,58 @@ def update_webdav_backup_status(status, error="", uploaded_file=""):
         config["last_success_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         config["last_error"] = ""
     settings["webdav_backup"] = config
+    return save_settings(settings)
+
+
+def get_email_report_config(mask_password=False):
+    """
+    获取每日报告邮件配置。
+
+    参数:
+        mask_password: 为 True 时不返回明文 password，仅返回 password_masked。
+    """
+    settings = load_settings()
+    config = _normalize_email_report_config(settings.get("email_report", {}))
+    if not mask_password:
+        return config
+    masked = dict(config)
+    password = masked.pop("password", "")
+    masked["password_masked"] = "******" if password else ""
+    return masked
+
+
+def save_email_report_config(email_config):
+    """
+    保存每日报告邮件配置。
+
+    前端密码字段为空时保留旧密码，避免每次保存都要求重新输入。
+    """
+    settings = load_settings()
+    current = _normalize_email_report_config(settings.get("email_report", {}))
+    email_config = dict(email_config or {})
+    for key in ("last_status", "last_success_at", "last_error", "last_sent_report_date"):
+        if key not in email_config:
+            email_config[key] = current.get(key, "")
+    settings["email_report"] = _normalize_email_report_config(
+        email_config,
+        existing_password=current.get("password", ""),
+    )
+    return save_settings(settings)
+
+
+def update_email_report_status(status, error="", report_date=""):
+    """更新最近一次报告邮件发送状态。"""
+    settings = load_settings()
+    config = _normalize_email_report_config(settings.get("email_report", {}))
+    config["last_status"] = str(status or "").strip()
+    config["last_error"] = str(error or "").strip()
+    if report_date:
+        config["last_sent_report_date"] = str(report_date).strip()
+    if status == "success":
+        from datetime import datetime
+        config["last_success_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        config["last_error"] = ""
+    settings["email_report"] = config
     return save_settings(settings)
 
 

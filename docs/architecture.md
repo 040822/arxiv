@@ -138,7 +138,22 @@
 
 每日任务中的云备份失败只写入 `webdav_backup` 任务日志和设置页最近错误，不中断抓取、分析和日报生成。
 
-### 5. 搜索流
+### 5. 报告邮件发送流
+
+```
+设置页保存 SMTP 配置 → settings.email_report
+每日任务生成并保存报告后 → email_report.send_report_email()
+  → 按 report_date 从数据库读取论文轻量分析数据
+  → 使用 report_summary 任务模型生成邮件导读（失败时降级）
+  → 生成邮件专用摘要 HTML：推荐分 >80 重点精读 + 最多 20 篇快速速览
+  → 按 site_url 生成 /paper/... 和 /reports/... 绝对链接
+  → 如网络代理已启用，通过 HTTP CONNECT 建立 SMTP 隧道
+  → SMTP/STARTTLS 或 SSL 发送给收件人
+```
+
+手动测试发送会使用最近一份已生成报告并同样生成邮件导读；AI 导读失败不会阻断邮件发送。每日任务中的邮件发送失败只写入 `email_report` 任务日志和设置页最近错误，不中断抓取、分析、日报生成和 WebDAV 备份。
+
+### 6. 搜索流
 
 ```
 用户输入关键词 → GET /search?q=xxx → database.py
@@ -213,7 +228,7 @@ app.py
 
 **原因：**
 - config.py 存放不常改的配置（分类、标签、路径）
-- settings.json 存放用户可改的配置（供应商、prompt、任务级模型路由、个性化研究兴趣、WebDAV 云备份、代理、抓取参数、定时任务）
+- settings.json 存放用户可改的配置（供应商、prompt、任务级模型路由、个性化研究兴趣、WebDAV 云备份、报告邮件、代理、抓取参数、定时任务）
 - 两者合并使用，优先级 settings.json > config.py
 
 ### 6. 论文学习的缓存友好前缀
@@ -262,5 +277,5 @@ app.py
 - 管理登录默认通过签名 cookie 持久保存 180 天，使用 `session_secret` 保持服务重启后的登录状态，修改管理密码后旧登录状态失效
 - 供应商列表接口只返回 `api_key_masked`，不返回完整 `api_key`
 - 报告 HTML 由后端生成，数据库/AI 内容进入 HTML 前必须转义
-- 代理配置和 WebDAV 密码明文存储在 settings.json
+- 代理配置、WebDAV 密码和 SMTP 密码明文存储在 settings.json
 - WebDAV 备份包按设计包含原始 settings.json，因此也包含 API Key、管理密码哈希和 session secret

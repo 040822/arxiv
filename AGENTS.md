@@ -27,11 +27,12 @@
 ```
 arxiv/
 ├── config.py           # 硬编码配置（分类、标签候选、路径）
-├── settings.py         # 运行时配置（JSON文件：供应商、prompt、AI任务路由、并发数、定时任务、密码）
+├── settings.py         # 运行时配置（JSON文件：供应商、prompt、AI任务路由、并发数、定时任务、邮件、密码）
 ├── database.py         # SQLite 数据库全部操作（CRUD、迁移、任务日志、学习记录）
 ├── fetcher.py          # arXiv API 论文抓取（去重、按分类拉取）
 ├── analyzer.py         # AI 分析与论文学习逻辑（PDF全文、Q&A、对话、问答反馈）
 ├── backup.py           # WebDAV 云同步备份（SQLite 快照、zip 打包、上传/清理）
+├── email_report.py     # 每日报告邮件发送（SMTP、邮件HTML包装、站内链接重写）
 ├── pdf_reader.py       # PDF 下载与文本提取（PyMuPDF，缓存到 data/pdf_cache/）
 ├── markdown_gen.py     # Markdown 报告生成（README + 每日报告）
 ├── app.py              # Flask Web 服务（路由、API、APScheduler定时任务）
@@ -105,7 +106,7 @@ CREATE TABLE analysis (
 ```sql
 CREATE TABLE task_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_name TEXT NOT NULL,           -- daily_pipeline/fetch/analyze/generate/run
+    task_name TEXT NOT NULL,           -- daily_pipeline/fetch/analyze/generate/run/webdav_backup/email_report
     status TEXT NOT NULL DEFAULT 'running',  -- running/success/error
     message TEXT,
     detail TEXT,
@@ -229,6 +230,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
     → analyze_pending_papers()
     → generate_report_content(latest_date)
     → save_report()
+    → send_report_email()  # 如已启用；失败单独记录，不中断日报任务
     → run_webdav_backup()  # 如已启用；失败单独记录，不中断日报任务
     → finish_task_log(status="success")
 ```
@@ -260,6 +262,18 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
     "password": "webdav密码或应用密码",
     "remote_dir": "arxiv-backups",
     "history_days": 3
+  },
+  "email_report": {
+    "enabled": false,
+    "smtp_host": "smtp.example.com",
+    "smtp_port": 587,
+    "security": "starttls",
+    "username": "user@example.com",
+    "password": "SMTP密码或授权码",
+    "sender": "user@example.com",
+    "recipients": ["reader@example.com"],
+    "subject_template": "AI 论文日报 {date} - {paper_count} 篇论文",
+    "site_url": "https://your-domain.example"
   },
   "schedule": {"enabled": true, "hour": 10, "minute": 0},
   "providers": {
@@ -315,6 +329,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 - `get_proxy_config()` / `save_proxy_config()` — 代理配置
 - `get_personalization_config()` / `save_personalization_config()` — 个性化推荐研究兴趣
 - `get_webdav_backup_config()` / `save_webdav_backup_config()` — WebDAV 云备份配置；GET 给前端时必须脱敏密码
+- `get_email_report_config()` / `save_email_report_config()` / `update_email_report_status()` — 每日报告邮件配置；GET 给前端时必须脱敏 SMTP 密码
 - `add/remove/switch/update_provider()` — 供应商 CRUD
 - `get/set/verify/has_admin_password()` — 管理密码
 - `get_session_secret()` — 获取/生成持久 Flask session 签名密钥
@@ -389,6 +404,8 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 | `/api/recommendations/recalculate` | POST | 手动重算个性化推荐评分 |
 | `/api/settings/webdav-backup` | GET/POST | 读取/保存 WebDAV 云备份配置（GET 不返回明文密码） |
 | `/api/backup/webdav/run` | POST | 手动立即执行 WebDAV 备份 |
+| `/api/settings/email-report` | GET/POST | 读取/保存每日报告邮件配置（GET 不返回明文密码） |
+| `/api/email-report/test` | POST | 使用最近一份日报告测试发送邮件 |
 | `/api/settings/concurrency` | POST | 保存并发数 |
 | `/api/settings/schedule` | GET/POST | 读取/保存每日定时任务配置 |
 | `/api/db/info` | GET | 数据库信息 |
@@ -500,6 +517,14 @@ cp data/papers.db data/papers.db.bak
 # 会包含 API Key、管理密码哈希和 session secret 等敏感配置。
 # 远端文件：arxiv-backup-latest.zip + arxiv-backup-YYYYMMDD-HHMMSS.zip，
 # 历史备份默认保留 3 天，可在设置页修改。
+
+# 报告邮件发送
+# 设置页「数据库 → 报告邮件发送」可配置 SMTP、收件人、主题模板和站点地址。
+# 启用后每日定时任务会在报告生成并保存后发送邮件专用摘要版 HTML：
+# report_summary 导读、推荐分 >80 重点精读、最多 20 篇快速速览。
+# 发送失败只记录 email_report 任务日志和最近错误，不中断日报任务。
+# SMTP 连接复用现有网络代理配置，代理启用时通过 HTTP CONNECT 连接 SMTP 服务器，
+# 不新增邮件专用代理配置。
 ```
 
 ---
@@ -515,7 +540,7 @@ cp data/papers.db data/papers.db.bak
 ### 可扩展方向
 - 添加更多 arXiv 分类到 `config.py` 的 `ARXIV_CATEGORIES`
 - 实现论文版本更新检测（v2/v3）
-- 添加邮件/Webhook 推送每日报告
+- 添加 Webhook 推送每日报告
 - 实现向量语义搜索（embedding + cosine similarity）
 - 添加论文收藏/标注功能
 - 添加多用户系统

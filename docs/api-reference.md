@@ -576,6 +576,8 @@ GET  /api/settings/fetch         # 获取抓取配置
 POST /api/settings/fetch         # 保存抓取配置
 GET  /api/settings/webdav-backup # 获取 WebDAV 云备份配置（不返回明文密码）
 POST /api/settings/webdav-backup # 保存 WebDAV 云备份配置
+GET  /api/settings/email-report  # 获取每日报告邮件配置（不返回明文密码）
+POST /api/settings/email-report  # 保存每日报告邮件配置
 ```
 
 `/api/settings/ai-usage` 查询参数：
@@ -611,6 +613,25 @@ POST /api/settings/webdav-backup # 保存 WebDAV 云备份配置
 ```
 
 `GET /api/settings/webdav-backup` 只返回 `password_masked`，不会返回明文 `password`。POST 时 `password` 为空会保留已有密码。
+
+`POST /api/settings/email-report` Body：
+
+```json
+{
+    "enabled": true,
+    "smtp_host": "smtp.example.com",
+    "smtp_port": 587,
+    "security": "starttls",
+    "username": "alice@example.com",
+    "password": "smtp授权码",
+    "sender": "alice@example.com",
+    "recipients": "bob@example.com; carol@example.com",
+    "subject_template": "AI 论文日报 {date} - {paper_count} 篇论文",
+    "site_url": "https://papers.example.com"
+}
+```
+
+`security` 支持 `starttls`、`ssl`、`none`。`recipients` 可传数组，也可用逗号、分号或换行分隔。`GET /api/settings/email-report` 只返回 `password_masked`；POST 时 `password` 为空会保留已有 SMTP 密码。
 
 `GET/POST /api/settings/ai-tasks` 的任务 key 固定为：
 
@@ -648,6 +669,14 @@ POST /api/backup/webdav/run
 ```
 
 需要登录。立即创建备份包并上传到 WebDAV；即使未启用每日自动备份，也可用于手动测试。备份包包含 `papers.db` 一致性快照、`settings.json` 和 `output/` 报告目录。远端会写入 `arxiv-backup-latest.zip` 和 `arxiv-backup-YYYYMMDD-HHMMSS.zip`，并按 `history_days` 清理过期历史备份。
+
+### 报告邮件测试发送
+
+```
+POST /api/email-report/test
+```
+
+需要登录。使用最近一份已生成的日报告测试 SMTP 发送；即使未启用每日自动发送，也可用于手动验证配置。若暂无报告，返回 400。邮件正文是摘要版：先尝试调用 `report_summary` 生成 AI 导读，再展示推荐分 `>80` 的重点论文和最多 20 篇速览；导读失败不阻断发送。测试发送和每日自动发送都会复用现有 `/api/settings/proxy` 网络代理配置。每日自动发送只在 `daily_pipeline` 生成并保存报告后触发；发送失败会记录 `email_report` 任务日志和设置页最近错误，不影响日报任务成功状态。
 
 ### 数据库信息
 

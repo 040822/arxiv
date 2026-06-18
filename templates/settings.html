@@ -263,6 +263,63 @@
                 <div id="webdav-backup-status" class="db-info-grid webdav-status-grid"></div>
                 <div id="webdav-backup-action-status" class="action-status"></div>
             </div>
+            <div class="settings-section">
+                <h3>✉️ 报告邮件发送</h3>
+                <p class="section-desc">每天定时任务生成日报后，将同一份 HTML 报告通过 SMTP 发送给指定收件人。测试发送会使用最近一份已生成报告。</p>
+                <div class="form-group"><label><input type="checkbox" id="email-report-enabled"> 启用每日自动发送报告邮件</label></div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>SMTP 服务器</label>
+                        <input type="text" id="email-smtp-host" placeholder="smtp.example.com">
+                    </div>
+                    <div class="form-group" style="max-width:140px;">
+                        <label>端口</label>
+                        <input type="number" id="email-smtp-port" min="1" max="65535" step="1" value="587">
+                    </div>
+                    <div class="form-group" style="max-width:160px;">
+                        <label>加密方式</label>
+                        <select id="email-security">
+                            <option value="starttls">STARTTLS</option>
+                            <option value="ssl">SSL/TLS</option>
+                            <option value="none">不加密</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>SMTP 用户名</label>
+                        <input type="text" id="email-username" autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label>SMTP 密码 / 授权码</label>
+                        <div class="input-group"><input type="password" id="email-password" autocomplete="new-password" placeholder="留空表示不修改"><button class="btn-small" onclick="togglePwd('email-password')">👁</button></div>
+                    </div>
+                    <div class="form-group">
+                        <label>发件人</label>
+                        <input type="text" id="email-sender" placeholder="留空则使用 SMTP 用户名">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>收件人</label>
+                    <textarea id="email-recipients" rows="3" placeholder="多个邮箱可用逗号、分号或换行分隔"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>主题模板</label>
+                        <input type="text" id="email-subject-template" placeholder="AI 论文日报 {date} - {paper_count} 篇论文">
+                    </div>
+                    <div class="form-group">
+                        <label>站点地址</label>
+                        <input type="text" id="email-site-url" placeholder="https://your-domain.example">
+                    </div>
+                </div>
+                <div class="settings-actions">
+                    <button class="action-btn btn-primary" onclick="saveEmailReport()">💾 保存邮件配置</button>
+                    <button class="action-btn" onclick="testEmailReport(this)">✉️ 测试发送</button>
+                </div>
+                <div id="email-report-status" class="db-info-grid webdav-status-grid"></div>
+                <div id="email-report-action-status" class="action-status"></div>
+            </div>
         </div>
 
         <!-- ============ Tab 3: 管理 ============ -->
@@ -376,13 +433,14 @@
         }
 
         async function init() {
-            const [provResp, presetResp, promptResp, statsResp, proxyResp, fetchResp, taskResp, usageResp, personalizationResp, webdavResp] = await Promise.all([
+            const [provResp, presetResp, promptResp, statsResp, proxyResp, fetchResp, taskResp, usageResp, personalizationResp, webdavResp, emailResp] = await Promise.all([
                 fetch('/api/providers'), fetch('/api/providers/presets'),
                 fetch('/api/prompts'), fetch('/api/stats'), fetch('/api/settings/proxy'),
                 fetch('/api/settings/fetch'), fetch('/api/settings/ai-tasks'),
                 fetch('/api/settings/ai-usage?days=7&group_by=model'),
                 fetch('/api/settings/personalization'),
-                fetch('/api/settings/webdav-backup')
+                fetch('/api/settings/webdav-backup'),
+                fetch('/api/settings/email-report')
             ]);
             providerData = await provResp.json();
             presets = await presetResp.json();
@@ -394,6 +452,7 @@
             aiUsageData = await usageResp.json();
             const personalizationData = await personalizationResp.json();
             const webdavData = await webdavResp.json();
+            const emailData = await emailResp.json();
 
             renderProviderList();
             renderPresetGrid();
@@ -401,6 +460,7 @@
             renderAiUsage(aiUsageData);
             renderPrompts(promptData);
             renderWebdavBackup(webdavData);
+            renderEmailReport(emailData);
             if (statsData.concurrency !== undefined) document.getElementById('concurrency').value = statsData.concurrency;
             document.getElementById('research-interests').value = personalizationData.research_interests || '';
 
@@ -1313,6 +1373,91 @@
                     ? `✅ ${result.message}（压缩包 ${result.archive_size || 'N/A'}）`
                     : `❌ ${result.message}`;
                 await loadWebdavBackup();
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        function renderEmailReport(data) {
+            document.getElementById('email-report-enabled').checked = !!data.enabled;
+            document.getElementById('email-smtp-host').value = data.smtp_host || '';
+            document.getElementById('email-smtp-port').value = data.smtp_port || 587;
+            document.getElementById('email-security').value = data.security || 'starttls';
+            document.getElementById('email-username').value = data.username || '';
+            document.getElementById('email-password').value = '';
+            document.getElementById('email-password').placeholder = data.password_masked ? '已设置，留空不修改' : 'SMTP 密码或授权码';
+            document.getElementById('email-sender').value = data.sender || '';
+            document.getElementById('email-recipients').value = (data.recipients || []).join('\n');
+            document.getElementById('email-subject-template').value = data.subject_template || 'AI 论文日报 {date} - {paper_count} 篇论文';
+            document.getElementById('email-site-url').value = data.site_url || '';
+            renderEmailReportStatus(data);
+        }
+
+        function renderEmailReportStatus(data) {
+            const statusText = data.last_status === 'success' ? '成功' : (data.last_status === 'error' ? '失败' : '暂无');
+            const statusClass = data.last_status === 'error' ? 'db-stat-value danger' : 'db-stat-value';
+            document.getElementById('email-report-status').innerHTML = `
+                <div class="db-stat"><div class="${statusClass}">${escapeHtml(statusText)}</div><div class="db-stat-label">最近状态</div></div>
+                <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.last_success_at || 'N/A')}</div><div class="db-stat-label">最近成功</div></div>
+                <div class="db-stat db-stat-wide"><div class="db-stat-label">最近日报</div><div class="db-stat-value">${escapeHtml(data.last_sent_report_date || 'N/A')}</div></div>
+                <div class="db-stat db-stat-wide"><div class="db-stat-label">错误信息</div><div class="db-stat-value">${escapeHtml(data.last_error || '无')}</div></div>
+            `;
+        }
+
+        async function loadEmailReport() {
+            const resp = await fetch('/api/settings/email-report');
+            const data = await resp.json();
+            renderEmailReport(data);
+            return data;
+        }
+
+        async function saveEmailReport() {
+            const statusEl = document.getElementById('email-report-action-status');
+            const data = {
+                enabled: document.getElementById('email-report-enabled').checked,
+                smtp_host: document.getElementById('email-smtp-host').value.trim(),
+                smtp_port: parseInt(document.getElementById('email-smtp-port').value || '587', 10),
+                security: document.getElementById('email-security').value,
+                username: document.getElementById('email-username').value.trim(),
+                password: document.getElementById('email-password').value,
+                sender: document.getElementById('email-sender').value.trim(),
+                recipients: document.getElementById('email-recipients').value,
+                subject_template: document.getElementById('email-subject-template').value.trim(),
+                site_url: document.getElementById('email-site-url').value.trim(),
+            };
+            try {
+                const resp = await fetch('/api/settings/email-report', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
+                if (result.email_report) renderEmailReport(result.email_report);
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            }
+        }
+
+        async function testEmailReport(btn) {
+            const statusEl = document.getElementById('email-report-action-status');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '发送中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在发送最近一份日报告...';
+            try {
+                const resp = await fetch('/api/email-report/test', {method: 'POST'});
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = result.status === 'ok' ? `✅ ${result.message}` : `❌ ${result.message}`;
+                await loadEmailReport();
             } catch (e) {
                 statusEl.className = 'action-status error';
                 statusEl.textContent = '❌ ' + e.message;

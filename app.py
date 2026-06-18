@@ -57,9 +57,11 @@ from settings import (
     build_chat_completion_kwargs, get_ai_config, get_thinking_protocol,
     normalize_provider_config, get_schedule_config, save_schedule_config,
     validate_prompt_template, get_personalization_config, save_personalization_config,
-    get_webdav_backup_config, save_webdav_backup_config
+    get_webdav_backup_config, save_webdav_backup_config,
+    get_email_report_config, save_email_report_config
 )
 from backup import get_database_file_sizes, run_webdav_backup
+from email_report import send_report_email
 from config import WEB_HOST, WEB_PORT
 
 # ==================== 日志配置 ====================
@@ -295,6 +297,45 @@ def _run_webdav_backup_task(force=False):
         raise
 
 
+def _run_email_report_task(report, force=False):
+    """发送每日报告邮件并写入独立任务日志。"""
+    log_id = start_task_log("email_report", "发送每日报告邮件")
+    try:
+        email_config = get_email_report_config(mask_password=False)
+        ai_summary = None
+        ai_summary_error = ""
+        if email_config.get("enabled") or force:
+            try:
+                ai_summary, ai_summary_error = generate_report_ai_summary(report.get("report_date", ""))
+            except Exception as summary_exc:
+                ai_summary_error = str(summary_exc)
+                ai_summary = None
+        result = send_report_email(
+            report,
+            config=email_config,
+            force=force,
+            ai_summary=ai_summary,
+            ai_summary_error=ai_summary_error,
+        )
+        if result.get("status") == "skipped":
+            finish_task_log(log_id, "success", result.get("message", "报告邮件发送已跳过"))
+            return result
+        detail = (
+            f"report_date={result.get('report_date', '')}, "
+            f"recipients={','.join(result.get('recipients', []))}, "
+            f"subject={result.get('subject', '')}, "
+            f"important={result.get('important_count', 0)}, overview={result.get('overview_count', 0)}"
+        )
+        if ai_summary_error:
+            detail += f", ai_summary_error={ai_summary_error}"
+        finish_task_log(log_id, "success", result.get("message", "报告邮件发送完成"), detail)
+        return result
+    except Exception as e:
+        logger.error(f"Email report error: {e}")
+        finish_task_log(log_id, "error", f"报告邮件发送失败：{e}")
+        raise
+
+
 def daily_pipeline():
     """
     每日定时任务主流程
@@ -329,7 +370,27 @@ def daily_pipeline():
             save_report(report_date, content, paper_count, analyzed_count_r, avg_rating)
             logger.info(f"Report generated for {report_date}: {paper_count} papers, avg rating {avg_rating}")
 
-        # 步骤5：按配置执行 WebDAV 云备份；失败只记录，不中断日报流程
+        # 步骤5：按配置发送报告邮件；失败只记录，不中断日报流程
+        email_message = "报告邮件未启用"
+        email_detail = ""
+        try:
+            email_config = get_email_report_config(mask_password=False)
+            if content and email_config.get("enabled"):
+                email_report = {
+                    "report_date": report_date,
+                    "content": content,
+                    "paper_count": paper_count,
+                    "analyzed_count": analyzed_count_r,
+                    "avg_rating": avg_rating,
+                }
+                email_result = _run_email_report_task(email_report, force=False)
+                email_message = email_result.get("message", "报告邮件发送完成")
+                email_detail = f", email_report={email_result.get('report_date', '')}"
+        except Exception as email_error:
+            email_message = f"报告邮件发送失败：{email_error}"
+            email_detail = f", email_error={email_error}"
+
+        # 步骤6：按配置执行 WebDAV 云备份；失败只记录，不中断日报流程
         backup_message = "云备份未启用"
         backup_detail = ""
         try:
@@ -344,8 +405,8 @@ def daily_pipeline():
 
         # 记录任务完成日志
         finish_task_log(log_id, "success",
-            f"完成：抓取 {len(new_papers)} 篇（近3日），分析 {analyzed_count} 篇，推荐评分 {recommended_count} 篇，报告已生成，{backup_message}",
-            f"new_papers={len(new_papers)}, analyzed={analyzed_count}, recommended={recommended_count}, concurrency={concurrency}{backup_detail}")
+            f"完成：抓取 {len(new_papers)} 篇（近3日），分析 {analyzed_count} 篇，推荐评分 {recommended_count} 篇，报告已生成，{email_message}，{backup_message}",
+            f"new_papers={len(new_papers)}, analyzed={analyzed_count}, recommended={recommended_count}, concurrency={concurrency}{email_detail}{backup_detail}")
     except Exception as e:
         logger.error(f"Daily pipeline error: {e}")
         finish_task_log(log_id, "error", f"失败：{e}")
@@ -1591,6 +1652,57 @@ def api_run_webdav_backup():
         return jsonify(result)
     except Exception as e:
         return jsonify({"status": "error", "message": f"WebDAV 备份失败: {e}"}), 500
+
+
+# ====================================================================
+#              设置 API — 每日报告邮件（Email Report）
+# ====================================================================
+
+@app.route("/api/settings/email-report", methods=["GET"])
+def api_get_email_report():
+    """获取每日报告邮件配置；不返回明文密码。"""
+    return jsonify(get_email_report_config(mask_password=True))
+
+
+@app.route("/api/settings/email-report", methods=["POST"])
+def api_save_email_report():
+    """保存每日报告邮件配置。密码留空时保留旧密码。"""
+    try:
+        data = request.get_json() or {}
+        config = {
+            "enabled": _request_bool(data, "enabled", False),
+            "smtp_host": data.get("smtp_host", ""),
+            "smtp_port": _request_int(data, "smtp_port", 587),
+            "security": data.get("security", "starttls"),
+            "username": data.get("username", ""),
+            "password": data.get("password", ""),
+            "sender": data.get("sender", ""),
+            "recipients": data.get("recipients", []),
+            "subject_template": data.get("subject_template", ""),
+            "site_url": data.get("site_url", ""),
+        }
+        if save_email_report_config(config):
+            return jsonify({
+                "status": "ok",
+                "message": "报告邮件配置已保存",
+                "email_report": get_email_report_config(mask_password=True),
+            })
+        return jsonify({"status": "error", "message": "保存失败"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/email-report/test", methods=["POST"])
+def api_test_email_report():
+    """手动发送最近一份报告邮件，用于验证 SMTP 配置。"""
+    try:
+        reports = get_reports(limit=1)
+        if not reports:
+            return jsonify({"status": "error", "message": "暂无可发送的日报告，请先生成报告"}), 400
+        result = _run_email_report_task(reports[0], force=True)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"报告邮件发送失败: {e}"}), 500
 
 
 # ====================================================================
