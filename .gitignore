@@ -11,3 +11,4 @@ build/
 data/settings.json
 data/*.db
 data/pdf_cache/
+temp/*
