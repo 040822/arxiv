@@ -143,6 +143,7 @@
 ```
 设置页保存 SMTP 配置 → settings.email_report
 每日任务生成并保存报告后 → email_report.send_report_email()
+  → 检查 last_sent_report_date；已发送的同日报直接记录 skipped
   → 按 report_date 从数据库读取论文轻量分析数据
   → 使用 report_summary 任务模型生成邮件导读（失败时降级）
   → 生成邮件专用摘要 HTML：推荐分 >80 重点精读 + 最多 20 篇快速速览
@@ -151,7 +152,7 @@
   → SMTP/STARTTLS 或 SSL 发送给收件人
 ```
 
-手动测试发送会使用最近一份已生成报告并同样生成邮件导读；AI 导读失败不会阻断邮件发送。每日任务中的邮件发送失败只写入 `email_report` 任务日志和设置页最近错误，不中断抓取、分析、日报生成和 WebDAV 备份。
+手动测试发送会使用最近一份已生成报告并同样生成邮件导读，可重复发送且不更新自动任务的去重日期；AI 导读失败不会阻断邮件发送。自动任务只有 SMTP 成功后才更新 `last_sent_report_date`，发送失败仍可重试，并且只写入 `email_report` 任务日志和设置页最近错误，不中断抓取、分析、日报生成和 WebDAV 备份。
 
 ### 6. 搜索流
 

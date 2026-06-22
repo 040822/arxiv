@@ -265,7 +265,7 @@ AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.b
 
 WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 `output/` 打包上传。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。
 
-报告邮件发送由 `email_report.py` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分 `>80` 的论文进入重点精读区，其余论文最多展示 20 篇速览，并可按 `site_url` 生成论文详情和完整报告链接。发送任务会先调用现有 `report_summary` 模型生成邮件导读，导读失败只写入任务 detail 并降级展示。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。每日任务中的邮件失败只记录 `email_report` 任务日志和最近错误，不中断日报流程。
+报告邮件发送由 `email_report.py` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分 `>80` 的论文进入重点精读区，其余论文最多展示 20 篇速览，并可按 `site_url` 生成论文详情和完整报告链接。每日任务会在生成 AI 导读前检查 `last_sent_report_date`，同一日报成功发送后直接跳过；发送失败不会更新该日期，因此仍可重试。手动测试发送允许重复执行，并且不参与自动任务去重。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。每日任务中的邮件失败只记录 `email_report` 任务日志和最近错误，不中断日报流程。
 
 ---
 

@@ -929,6 +929,33 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(finish_log.call_args.args[1], "success")
         self.assertIn("云备份失败", finish_log.call_args.args[2])
 
+    def test_daily_pipeline_duplicate_email_skip_does_not_fail_pipeline(self):
+        app_module = self.app_module
+        skipped = {
+            "status": "skipped",
+            "reason": "already_sent",
+            "message": "日报 2026-06-17 已发送，跳过重复发送",
+            "report_date": "2026-06-17",
+        }
+
+        with patch.object(app_module, "start_task_log", return_value=1), \
+             patch.object(app_module, "finish_task_log") as finish_log, \
+             patch.object(app_module, "fetch_latest_papers", return_value=[]), \
+             patch.object(app_module, "get_concurrency", return_value=2), \
+             patch.object(app_module, "analyze_pending_papers", return_value=0), \
+             patch.object(app_module, "get_all_dates", return_value=[("2026-06-17",)]), \
+             patch.object(app_module, "recommend_pending_papers", return_value=0), \
+             patch.object(app_module, "generate_report_content", return_value=("html", 1, 1, 4.0)), \
+             patch.object(app_module, "save_report"), \
+             patch.object(app_module, "get_email_report_config", return_value={"enabled": True}), \
+             patch.object(app_module, "_run_email_report_task", return_value=skipped) as email_task, \
+             patch.object(app_module, "get_webdav_backup_config", return_value={"enabled": False}):
+            app_module.daily_pipeline()
+
+        email_task.assert_called_once()
+        self.assertEqual(finish_log.call_args.args[1], "success")
+        self.assertIn("已发送，跳过重复发送", finish_log.call_args.args[2])
+
     def test_email_report_task_sends_when_ai_summary_fails(self):
         app_module = self.app_module
         report = {"report_date": "2026-06-17", "paper_count": 1, "analyzed_count": 1, "avg_rating": 4}
@@ -944,7 +971,10 @@ class ProviderEndpointTests(unittest.TestCase):
 
         with patch.object(app_module, "start_task_log", return_value=9), \
              patch.object(app_module, "finish_task_log") as finish_log, \
-             patch.object(app_module, "get_email_report_config", return_value={"enabled": True}), \
+             patch.object(app_module, "get_email_report_config", return_value={
+                 "enabled": True,
+                 "last_sent_report_date": "2026-06-16",
+             }), \
              patch.object(app_module, "generate_report_ai_summary", return_value=(None, "summary model down")) as summary, \
              patch.object(app_module, "send_report_email", return_value=send_result) as send:
             result = app_module._run_email_report_task(report, force=False)
@@ -956,6 +986,60 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(send.call_args.kwargs["ai_summary_error"], "summary model down")
         self.assertEqual(finish_log.call_args.args[1], "success")
         self.assertIn("ai_summary_error=summary model down", finish_log.call_args.args[3])
+
+    def test_email_report_task_skips_report_already_sent(self):
+        app_module = self.app_module
+        report = {"report_date": "2026-06-17", "paper_count": 1, "analyzed_count": 1, "avg_rating": 4}
+
+        with patch.object(app_module, "start_task_log", return_value=10), \
+             patch.object(app_module, "finish_task_log") as finish_log, \
+             patch.object(app_module, "get_email_report_config", return_value={
+                 "enabled": True,
+                 "last_sent_report_date": "2026-06-17",
+             }), \
+             patch.object(app_module, "generate_report_ai_summary") as summary, \
+             patch.object(app_module, "send_report_email") as send:
+            result = app_module._run_email_report_task(report, force=False)
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "already_sent")
+        self.assertEqual(result["report_date"], "2026-06-17")
+        summary.assert_not_called()
+        send.assert_not_called()
+        finish_log.assert_called_once_with(
+            10,
+            "success",
+            "日报 2026-06-17 已发送，跳过重复发送",
+            "report_date=2026-06-17, reason=already_sent",
+        )
+
+    def test_email_report_task_force_bypasses_already_sent_check(self):
+        app_module = self.app_module
+        report = {"report_date": "2026-06-17", "paper_count": 1, "analyzed_count": 1, "avg_rating": 4}
+        send_result = {
+            "status": "ok",
+            "message": "测试邮件已发送",
+            "report_date": "2026-06-17",
+            "recipients": ["reader@example.com"],
+            "subject": "Daily",
+            "important_count": 0,
+            "overview_count": 1,
+        }
+
+        with patch.object(app_module, "start_task_log", return_value=11), \
+             patch.object(app_module, "finish_task_log"), \
+             patch.object(app_module, "get_email_report_config", return_value={
+                 "enabled": True,
+                 "last_sent_report_date": "2026-06-17",
+             }), \
+             patch.object(app_module, "generate_report_ai_summary", return_value=("summary", "")) as summary, \
+             patch.object(app_module, "send_report_email", return_value=send_result) as send:
+            result = app_module._run_email_report_task(report, force=True)
+
+        self.assertEqual(result["status"], "ok")
+        summary.assert_called_once_with("2026-06-17")
+        send.assert_called_once()
+        self.assertTrue(send.call_args.kwargs["force"])
 
     def test_save_personalization_saves_interest_without_recommendation_call(self):
         app_module = self.app_module
@@ -2366,6 +2450,38 @@ class EmailReportTests(unittest.TestCase):
             settings.DB_DIR = original_dir
             settings.SETTINGS_PATH = original_path
 
+    def test_email_report_status_only_success_updates_sent_date(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                settings.load_settings()
+
+                settings.update_email_report_status("success", report_date="2026-06-16")
+                settings.update_email_report_status(
+                    "error",
+                    error="smtp down",
+                    report_date="2026-06-17",
+                )
+                failed = settings.get_email_report_config(mask_password=False)
+
+                settings.update_email_report_status("success")
+                manual = settings.get_email_report_config(mask_password=False)
+
+            self.assertEqual(failed["last_status"], "error")
+            self.assertEqual(failed["last_error"], "smtp down")
+            self.assertEqual(failed["last_sent_report_date"], "2026-06-16")
+            self.assertEqual(manual["last_status"], "success")
+            self.assertEqual(manual["last_error"], "")
+            self.assertEqual(manual["last_sent_report_date"], "2026-06-16")
+        finally:
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
+
     def test_report_email_html_uses_digest_layout_and_site_links(self):
         import email_report
 
@@ -2516,6 +2632,78 @@ class EmailReportTests(unittest.TestCase):
             self.assertEqual(any(call[0] == "starttls" for call in calls), should_starttls)
             self.assertIn(("login", "alice@example.com", "secret"), calls)
             self.assertTrue(any(call[0] == "send" and call[1] == expected_kind for call in calls))
+
+    def test_test_send_does_not_update_automatic_deduplication_date(self):
+        import email_report
+
+        report = {
+            "report_date": "2026-06-17",
+            "paper_count": 1,
+            "analyzed_count": 1,
+            "avg_rating": 4,
+        }
+        config = {
+            "enabled": False,
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 587,
+            "security": "none",
+            "username": "",
+            "password": "",
+            "sender": "daily@example.com",
+            "recipients": ["reader@example.com"],
+            "subject_template": "Daily {date}",
+            "site_url": "",
+        }
+
+        with patch.object(email_report, "build_report_email_data", return_value=self._sample_email_data(config)), \
+             patch.object(email_report, "_send_message"), \
+             patch.object(email_report, "update_email_report_status") as update_status:
+            result = email_report.send_report_email(
+                report,
+                config=config,
+                force=True,
+                record_status=True,
+            )
+
+        self.assertEqual(result["status"], "ok")
+        update_status.assert_called_once_with("success", report_date="")
+
+    def test_automatic_send_records_report_date_and_failure_does_not(self):
+        import email_report
+
+        report = {
+            "report_date": "2026-06-17",
+            "paper_count": 1,
+            "analyzed_count": 1,
+            "avg_rating": 4,
+        }
+        config = {
+            "enabled": True,
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 587,
+            "security": "none",
+            "username": "",
+            "password": "",
+            "sender": "daily@example.com",
+            "recipients": ["reader@example.com"],
+            "subject_template": "Daily {date}",
+            "site_url": "",
+        }
+
+        with patch.object(email_report, "build_report_email_data", return_value=self._sample_email_data(config)), \
+             patch.object(email_report, "_send_message"), \
+             patch.object(email_report, "update_email_report_status") as update_status:
+            email_report.send_report_email(report, config=config, force=False, record_status=True)
+
+        update_status.assert_called_once_with("success", report_date="2026-06-17")
+
+        with patch.object(email_report, "build_report_email_data", return_value=self._sample_email_data(config)), \
+             patch.object(email_report, "_send_message", side_effect=RuntimeError("smtp down")), \
+             patch.object(email_report, "update_email_report_status") as update_status:
+            with self.assertRaisesRegex(RuntimeError, "smtp down"):
+                email_report.send_report_email(report, config=config, force=False, record_status=True)
+
+        update_status.assert_called_once_with("error", error="smtp down")
 
     def test_smtp_proxy_url_prefers_https_and_falls_back_to_http(self):
         import email_report

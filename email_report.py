@@ -980,7 +980,10 @@ def send_report_email(report, config=None, force=False, record_status=True, ai_s
 
         _send_message(runtime_config, message)
         if record_status:
-            update_email_report_status("success", report_date=report_date)
+            update_email_report_status(
+                "success",
+                report_date="" if force else report_date,
+            )
         return {
             "status": "ok",
             "message": f"报告邮件已发送：{report_date}",
@@ -993,5 +996,5 @@ def send_report_email(report, config=None, force=False, record_status=True, ai_s
         }
     except Exception as exc:
         if record_status:
-            update_email_report_status("error", error=str(exc), report_date=report_date)
+            update_email_report_status("error", error=str(exc))
         raise

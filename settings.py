@@ -1460,15 +1460,15 @@ def save_email_report_config(email_config):
 
 
 def update_email_report_status(status, error="", report_date=""):
-    """更新最近一次报告邮件发送状态。"""
+    """更新最近一次报告邮件发送状态；仅成功发送可更新去重日期。"""
     settings = load_settings()
     config = _normalize_email_report_config(settings.get("email_report", {}))
     config["last_status"] = str(status or "").strip()
     config["last_error"] = str(error or "").strip()
-    if report_date:
-        config["last_sent_report_date"] = str(report_date).strip()
     if status == "success":
         from datetime import datetime
+        if report_date:
+            config["last_sent_report_date"] = str(report_date).strip()
         config["last_success_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         config["last_error"] = ""
     settings["email_report"] = config

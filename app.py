@@ -302,11 +302,29 @@ def _run_email_report_task(report, force=False):
     log_id = start_task_log("email_report", "发送每日报告邮件")
     try:
         email_config = get_email_report_config(mask_password=False)
+        report_date = str(report.get("report_date") or "").strip()
+        last_sent_report_date = str(email_config.get("last_sent_report_date") or "").strip()
+        if not force and report_date and report_date == last_sent_report_date:
+            message = f"日报 {report_date} 已发送，跳过重复发送"
+            result = {
+                "status": "skipped",
+                "reason": "already_sent",
+                "message": message,
+                "report_date": report_date,
+            }
+            finish_task_log(
+                log_id,
+                "success",
+                message,
+                f"report_date={report_date}, reason=already_sent",
+            )
+            return result
+
         ai_summary = None
         ai_summary_error = ""
         if email_config.get("enabled") or force:
             try:
-                ai_summary, ai_summary_error = generate_report_ai_summary(report.get("report_date", ""))
+                ai_summary, ai_summary_error = generate_report_ai_summary(report_date)
             except Exception as summary_exc:
                 ai_summary_error = str(summary_exc)
                 ai_summary = None
