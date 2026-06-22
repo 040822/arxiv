@@ -24,20 +24,28 @@
 
         <article class="paper-detail learning-page">
             <div class="learning-hero">
-                <div>
-                    <h1>{{ paper.title }}</h1>
-                    <div class="detail-meta">
-                        <span class="meta-item">🔗 <a href="{{ paper.url }}" target="_blank" class="meta-link">{{ paper.arxiv_id }}</a></span>
-                        {% if paper.pdf_url %}<span class="meta-item">📥 <a href="{{ paper.pdf_url }}" target="_blank" class="meta-link">PDF</a></span>{% endif %}
-                        {% if analysis and analysis.rating is not none %}<span class="meta-item rating">评级 {{ analysis.rating }}/5</span>{% endif %}
-                    </div>
+                <div class="learning-breadcrumb">
+                    <a href="/paper/{{ paper.arxiv_id }}" class="meta-link">论文详情</a>
+                    <span class="bc-sep">›</span>
+                    <span>学习</span>
                 </div>
-                <p class="section-desc">这里不是让 AI 替你读完就结束，而是用对话、答题和追问把论文变成你能复述的东西。</p>
+                <h1>{{ paper.title }}</h1>
+                <div class="detail-meta">
+                    <span class="meta-item">🔗 <a href="{{ paper.url }}" target="_blank" class="meta-link">{{ paper.arxiv_id }}</a></span>
+                    {% if paper.pdf_url %}<span class="meta-item">📥 <a href="{{ paper.pdf_url }}" target="_blank" class="meta-link">PDF</a></span>{% endif %}
+                    {% if analysis and analysis.rating is not none %}<span class="meta-item rating">{% for i in range(5) %}{% if i < analysis.rating %}★{% else %}☆{% endif %}{% endfor %}</span>{% endif %}
+                </div>
             </div>
 
-            <div class="learning-grid">
-                <section class="learning-panel">
-                    <h3>💬 自由讨论</h3>
+            <div class="learning-tabs settings-tabs">
+                <button class="tab-btn active" onclick="switchLearningTab('chat', this)">💬 自由讨论</button>
+                <button class="tab-btn" onclick="switchLearningTab('quiz', this)">🧠 主动问答练习</button>
+                <button class="tab-btn" onclick="switchLearningTab('socratic', this)">🔎 苏格拉底追问</button>
+            </div>
+
+            <!-- Tab: 自由讨论 -->
+            <div id="lchat" class="tab-panel active">
+                <div class="learning-content">
                     <p class="section-desc">适合追问方法细节、实验设计、和你自己的研究方向有什么关系。</p>
                     <div id="chat-messages" class="learning-chat"></div>
                     <div class="learning-input-row">
@@ -45,20 +53,23 @@
                         <button class="action-btn btn-primary" id="chat-send-btn" onclick="sendChat()">发送</button>
                     </div>
                     <div id="chat-status" class="action-status"></div>
-                </section>
+                </div>
+            </div>
 
-                <section class="learning-panel">
-                    <h3>🧠 主动问答练习</h3>
+            <!-- Tab: 主动问答练习 -->
+            <div id="lquiz" class="tab-panel">
+                <div class="learning-content">
                     <p class="section-desc">先自己答，再看模型评分、纠错和改进版答案。</p>
                     <div class="action-buttons">
-                        <button class="action-btn btn-primary" onclick="createQuiz('quick3')">生成 3 题快速练习</button>
-                        <button class="action-btn" onclick="createQuiz('standard6')">生成 6 题标准练习</button>
+                        <button class="action-btn btn-primary" onclick="createQuiz('quick3')">⚡ 生成 3 题快速练习</button>
+                        <button class="action-btn" onclick="createQuiz('standard6')">📖 生成 6 题标准练习</button>
                     </div>
                     {% if quiz_sessions %}
                     <div class="learning-session-list">
                         <span class="section-desc">最近练习：</span>
                         {% for session in quiz_sessions %}
-                        <button class="btn-sm" onclick="loadQuizSession({{ session.id }})">
+                        <button class="session-chip" onclick="loadQuizSession({{ session.id }})">
+                            {% if session.mode == 'quick3' %}⚡{% elif session.mode == 'standard6' %}📖{% else %}🔎{% endif %}
                             {{ session.mode }} · {{ session.question_count }}题
                         </button>
                         {% endfor %}
@@ -66,17 +77,19 @@
                     {% endif %}
                     <div id="quiz-status" class="action-status"></div>
                     <div id="quiz-session" class="learning-quiz"></div>
-                </section>
+                </div>
+            </div>
 
-                <section class="learning-panel">
-                    <h3>🔎 苏格拉底追问</h3>
+            <!-- Tab: 苏格拉底追问 -->
+            <div id="lsocratic" class="tab-panel">
+                <div class="learning-content">
                     <p class="section-desc">不预设题目，模型会根据你的回答继续追问，适合重要论文精读。</p>
                     <div class="action-buttons">
                         <button class="action-btn btn-primary" onclick="startSocratic()">开始追问</button>
                     </div>
                     <div id="socratic-status" class="action-status"></div>
                     <div id="socratic-session" class="learning-quiz"></div>
-                </section>
+                </div>
             </div>
         </article>
 
@@ -92,6 +105,31 @@
 
         function escapeHtml(value) {
             return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        function switchLearningTab(name, btn) {
+            document.querySelectorAll('.learning-tabs .tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.paper-detail.learning-page .tab-panel').forEach(p => p.classList.remove('active'));
+            const panel = document.getElementById('l' + name);
+            if (panel) panel.classList.add('active');
+            if (btn) btn.classList.add('active');
+        }
+
+        function renderMarkdownLite(text) {
+            let s = escapeHtml(text);
+            // 段落：连续两个换行
+            s = s.replace(/\n{2,}/g, '</p><p>');
+            // 行内代码 `code`
+            s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+            // 粗体 **text**
+            s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+            // 列表项（行首 - 或 *）
+            s = s.replace(/(^|\n)([-*])\s+/g, function(_, pre) { return (pre ? pre : '') + '<br>• '; });
+            // 单换行转 <br>
+            s = s.replace(/\n/g, '<br>');
+            // 清理列表引入的多余 <br>
+            s = s.replace(/<br>•/g, '•');
+            return '<p>' + s + '</p>';
         }
 
         function handleAuthRequired(resp, data) {
@@ -130,7 +168,7 @@
             box.innerHTML = messages.map(m => `
                 <div class="learning-message ${m.role === 'assistant' ? 'assistant' : 'user'}">
                     <div class="learning-message-role">${m.role === 'assistant' ? 'AI' : '你'}</div>
-                    <div class="learning-message-body">${escapeHtml(m.content).replace(/\n/g, '<br>')}</div>
+                    <div class="learning-message-body">${m.role === 'assistant' ? renderMarkdownLite(m.content) : escapeHtml(m.content).replace(/\n/g, '<br>')}</div>
                 </div>
             `).join('');
             box.scrollTop = box.scrollHeight;
@@ -177,13 +215,16 @@
         function feedbackHtml(feedback) {
             if (!feedback) return '';
             const list = key => (feedback[key] || []).map(v => `<li>${escapeHtml(v)}</li>`).join('');
+            const score = Number(feedback.score ?? 0);
+            const scoreClass = score >= 4 ? 'high' : (score >= 2 ? 'mid' : 'low');
+            const chip = label => `<span class="field-label">${escapeHtml(label)}</span>`;
             return `<div class="learning-feedback">
-                <div><strong>评分：</strong>${escapeHtml(feedback.score ?? 0)}/5</div>
-                ${feedback.feedback ? `<p>${escapeHtml(feedback.feedback)}</p>` : ''}
-                ${list('correct_points') ? `<strong>答对的点</strong><ul>${list('correct_points')}</ul>` : ''}
-                ${list('missing_points') ? `<strong>缺失的点</strong><ul>${list('missing_points')}</ul>` : ''}
-                ${list('misconceptions') ? `<strong>可能误解</strong><ul>${list('misconceptions')}</ul>` : ''}
-                ${feedback.improved_answer ? `<strong>改进版答案</strong><p>${escapeHtml(feedback.improved_answer)}</p>` : ''}
+                <div class="feedback-head"><span class="quiz-score-badge ${scoreClass}">${score}/5</span></div>
+                ${feedback.feedback ? `<p class="feedback-text">${escapeHtml(feedback.feedback)}</p>` : ''}
+                ${list('correct_points') ? `<div class="feedback-section">${chip('答对的点')}<ul>${list('correct_points')}</ul></div>` : ''}
+                ${list('missing_points') ? `<div class="feedback-section">${chip('缺失的点')}<ul>${list('missing_points')}</ul></div>` : ''}
+                ${list('misconceptions') ? `<div class="feedback-section">${chip('可能误解')}<ul>${list('misconceptions')}</ul></div>` : ''}
+                ${feedback.improved_answer ? `<div class="improved-answer">${chip('改进版答案')}<div class="improved-body">${renderMarkdownLite(feedback.improved_answer)}</div></div>` : ''}
             </div>`;
         }
 
@@ -194,15 +235,33 @@
                 return;
             }
             const questions = session.questions || [];
+            if (socratic) {
+                // 苏格拉底追问：对话气泡风格
+                box.innerHTML = '<div class="socratic-flow">' + questions.map((q, idx) => {
+                    const answered = !!q.feedback;
+                    const canAnswer = idx === questions.length - 1 && !answered;
+                    return `
+                        <div class="learning-message assistant">
+                            <div class="learning-message-role">AI 提问</div>
+                            <div class="learning-message-body">${renderMarkdownLite(q.question)}</div>
+                        </div>
+                        ${q.answer_text ? `<div class="learning-message user"><div class="learning-message-role">你</div><div class="learning-message-body">${escapeHtml(q.answer_text).replace(/\n/g, '<br>')}</div></div>` : ''}
+                        ${feedbackHtml(q.feedback)}
+                        ${canAnswer ? `<div class="socratic-input"><textarea id="answer-${q.id}" rows="4" placeholder="先用自己的话回答，AI 会继续追问"></textarea><button class="action-btn btn-primary" onclick="replySocratic(${session.id}, ${q.id})">提交回答</button></div>` : ''}
+                    `;
+                }).join('') + '</div>';
+                return;
+            }
+            // quiz：题目卡片风格 + 状态条
             box.innerHTML = questions.map((q, idx) => {
                 const answered = !!q.feedback;
-                const canAnswer = socratic ? idx === questions.length - 1 && !answered : !answered;
-                return `<div class="learning-question">
+                const canAnswer = !answered;
+                return `<div class="learning-question ${answered ? 'q-done' : 'q-pending'}">
                     <div class="learning-question-title">Q${idx + 1}: ${escapeHtml(q.question)}</div>
                     ${q.answer_text ? `<div class="learning-answer"><strong>你的回答：</strong><br>${escapeHtml(q.answer_text).replace(/\n/g, '<br>')}</div>` : ''}
                     ${feedbackHtml(q.feedback)}
                     ${canAnswer ? `<textarea id="answer-${q.id}" rows="4" placeholder="先用自己的话回答，再提交给模型反馈"></textarea>
-                    <button class="action-btn btn-primary" onclick="${socratic ? `replySocratic(${session.id}, ${q.id})` : `submitQuizAnswer(${q.id})`}">提交回答</button>` : ''}
+                    <button class="action-btn btn-primary" onclick="submitQuizAnswer(${q.id})">提交回答</button>` : ''}
                 </div>`;
             }).join('');
         }

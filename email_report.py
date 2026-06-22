@@ -29,212 +29,385 @@ IMPORTANT_SCORE_THRESHOLD = 80
 OVERVIEW_LIMIT = 20
 
 EMAIL_CSS = """
+* { box-sizing: border-box; }
 body {
     margin: 0;
     padding: 0;
     background: #f5f7fa;
-    color: #2c3e50;
+    color: #1e293b;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
-    line-height: 1.6;
+    line-height: 1.7;
     font-size: 14px;
 }
 .email-shell {
-    max-width: 860px;
+    max-width: 680px;
     margin: 0 auto;
-    padding: 20px 14px;
+    padding: 24px 16px;
 }
 .email-header {
-    padding: 34px 38px;
-    margin-bottom: 22px;
-    background: #16213e;
+    padding: 34px 36px;
+    margin-bottom: 26px;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
     color: #ffffff;
-    border-radius: 16px;
-}
-.email-header h1 {
-    margin: 0 0 8px;
-    font-size: 26px;
-    line-height: 1.25;
-    font-weight: 800;
-}
-.email-meta {
-    color: rgba(255,255,255,.75);
-    font-size: 14px;
+    border-radius: 18px;
 }
 .badge-row {
-    margin-bottom: 14px;
+    display: flex;
+    gap: 10px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
 }
 .badge {
     display: inline-block;
-    margin: 0 8px 8px 0;
-    padding: 4px 12px;
-    border-radius: 18px;
-    background: rgba(255,255,255,.16);
-    color: #ffffff;
+    padding: 5px 13px;
+    border-radius: 20px;
     font-size: 12px;
     font-weight: 600;
+    letter-spacing: .5px;
+}
+.badge-date {
+    background: rgba(255,255,255,.20);
+    color: #ffffff;
+}
+.badge-count {
+    background: rgba(76,175,80,.32);
+    color: #a5d6a7;
+}
+.email-header h1 {
+    margin: 0 0 10px;
+    font-size: 25px;
+    line-height: 1.3;
+    font-weight: 800;
+    letter-spacing: -.5px;
+}
+.email-meta {
+    margin: 0;
+    color: rgba(255,255,255,.70);
+    font-size: 14px;
 }
 .stats-row {
-    margin-top: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 22px;
 }
 .stat-card {
-    display: inline-block;
-    min-width: 108px;
-    margin: 0 10px 10px 0;
-    padding: 12px 16px;
+    flex: 1 1 120px;
+    min-width: 120px;
+    padding: 13px 16px;
     background: rgba(255,255,255,.10);
-    border: 1px solid rgba(255,255,255,.16);
+    border: 1px solid rgba(255,255,255,.15);
     border-radius: 10px;
+    text-align: center;
 }
 .stat-num {
     display: block;
     color: #4fc3f7;
-    font-size: 22px;
+    font-size: 23px;
     font-weight: 800;
+    line-height: 1.1;
 }
 .stat-label {
     display: block;
-    color: rgba(255,255,255,.70);
-    font-size: 12px;
+    color: rgba(255,255,255,.62);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    margin-top: 4px;
 }
 .section {
-    margin-bottom: 22px;
+    margin-bottom: 28px;
 }
 .section-title {
-    margin: 0 0 14px;
-    color: #1a365d;
-    font-size: 18px;
+    margin: 0 0 16px;
+    color: #1a1a2e;
+    font-size: 17px;
     font-weight: 800;
-}
-.summary-card,
-.overview-card {
-    background: #ffffff;
-    border: 1px solid #e6ecf2;
-    border-radius: 14px;
-    padding: 18px 20px;
+    padding-left: 14px;
+    border-left: 4px solid #0f3460;
 }
 .summary-card {
-    border-left: 4px solid #4fc3f7;
+    background: #ffffff;
+    border: 1px solid #e8ecf1;
+    border-radius: 12px;
+    padding: 18px 22px;
+    box-shadow: 0 1px 6px rgba(0,0,0,.05);
+}
+.summary-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+.summary-chips-label {
+    color: #0f3460;
+    font-size: 13px;
+    font-weight: 800;
+    margin-right: 2px;
+}
+.kp-chip {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 14px;
+    background: #0f3460;
+    color: #ffffff;
+    font-size: 12.5px;
+    font-weight: 700;
+}
+.summary-prose {
+    margin: 0;
+    padding-top: 13px;
+    border-top: 1px solid #edf2f7;
+    color: #64748b;
+    font-size: 13.5px;
+    line-height: 1.75;
 }
 .deep-card {
     background: #ffffff;
-    border: 1px solid #dce7f3;
+    border: 1px solid #e8ecf1;
     border-radius: 14px;
     margin-bottom: 16px;
     overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0,0,0,.06);
 }
 .deep-head {
-    padding: 14px 18px;
-    background: #eef6ff;
-    border-bottom: 1px solid #dce7f3;
-}
-.deep-rank {
-    display: inline-block;
-    margin-right: 8px;
-    padding: 2px 8px;
-    border-radius: 12px;
-    background: #2563eb;
+    background: linear-gradient(135deg, #0f3460, #1a1a2e);
     color: #ffffff;
-    font-size: 12px;
-    font-weight: 700;
+    padding: 18px 22px 16px;
 }
-.paper-title {
-    margin: 0 0 12px;
-    color: #17324d;
-    font-size: 18px;
+.deep-head-tag {
+    display: inline-block;
+    background: #e74c3c;
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    margin-bottom: 9px;
+}
+.deep-head-tag .deep-rank {
+    color: inherit;
     font-weight: 800;
 }
-.paper-title a {
-    color: #17324d;
+.deep-title {
+    margin: 0 0 7px;
+    font-size: 17px;
+    font-weight: 800;
+    line-height: 1.4;
+}
+.deep-title a {
+    color: #ffffff;
     text-decoration: none;
 }
+.deep-authors {
+    font-size: 12.5px;
+    color: rgba(255,255,255,.78);
+    margin: 0 0 11px;
+}
+.deep-meta-row {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: rgba(255,255,255,.72);
+    align-items: center;
+}
+.deep-meta-row .score-pill {
+    background: rgba(76,175,80,.30);
+    color: #a5d6a7;
+}
+.deep-stars {
+    color: #fbbf24;
+    font-size: 14px;
+    white-space: nowrap;
+}
+.deep-cat {
+    font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+    font-size: 11.5px;
+}
 .paper-body {
-    padding: 16px 18px 18px;
+    padding: 18px 22px 20px;
 }
-.meta {
-    color: #5d7083;
-    font-size: 13px;
-    margin-bottom: 10px;
+.tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 14px;
 }
-.tag,
-.score {
+.tag-pill {
     display: inline-block;
-    margin: 0 6px 6px 0;
-    padding: 3px 9px;
-    border-radius: 14px;
-    background: #edf2f7;
-    color: #334155;
+    padding: 3px 10px;
+    border-radius: 10px;
+    background: #e8f0f8;
+    color: #2c5282;
     font-size: 12px;
     font-weight: 600;
 }
-.score {
-    background: #fff3cd;
-    color: #8a5a00;
-}
 .text-block {
-    margin-top: 10px;
-    color: #3e5368;
+    margin: 0 0 14px;
+    color: #3e4c5e;
+    font-size: 13.5px;
+    line-height: 1.75;
 }
-.label {
-    color: #1a365d;
+.reason-block {
+    background: linear-gradient(135deg, #fff8e1, #fff3e0);
+    border-radius: 0 10px 10px 0;
+    padding: 13px 16px;
+    color: #5b4500;
+}
+.field-label {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 1px 8px;
+    border-radius: 8px;
+    background: #eef2f7;
+    color: #475569;
+    font-size: 11.5px;
     font-weight: 700;
+}
+.reason-block .field-label {
+    background: rgba(229,81,0,.15);
+    color: #e65100;
 }
 .links {
-    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
 }
-.links a,
-.full-link {
-    color: #2563eb;
-    text-decoration: none;
+.link-pill {
+    display: inline-block;
+    padding: 6px 13px;
+    border-radius: 8px;
+    background: #f0f4f8;
+    color: #0f3460;
+    font-size: 12.5px;
     font-weight: 700;
+    text-decoration: none;
+}
+.link-pill.primary {
+    background: #0f3460;
+    color: #ffffff;
+}
+.overview-card {
+    background: #ffffff;
+    border: 1px solid #e8ecf1;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 6px rgba(0,0,0,.05);
 }
 .overview-item {
-    padding: 12px 0;
+    display: flex;
     border-bottom: 1px solid #edf2f7;
 }
 .overview-item:last-child {
     border-bottom: 0;
 }
-.overview-title {
-    margin-bottom: 4px;
-    color: #17324d;
+.overview-rank {
+    min-width: 42px;
+    background: #f0f4ff;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 15px;
+    font-size: 16px;
     font-weight: 800;
+    color: #0f3460;
+}
+.overview-content {
+    flex: 1;
+    min-width: 0;
+    padding: 14px 18px;
+}
+.overview-title {
+    color: #1a1a2e;
+    font-weight: 700;
+    font-size: 14.5px;
+    line-height: 1.45;
+    margin-bottom: 5px;
 }
 .overview-title a {
-    color: #17324d;
+    color: #1a1a2e;
     text-decoration: none;
 }
 .overview-meta {
-    color: #64748b;
-    font-size: 12px;
+    color: #888;
+    font-size: 11.5px;
+    margin-bottom: 8px;
+}
+.overview-meta .ov-stars {
+    color: #f59e0b;
+    font-weight: 700;
+}
+.overview-meta .ov-score {
+    color: #0f3460;
+    font-weight: 700;
+}
+.overview-meta .ov-arxiv {
+    font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+    color: #94a3b8;
+}
+.overview-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 7px;
 }
 .overview-note {
-    color: #4b6075;
-    font-size: 13px;
-    margin-top: 4px;
+    color: #555;
+    font-size: 12.5px;
+    line-height: 1.7;
+    margin: 0;
+}
+.overview-links {
+    margin-top: 8px;
+}
+.overview-links .link-pill {
+    padding: 4px 10px;
+    font-size: 11.5px;
 }
 .empty-state {
     background: #ffffff;
     border: 1px dashed #cbd5e1;
     border-radius: 12px;
     color: #64748b;
-    padding: 16px 18px;
+    padding: 24px 20px;
+    text-align: center;
 }
 .full-report {
     text-align: center;
-    margin: 24px 0;
+    margin: 30px 0 10px;
 }
 .full-link {
     display: inline-block;
-    padding: 11px 18px;
-    border-radius: 22px;
-    background: #2563eb;
+    padding: 13px 28px;
+    border-radius: 24px;
+    background: linear-gradient(135deg, #0f3460, #1a1a2e);
     color: #ffffff;
+    font-size: 15px;
+    font-weight: 700;
+    text-decoration: none;
 }
 .email-footer {
-    margin-top: 22px;
+    margin-top: 28px;
+    padding-top: 18px;
+    border-top: 1px solid #e8ecf1;
     text-align: center;
-    color: #94a3b8;
-    font-size: 12px;
+    color: #999;
+    font-size: 11.5px;
+    line-height: 1.7;
+}
+@media (max-width: 600px) {
+    .email-shell { padding: 16px 10px; }
+    .email-header { padding: 26px 22px; }
+    .email-header h1 { font-size: 21px; }
+    .stat-card { flex: 1 1 calc(50% - 6px); min-width: calc(50% - 6px); }
+    .deep-head { padding: 16px 18px 14px; }
+    .paper-body { padding: 16px 18px; }
+    .overview-rank { min-width: 34px; padding-top: 14px; font-size: 14px; }
+    .overview-content { padding: 13px 14px; }
+    .summary-chips { gap: 6px; }
 }
 """
 
@@ -522,19 +695,38 @@ def build_report_email_data(report, config=None, ai_summary=None, ai_summary_err
 
 
 def _render_tag_spans(tags):
-    return "".join(f'<span class="tag">{_esc(tag)}</span>' for tag in (tags or [])[:5])
+    return "".join(f'<span class="tag-pill">{_esc(tag)}</span>' for tag in (tags or [])[:5])
 
 
 def _render_paper_links(paper, config):
     links = []
     detail_url = _paper_detail_url(paper, config)
     if detail_url:
-        links.append(f'<a href="{_esc(detail_url)}">查看详情</a>')
+        links.append(f'<a class="link-pill primary" style="text-decoration:none;color:#ffffff" href="{_esc(detail_url)}">查看详情</a>')
     if paper.get("url"):
-        links.append(f'<a href="{_esc(paper["url"])}">arXiv</a>')
+        links.append(f'<a class="link-pill" style="text-decoration:none;color:#0f3460" href="{_esc(paper["url"])}">arXiv</a>')
     if paper.get("pdf_url"):
-        links.append(f'<a href="{_esc(paper["pdf_url"])}">PDF</a>')
-    return " · ".join(links)
+        links.append(f'<a class="link-pill" style="text-decoration:none;color:#0f3460" href="{_esc(paper["pdf_url"])}">PDF</a>')
+    return "".join(links)
+
+
+def _render_keyword_chips(papers, limit=5):
+    """统计论文 tags 频次，渲染热门方向胶囊条；无 tags 回退 categories。"""
+    from collections import Counter
+    counter = Counter()
+    for paper in papers or []:
+        for tag in _json_list(paper.get("tags")):
+            counter[str(tag).strip()] += 1
+    items = [name for name, _ in counter.most_common(limit)]
+    if not items:
+        counter = Counter()
+        for paper in papers or []:
+            for cat in _json_list(paper.get("categories")):
+                counter[str(cat).strip()] += 1
+        items = [name for name, _ in counter.most_common(limit)]
+    if not items:
+        return ""
+    return "".join(f'<span class="kp-chip">{_esc(name)}</span>' for name in items)
 
 
 def build_report_email_html(report, config=None, ai_summary=None, ai_summary_error="", email_data=None):
@@ -545,31 +737,41 @@ def build_report_email_html(report, config=None, ai_summary=None, ai_summary_err
     important = data["important"]
     overview = data["overview"]
     full_report_url = data["full_report_url"]
+    keyword_chips = _render_keyword_chips(data["papers"])
+    chips_html = f'<div class="summary-chips"><span class="summary-chips-label">热门方向</span>{keyword_chips}</div>' if keyword_chips else ""
 
     important_html = ""
     if important:
         cards = []
         for index, paper in enumerate(important, 1):
             score = paper.get("current_recommendation_score")
-            tags = _render_tag_spans(paper.get("tags") or paper.get("categories") or [])
+            head_tags = _render_tag_spans((paper.get("tags") or paper.get("categories") or [])[:4])
             authors = _format_authors(paper.get("authors"))
             summary = paper.get("summary_cn") or paper.get("abstract") or ""
             reason = paper.get("recommendation_reason") or paper.get("value_comment") or ""
             links = _render_paper_links(paper, config)
+            title_url = _paper_detail_url(paper, config) or paper.get("url") or "#"
+            cat_html = f'<span class="deep-cat">{_esc(paper["primary_category"])}</span>' if paper.get("primary_category") else ''
+            arxiv_html = f'<span class="deep-cat">{_esc(paper["arxiv_id"])}</span>' if paper.get("arxiv_id") else ''
+            score_html = f'<span class="score-pill">推荐 {score}/100</span>' if score is not None else ''
+            summary_html = f'<div class="text-block"><span class="field-label">摘要</span>{_esc(_truncate(summary, 280))}</div>' if summary else ''
+            reason_html = f'<div class="text-block reason-block"><span class="field-label">推荐语</span>{_esc(_truncate(reason, 200))}</div>' if reason else ''
+            links_html = f'<div class="links">{links}</div>' if links else ''
+            head_meta_items = [x for x in [score_html, f'<span class="deep-stars">{_format_stars(paper.get("rating"))}</span>', cat_html, arxiv_html] if x]
+            head_meta_html = "".join(head_meta_items)
             cards.append(f"""
                 <div class="deep-card">
                     <div class="deep-head">
-                        <span class="deep-rank">#{index}</span>
-                        <span class="score">推荐 {score}/100</span>
-                        <span class="score">{_format_stars(paper.get("rating"))}</span>
+                        <div class="deep-head-tag"><span class="deep-rank">#{index}</span> 重点精读</div>
+                        <div class="deep-title"><a style="text-decoration:none;color:#ffffff" href="{_esc(title_url)}">{_esc(paper.get("title"))}</a></div>
+                        {f'<div class="deep-authors">{_esc(authors)}</div>' if authors else ''}
+                        <div class="deep-meta-row">{head_meta_html}</div>
                     </div>
                     <div class="paper-body">
-                        <div class="paper-title"><a href="{_esc(_paper_detail_url(paper, config) or paper.get('url') or '#')}">{_esc(paper.get("title"))}</a></div>
-                        <div class="meta">{_esc(authors)} · {_esc(paper.get("arxiv_id"))}</div>
-                        <div>{tags}</div>
-                        {f'<div class="text-block"><span class="label">摘要：</span>{_esc(_truncate(summary, 260))}</div>' if summary else ''}
-                        {f'<div class="text-block"><span class="label">推荐语：</span>{_esc(_truncate(reason, 180))}</div>' if reason else ''}
-                        {f'<div class="links">{links}</div>' if links else ''}
+                        {f'<div class="tag-row">{head_tags}</div>' if head_tags else ''}
+                        {summary_html}
+                        {reason_html}
+                        {links_html}
                     </div>
                 </div>
             """)
@@ -580,16 +782,25 @@ def build_report_email_html(report, config=None, ai_summary=None, ai_summary_err
     overview_html = ""
     if overview:
         items = []
-        for paper in overview:
+        for index, paper in enumerate(overview, 1):
             score = paper.get("current_recommendation_score")
-            score_text = f"推荐 {score}/100 · " if score is not None else ""
-            tags = " · ".join((paper.get("tags") or paper.get("categories") or [])[:3])
+            tags = _render_tag_spans((paper.get("tags") or paper.get("categories") or [])[:4])
             note = paper.get("summary_cn") or paper.get("value_comment") or paper.get("abstract") or ""
+            title_url = _paper_detail_url(paper, config) or paper.get("url") or "#"
+            score_html = f'<span class="ov-score">推荐 {score}/100 · </span>' if score is not None else ''
+            arxiv_html = f'<span class="ov-arxiv"> · {_esc(paper.get("arxiv_id"))}</span>' if paper.get("arxiv_id") else ''
+            note_html = f'<p class="overview-note">{_esc(_truncate(note, 130))}</p>' if note else ''
+            links_html = f'<div class="overview-links">{_render_paper_links(paper, config)}</div>'
             items.append(f"""
                 <div class="overview-item">
-                    <div class="overview-title"><a href="{_esc(_paper_detail_url(paper, config) or paper.get('url') or '#')}">{_esc(paper.get("title"))}</a></div>
-                    <div class="overview-meta">{_esc(score_text)}{_esc(_format_stars(paper.get("rating")))} · {_esc(tags)} · {_esc(paper.get("arxiv_id"))}</div>
-                    {f'<div class="overview-note">{_esc(_truncate(note, 120))}</div>' if note else ''}
+                    <div class="overview-rank">{index}</div>
+                    <div class="overview-content">
+                        <div class="overview-title"><a style="text-decoration:none;color:#1a1a2e" href="{_esc(title_url)}">{_esc(paper.get("title"))}</a></div>
+                        <div class="overview-meta">{score_html}<span class="ov-stars">{_format_stars(paper.get("rating"))}</span>{arxiv_html}</div>
+                        {f'<div class="overview-tags">{tags}</div>' if tags else ''}
+                        {note_html}
+                        {links_html}
+                    </div>
                 </div>
             """)
         overview_html = "".join(items)
@@ -598,7 +809,7 @@ def build_report_email_html(report, config=None, ai_summary=None, ai_summary_err
 
     full_link_html = ""
     if full_report_url:
-        full_link_html = f'<div class="full-report"><a class="full-link" href="{_esc(full_report_url)}">查看完整 Web 报告</a></div>'
+        full_link_html = f'<div class="full-report"><a class="full-link" style="text-decoration:none;color:#ffffff" href="{_esc(full_report_url)}">查看完整 Web 报告</a></div>'
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -611,22 +822,22 @@ def build_report_email_html(report, config=None, ai_summary=None, ai_summary_err
     <div class="email-shell">
         <div class="email-header">
             <div class="badge-row">
-                <span class="badge">{_esc(report_date)}</span>
-                <span class="badge">AI 论文日报</span>
+                <span class="badge badge-date">📅 {_esc(report_date)}</span>
+                <span class="badge badge-count">📊 共扫描 {data["total"]} 篇论文</span>
             </div>
             <h1>AI 论文数据库每日速读</h1>
-            <div class="email-meta">重点精读优先，其他论文压缩为快速速览。</div>
+            <p class="email-meta">🤖 重点精读优先 · 其他论文压缩为快速速览</p>
             <div class="stats-row">
-                <span class="stat-card"><span class="stat-num">{data["total"]}</span><span class="stat-label">论文总数</span></span>
-                <span class="stat-card"><span class="stat-num">{len(important)}</span><span class="stat-label">重点精读</span></span>
-                <span class="stat-card"><span class="stat-num">{len(overview)}</span><span class="stat-label">速览展示</span></span>
-                <span class="stat-card"><span class="stat-num">{_esc(data["avg_rating"])}</span><span class="stat-label">平均评级</span></span>
+                <div class="stat-card"><span class="stat-num">{data["total"]}</span><span class="stat-label">论文总数</span></div>
+                <div class="stat-card"><span class="stat-num">{len(important)}</span><span class="stat-label">重点精读</span></div>
+                <div class="stat-card"><span class="stat-num">{len(overview)}</span><span class="stat-label">速览展示</span></div>
+                <div class="stat-card"><span class="stat-num">{_esc(data["avg_rating"])}</span><span class="stat-label">平均评级</span></div>
             </div>
         </div>
 
         <div class="section">
             <h2 class="section-title">🔬 本日研究速览</h2>
-            <div class="summary-card">{_esc(data["ai_summary"]).replace(chr(10), "<br>")}</div>
+            <div class="summary-card">{chips_html}<p class="summary-prose">{_esc(data["ai_summary"]).replace(chr(10), "<br>")}</p></div>
         </div>
 
         <div class="section">

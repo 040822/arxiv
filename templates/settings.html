@@ -35,290 +35,366 @@
 
         <!-- ============ Tab 1: AI 设置 ============ -->
         <div id="tab-ai" class="tab-panel active">
-            <div class="settings-section">
-                <h3>📋 已配置的供应商</h3>
-                <p class="section-desc">点击「激活」切换当前使用的供应商，AI 分析将使用激活的供应商</p>
-                <div id="provider-list" class="provider-list"></div>
-            </div>
+            <div class="settings-layout">
+                <aside class="settings-sidebar" id="ai-settings-sidebar">
+                    <div class="settings-sidebar-title">快速跳转</div>
+                    <button class="settings-nav-btn active" data-target="grp-providers" onclick="scrollToGroup('grp-providers')">🤖 模型供应商</button>
+                    <button class="settings-nav-btn" data-target="grp-routing" onclick="scrollToGroup('grp-routing')">🧭 路由与参数</button>
+                    <button class="settings-nav-btn" data-target="grp-content" onclick="scrollToGroup('grp-content')">🎯 个性化与内容</button>
+                    <button class="settings-nav-btn" data-target="grp-network" onclick="scrollToGroup('grp-network')">🌐 抓取与网络</button>
+                    <button class="settings-nav-btn" data-target="grp-email" onclick="scrollToGroup('grp-email')">✉️ 报告邮件</button>
+                </aside>
 
-            <div class="settings-section">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-                    <h3 style="margin:0;">🧭 功能模型路由</h3>
-                    <button class="action-btn" id="ai-task-toggle-btn" onclick="toggleAiTaskRoutes()">展开</button>
-                </div>
-                <div id="ai-task-route-body" style="display:none;margin-top:12px;">
-                    <p class="section-desc">为不同 AI 功能单独选择供应商、模型和参数。基础分析负责标签、中文摘要、简评和 AI 初评，建议廉价模型；深度阅读只补充 Q&A，可使用高智能/高思考模型；报告导读默认只在任务页勾选时调用。</p>
-                    <div id="ai-task-routes"></div>
-                    <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveAiTasks()">💾 保存功能模型路由</button></div>
-                    <div id="ai-task-status" class="action-status"></div>
-                </div>
-            </div>
-
-            <div class="settings-section">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-                    <h3 style="margin:0;">➕ 添加新供应商</h3>
-                    <button class="action-btn" id="add-provider-toggle-btn" onclick="toggleAddProviderSection()">展开</button>
-                </div>
-                <div id="add-provider-body" style="display:none;margin-top:12px;">
-                    <p class="section-desc">从预设供应商快速添加，或添加自定义 OpenAI 兼容接口</p>
-                    <div class="provider-grid" id="preset-grid"></div>
-                    <div id="add-form" class="add-form" style="display:none;">
-                        <h4 id="add-form-title">配置供应商</h4>
-                        <div class="form-group"><label>供应商ID</label><input type="text" id="add-key" placeholder="例如: deepseek"></div>
-                        <div class="form-group"><label>显示名称</label><input type="text" id="add-name" placeholder="例如: DeepSeek"></div>
-                        <div class="form-group"><label>API Key</label><div class="input-group"><input type="password" id="add-api-key" placeholder="输入 API Key" onchange="scheduleModelFetch()"><button class="btn-small" onclick="togglePwd('add-api-key')">👁</button></div></div>
-                        <div class="form-group"><label>Base URL</label><input type="text" id="add-base-url" placeholder="https://api.deepseek.com" onchange="scheduleModelFetch()"></div>
-                        <div class="form-group">
-                            <label>模型</label>
-                            <div class="input-group">
-                                <select id="add-model-select" onchange="selectModelFromList()"><option value="">-- 从模型列表选择 --</option></select>
-                                <button class="btn-small" onclick="fetchModelsForForm()">刷新模型</button>
-                                <input type="text" id="add-model" placeholder="或手动输入模型名称">
-                            </div>
-                            <div id="model-list-status" class="field-hint"></div>
+                <div class="settings-main">
+                    <!-- 分区 1：模型供应商 -->
+                    <div class="settings-group" id="grp-providers">
+                        <div class="settings-group-title" onclick="toggleGroup('grp-providers')">
+                            <span>🤖 模型供应商</span>
+                            <span class="collapse-arrow">▾</span>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label><input type="checkbox" id="add-max-tokens-enabled" onchange="toggleMaxTokensField()" style="margin-right:6px;">限制输出长度</label>
-                                <input type="number" id="add-max-tokens" min="100" max="200000" step="100" value="8192" disabled>
+                        <div class="settings-group-body">
+                            <div class="settings-section">
+                                <h3>📋 已配置的供应商</h3>
+                                <p class="section-desc">点击「激活」切换当前使用的供应商，AI 分析将使用激活的供应商</p>
+                                <div id="provider-list" class="provider-list"></div>
                             </div>
-                            <div class="form-group">
-                                <label><input type="checkbox" id="add-is-thinking" onchange="toggleThinkingFields()" style="margin-right:6px;">🧠 思考模型</label>
-                                <div id="thinking-fields" style="display:none;">
-                                    <select id="add-thinking-effort">
-                                        <option value="auto">自动</option>
-                                        <option value="low">低</option>
-                                        <option value="medium" selected>中</option>
-                                        <option value="high">高</option>
-                                        <option value="max">最高</option>
-                                    </select>
-                                    <p class="section-desc">思考模式下将不发送 temperature/top_p/presence/frequency 等采样参数</p>
+
+                            <div class="settings-section">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                                    <h3 style="margin:0;">➕ 添加新供应商</h3>
+                                    <button class="action-btn" id="add-provider-toggle-btn" onclick="toggleAddProviderSection()">展开</button>
+                                </div>
+                                <div id="add-provider-body" style="display:none;margin-top:12px;">
+                                    <p class="section-desc">从预设供应商快速添加，或添加自定义 OpenAI 兼容接口</p>
+                                    <div class="provider-grid" id="preset-grid"></div>
+                                    <div id="add-form" class="add-form" style="display:none;">
+                                        <h4 id="add-form-title">配置供应商</h4>
+                                        <div class="form-group"><label>供应商ID</label><input type="text" id="add-key" placeholder="例如: deepseek"></div>
+                                        <div class="form-group"><label>显示名称</label><input type="text" id="add-name" placeholder="例如: DeepSeek"></div>
+                                        <div class="form-group"><label>API Key</label><div class="input-group"><input type="password" id="add-api-key" placeholder="输入 API Key" onchange="scheduleModelFetch()"><button class="btn-small" onclick="togglePwd('add-api-key')">👁</button></div></div>
+                                        <div class="form-group"><label>Base URL</label><input type="text" id="add-base-url" placeholder="https://api.deepseek.com" onchange="scheduleModelFetch()"></div>
+                                        <div class="form-group">
+                                            <label>模型</label>
+                                            <div class="input-group">
+                                                <select id="add-model-select" onchange="selectModelFromList()"><option value="">-- 从模型列表选择 --</option></select>
+                                                <button class="btn-small" onclick="fetchModelsForForm()">刷新模型</button>
+                                                <input type="text" id="add-model" placeholder="或手动输入模型名称">
+                                            </div>
+                                            <div id="model-list-status" class="field-hint"></div>
+                                        </div>
+                                        <div class="form-row">
+                                            <div class="form-group">
+                                                <label><input type="checkbox" id="add-max-tokens-enabled" onchange="toggleMaxTokensField()" style="margin-right:6px;">限制输出长度</label>
+                                                <input type="number" id="add-max-tokens" min="100" max="200000" step="100" value="8192" disabled>
+                                            </div>
+                                            <div class="form-group">
+                                                <label><input type="checkbox" id="add-is-thinking" onchange="toggleThinkingFields()" style="margin-right:6px;">🧠 思考模型</label>
+                                                <div id="thinking-fields" style="display:none;">
+                                                    <select id="add-thinking-effort">
+                                                        <option value="auto">自动</option>
+                                                        <option value="low">低</option>
+                                                        <option value="medium" selected>中</option>
+                                                        <option value="high">高</option>
+                                                        <option value="max">最高</option>
+                                                    </select>
+                                                    <p class="section-desc">思考模式下将不发送 temperature/top_p/presence/frequency 等采样参数</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="advanced-box" id="sampling-section">
+                                            <h5>高级采样参数</h5>
+                                            <div class="form-row">
+                                                <div class="form-group"><label><input type="checkbox" id="add-temperature-enabled" onchange="toggleSamplingField('temperature')" checked> Temperature</label><input type="number" id="add-temperature" min="0" max="2" step="0.1" value="0.3"></div>
+                                                <div class="form-group"><label><input type="checkbox" id="add-top-p-enabled" onchange="toggleSamplingField('top-p')"> Top P</label><input type="number" id="add-top-p" min="0" max="1" step="0.05" value="1" disabled></div>
+                                            </div>
+                                            <div class="form-row">
+                                                <div class="form-group"><label><input type="checkbox" id="add-presence-penalty-enabled" onchange="toggleSamplingField('presence-penalty')"> Presence Penalty</label><input type="number" id="add-presence-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
+                                                <div class="form-group"><label><input type="checkbox" id="add-frequency-penalty-enabled" onchange="toggleSamplingField('frequency-penalty')"> Frequency Penalty</label><input type="number" id="add-frequency-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
+                                            </div>
+                                        </div>
+                                        <div class="settings-actions"><button class="action-btn btn-primary" onclick="submitAdd()">💾 保存供应商</button><button class="action-btn" onclick="cancelAdd()">取消</button></div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        <div class="advanced-box" id="sampling-section">
-                            <h5>高级采样参数</h5>
-                            <div class="form-row">
-                                <div class="form-group"><label><input type="checkbox" id="add-temperature-enabled" onchange="toggleSamplingField('temperature')" checked> Temperature</label><input type="number" id="add-temperature" min="0" max="2" step="0.1" value="0.3"></div>
-                                <div class="form-group"><label><input type="checkbox" id="add-top-p-enabled" onchange="toggleSamplingField('top-p')"> Top P</label><input type="number" id="add-top-p" min="0" max="1" step="0.05" value="1" disabled></div>
+                    </div>
+
+                    <!-- 分区 2：模型路由与参数 -->
+                    <div class="settings-group" id="grp-routing">
+                        <div class="settings-group-title" onclick="toggleGroup('grp-routing')">
+                            <span>🧭 模型路由与参数</span>
+                            <span class="collapse-arrow">▾</span>
+                        </div>
+                        <div class="settings-group-body">
+                            <div class="settings-section">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                                    <h3 style="margin:0;">🧭 功能模型路由</h3>
+                                    <button class="action-btn" id="ai-task-toggle-btn" onclick="toggleAiTaskRoutes()">展开</button>
+                                </div>
+                                <div id="ai-task-route-body" style="display:none;margin-top:12px;">
+                                    <p class="section-desc">为不同 AI 功能单独选择供应商、模型和参数。基础分析负责标签、中文摘要、简评和 AI 初评，建议廉价模型；深度阅读只补充 Q&A，可使用高智能/高思考模型；报告导读默认只在任务页勾选时调用。</p>
+                                    <div id="ai-task-routes"></div>
+                                    <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveAiTasks()">💾 保存功能模型路由</button></div>
+                                    <div id="ai-task-status" class="action-status"></div>
+                                </div>
                             </div>
-                            <div class="form-row">
-                                <div class="form-group"><label><input type="checkbox" id="add-presence-penalty-enabled" onchange="toggleSamplingField('presence-penalty')"> Presence Penalty</label><input type="number" id="add-presence-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
-                                <div class="form-group"><label><input type="checkbox" id="add-frequency-penalty-enabled" onchange="toggleSamplingField('frequency-penalty')"> Frequency Penalty</label><input type="number" id="add-frequency-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
+
+                            <div class="settings-section">
+                                <h3>⚡ 并发设置</h3>
+                                <p class="section-desc">AI 分析时的并发线程数，建议 3~10</p>
+                                <div class="form-group" style="max-width:200px;"><label>并发数</label><input type="number" id="concurrency" min="1" max="20" step="1" value="5"></div>
+                                <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveConcurrency()">💾 保存</button></div>
+                                <div id="concurrency-status" class="action-status"></div>
+                            </div>
+
+                            <div class="settings-section">
+                                <h3>🔗 测试当前连接</h3>
+                                <div class="settings-actions">
+                                    <button class="action-btn btn-primary" onclick="testConnection()">🔗 测试连接</button>
+                                    <button class="action-btn" onclick="detectThinking()">🧠 检测是否为思考模型</button>
+                                </div>
+                                <div id="test-status" class="action-status"></div>
                             </div>
                         </div>
-                        <div class="settings-actions"><button class="action-btn btn-primary" onclick="submitAdd()">💾 保存供应商</button><button class="action-btn" onclick="cancelAdd()">取消</button></div>
+                    </div>
+
+                    <!-- 分区 3：个性化与内容 -->
+                    <div class="settings-group" id="grp-content">
+                        <div class="settings-group-title" onclick="toggleGroup('grp-content')">
+                            <span>🎯 个性化与内容</span>
+                            <span class="collapse-arrow">▾</span>
+                        </div>
+                        <div class="settings-group-body">
+                            <div class="settings-section">
+                                <h3>🎯 个性化推荐</h3>
+                                <p class="section-desc">填写你的研究兴趣，推荐评分会使用独立的「个性化推荐」模型路由计算，不会影响原有论文评级。保存兴趣不会自动重算历史论文。</p>
+                                <div class="form-group">
+                                    <label>研究兴趣</label>
+                                    <textarea id="research-interests" rows="6" maxlength="4000" placeholder="例如：我关注机器人基础模型、VLA、长时序任务规划、具身智能评测，以及能迁移到真实机械臂的模仿学习方法。"></textarea>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group" style="max-width:220px;">
+                                        <label>手动重算数量</label>
+                                        <input type="number" id="recommend-limit" min="1" max="1000" step="10" value="200">
+                                    </div>
+                                </div>
+                                <div class="settings-actions">
+                                    <button class="action-btn btn-primary" onclick="savePersonalization()">💾 保存研究兴趣</button>
+                                    <button class="action-btn" onclick="recalculateRecommendations(this)">🎯 手动重算推荐评分</button>
+                                </div>
+                                <div id="personalization-status" class="action-status"></div>
+                            </div>
+
+                            <div class="settings-section">
+                                <h3>📝 Prompt 设置</h3>
+                                <p class="section-desc">按功能维护稳定 Prompt 前缀。论文标题、摘要、PDF 全文等动态内容会作为独立 JSON 消息放在最后，以提高缓存命中率；基础分析可使用 <code>{tag_candidates}</code>，深度阅读只需描述 Q&A 输出。</p>
+                                <div class="form-group" style="max-width:280px;">
+                                    <label>Prompt Profile</label>
+                                    <select id="prompt-profile-select" onchange="switchPromptProfile()">
+                                        <option value="basic_analysis">基础分析</option>
+                                        <option value="deep_reading" selected>深度阅读</option>
+                                        <option value="report_summary">报告导读</option>
+                                        <option value="recommendation">个性化推荐</option>
+                                        <option value="paper_chat">论文对话</option>
+                                        <option value="paper_quiz">论文问答练习</option>
+                                    </select>
+                                </div>
+                                <div class="form-group"><label>System Prompt</label><textarea id="system-prompt" rows="4"></textarea></div>
+                                <div class="form-group"><label>Instruction Prompt</label><textarea id="user-prompt" rows="16"></textarea></div>
+                                <div class="settings-actions"><button class="action-btn btn-primary" onclick="savePrompts()">💾 保存</button><button class="action-btn" onclick="resetPrompts()">🔄 恢复默认</button></div>
+                                <div id="prompt-status" class="action-status"></div>
+                            </div>
+
+                            <div class="settings-section">
+                                <h3>❓ Q&A 问题管理</h3>
+                                <p class="section-desc">管理 AI 深度阅读的问题列表，修改后点击「应用到 Prompt」同步</p>
+                                <div id="qa-questions-list" class="qa-questions-list"></div>
+                                <div class="qa-add-row"><input type="text" id="qa-new-question" placeholder="输入新问题"><button class="action-btn" onclick="addQuestion()">➕</button></div>
+                                <div class="settings-actions" style="margin-top:12px;"><button class="action-btn btn-primary" onclick="applyQuestionsToPrompt()">📝 应用到 Prompt</button><button class="action-btn" onclick="resetQuestions()">🔄 恢复默认</button></div>
+                                <div id="qa-status" class="action-status"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 分区 4：抓取与网络 -->
+                    <div class="settings-group" id="grp-network">
+                        <div class="settings-group-title" onclick="toggleGroup('grp-network')">
+                            <span>🌐 抓取与网络</span>
+                            <span class="collapse-arrow">▾</span>
+                        </div>
+                        <div class="settings-group-body">
+                            <div class="settings-section">
+                                <h3>🌐 代理设置</h3>
+                                <p class="section-desc">配置 arXiv 论文抓取使用的代理服务器</p>
+                                <div class="form-group"><label><input type="checkbox" id="proxy-enabled" onchange="toggleProxyFields()"> 启用代理</label></div>
+                                <div id="proxy-fields" style="display:none;">
+                                    <div class="form-group"><label>HTTP 代理</label><input type="text" id="proxy-http" placeholder="http://127.0.0.1:7890"></div>
+                                    <div class="form-group"><label>HTTPS 代理</label><input type="text" id="proxy-https" placeholder="http://127.0.0.1:7890"></div>
+                                </div>
+                                <div class="settings-actions">
+                                    <button class="action-btn btn-primary" onclick="saveProxy()">💾 保存</button>
+                                    <button class="action-btn" onclick="testProxy()">🔗 测试 arXiv 连接</button>
+                                </div>
+                                <div id="proxy-status" class="action-status"></div>
+                            </div>
+
+                            <div class="settings-section">
+                                <h3>📥 抓取配置</h3>
+                                <p class="section-desc">配置 arXiv 论文抓取的速率和分批策略</p>
+                                <div class="form-row">
+                                    <div class="form-group" style="flex:1;">
+                                        <label>请求间隔（秒）</label>
+                                        <input type="number" id="fetch-request-delay" min="3" max="300" step="0.5" value="3">
+                                        <p class="section-desc">每次 API 请求之间的间隔，arXiv 要求至少 3 秒；遇到 429 建议 30~60 秒</p>
+                                    </div>
+                                    <div class="form-group" style="flex:1;">
+                                        <label>每批天数</label>
+                                        <input type="number" id="fetch-batch-days" min="1" max="365" step="1" value="30">
+                                        <p class="section-desc">分批抓取时每批覆盖的天数</p>
+                                    </div>
+                                    <div class="form-group" style="flex:1;">
+                                        <label>批次间隔（秒）</label>
+                                        <input type="number" id="fetch-batch-delay" min="1" max="1800" step="1" value="5">
+                                        <p class="section-desc">分批抓取时批次之间的等待时间；遇到 429 建议 300 秒以上</p>
+                                    </div>
+                                </div>
+                                <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveFetchConfig()">💾 保存</button></div>
+                                <div id="fetch-config-status" class="action-status"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 分区 5：报告邮件 -->
+                    <div class="settings-group" id="grp-email">
+                        <div class="settings-group-title" onclick="toggleGroup('grp-email')">
+                            <span>✉️ 报告邮件</span>
+                            <span class="collapse-arrow">▾</span>
+                        </div>
+                        <div class="settings-group-body">
+                            <div class="settings-section">
+                                <h3>✉️ 报告邮件发送</h3>
+                                <p class="section-desc">每天定时任务生成日报后，将同一份 HTML 报告通过 SMTP 发送给指定收件人。测试发送会使用最近一份已生成报告。</p>
+                                <div class="form-group"><label><input type="checkbox" id="email-report-enabled"> 启用每日自动发送报告邮件</label></div>
+                                <div class="form-row">
+                                    <div class="form-group" style="flex:2;">
+                                        <label>SMTP 服务器</label>
+                                        <input type="text" id="email-smtp-host" placeholder="smtp.example.com">
+                                    </div>
+                                    <div class="form-group" style="max-width:140px;">
+                                        <label>端口</label>
+                                        <input type="number" id="email-smtp-port" min="1" max="65535" step="1" value="587">
+                                    </div>
+                                    <div class="form-group" style="max-width:160px;">
+                                        <label>加密方式</label>
+                                        <select id="email-security">
+                                            <option value="starttls">STARTTLS</option>
+                                            <option value="ssl">SSL/TLS</option>
+                                            <option value="none">不加密</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>SMTP 用户名</label>
+                                        <input type="text" id="email-username" autocomplete="username">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>SMTP 密码 / 授权码</label>
+                                        <div class="input-group"><input type="password" id="email-password" autocomplete="new-password" placeholder="留空表示不修改"><button class="btn-small" onclick="togglePwd('email-password')">👁</button></div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>发件人</label>
+                                        <input type="text" id="email-sender" placeholder="留空则使用 SMTP 用户名">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>收件人</label>
+                                    <textarea id="email-recipients" rows="3" placeholder="多个邮箱可用逗号、分号或换行分隔"></textarea>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group" style="flex:2;">
+                                        <label>主题模板</label>
+                                        <input type="text" id="email-subject-template" placeholder="AI 论文日报 {date} - {paper_count} 篇论文">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>站点地址</label>
+                                        <input type="text" id="email-site-url" placeholder="https://your-domain.example">
+                                    </div>
+                                </div>
+                                <div class="settings-actions">
+                                    <button class="action-btn btn-primary" onclick="saveEmailReport()">💾 保存邮件配置</button>
+                                    <button class="action-btn" onclick="testEmailReport(this)">✉️ 测试发送</button>
+                                </div>
+                                <div id="email-report-status" class="db-info-grid webdav-status-grid"></div>
+                                <div id="email-report-action-status" class="action-status"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-
-            <div class="settings-section">
-                <h3>🔗 测试当前连接</h3>
-                <div class="settings-actions">
-                    <button class="action-btn btn-primary" onclick="testConnection()">🔗 测试连接</button>
-                    <button class="action-btn" onclick="detectThinking()">🧠 检测是否为思考模型</button>
-                </div>
-                <div id="test-status" class="action-status"></div>
-            </div>
-
-            <div class="settings-section">
-                <h3>⚡ 并发设置</h3>
-                <p class="section-desc">AI 分析时的并发线程数，建议 3~10</p>
-                <div class="form-group" style="max-width:200px;"><label>并发数</label><input type="number" id="concurrency" min="1" max="20" step="1" value="5"></div>
-                <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveConcurrency()">💾 保存</button></div>
-                <div id="concurrency-status" class="action-status"></div>
-            </div>
-
-            <div class="settings-section">
-                <h3>🎯 个性化推荐</h3>
-                <p class="section-desc">填写你的研究兴趣，推荐评分会使用独立的「个性化推荐」模型路由计算，不会影响原有论文评级。保存兴趣不会自动重算历史论文。</p>
-                <div class="form-group">
-                    <label>研究兴趣</label>
-                    <textarea id="research-interests" rows="6" maxlength="4000" placeholder="例如：我关注机器人基础模型、VLA、长时序任务规划、具身智能评测，以及能迁移到真实机械臂的模仿学习方法。"></textarea>
-                </div>
-                <div class="form-row">
-                    <div class="form-group" style="max-width:220px;">
-                        <label>手动重算数量</label>
-                        <input type="number" id="recommend-limit" min="1" max="1000" step="10" value="200">
-                    </div>
-                </div>
-                <div class="settings-actions">
-                    <button class="action-btn btn-primary" onclick="savePersonalization()">💾 保存研究兴趣</button>
-                    <button class="action-btn" onclick="recalculateRecommendations(this)">🎯 手动重算推荐评分</button>
-                </div>
-                <div id="personalization-status" class="action-status"></div>
-            </div>
-
-            <div class="settings-section">
-                <h3>🌐 代理设置</h3>
-                <p class="section-desc">配置 arXiv 论文抓取使用的代理服务器</p>
-                <div class="form-group"><label><input type="checkbox" id="proxy-enabled" onchange="toggleProxyFields()"> 启用代理</label></div>
-                <div id="proxy-fields" style="display:none;">
-                    <div class="form-group"><label>HTTP 代理</label><input type="text" id="proxy-http" placeholder="http://127.0.0.1:7890"></div>
-                    <div class="form-group"><label>HTTPS 代理</label><input type="text" id="proxy-https" placeholder="http://127.0.0.1:7890"></div>
-                </div>
-                <div class="settings-actions">
-                    <button class="action-btn btn-primary" onclick="saveProxy()">💾 保存</button>
-                    <button class="action-btn" onclick="testProxy()">🔗 测试 arXiv 连接</button>
-                </div>
-                <div id="proxy-status" class="action-status"></div>
-            </div>
-
-            <div class="settings-section">
-                <h3>📥 抓取配置</h3>
-                <p class="section-desc">配置 arXiv 论文抓取的速率和分批策略</p>
-                <div class="form-row">
-                    <div class="form-group" style="flex:1;">
-                        <label>请求间隔（秒）</label>
-                        <input type="number" id="fetch-request-delay" min="3" max="300" step="0.5" value="3">
-                        <p class="section-desc">每次 API 请求之间的间隔，arXiv 要求至少 3 秒；遇到 429 建议 30~60 秒</p>
-                    </div>
-                    <div class="form-group" style="flex:1;">
-                        <label>每批天数</label>
-                        <input type="number" id="fetch-batch-days" min="1" max="365" step="1" value="30">
-                        <p class="section-desc">分批抓取时每批覆盖的天数</p>
-                    </div>
-                    <div class="form-group" style="flex:1;">
-                        <label>批次间隔（秒）</label>
-                        <input type="number" id="fetch-batch-delay" min="1" max="1800" step="1" value="5">
-                        <p class="section-desc">分批抓取时批次之间的等待时间；遇到 429 建议 300 秒以上</p>
-                    </div>
-                </div>
-                <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveFetchConfig()">💾 保存</button></div>
-                <div id="fetch-config-status" class="action-status"></div>
-            </div>
-
-            <div class="settings-section">
-                <h3>📝 Prompt 设置</h3>
-                <p class="section-desc">按功能维护稳定 Prompt 前缀。论文标题、摘要、PDF 全文等动态内容会作为独立 JSON 消息放在最后，以提高缓存命中率；基础分析可使用 <code>{tag_candidates}</code>，深度阅读只需描述 Q&A 输出。</p>
-                <div class="form-group" style="max-width:280px;">
-                    <label>Prompt Profile</label>
-                    <select id="prompt-profile-select" onchange="switchPromptProfile()">
-                        <option value="basic_analysis">基础分析</option>
-                        <option value="deep_reading" selected>深度阅读</option>
-                        <option value="report_summary">报告导读</option>
-                        <option value="recommendation">个性化推荐</option>
-                        <option value="paper_chat">论文对话</option>
-                        <option value="paper_quiz">论文问答练习</option>
-                    </select>
-                </div>
-                <div class="form-group"><label>System Prompt</label><textarea id="system-prompt" rows="4"></textarea></div>
-                <div class="form-group"><label>Instruction Prompt</label><textarea id="user-prompt" rows="16"></textarea></div>
-                <div class="settings-actions"><button class="action-btn btn-primary" onclick="savePrompts()">💾 保存</button><button class="action-btn" onclick="resetPrompts()">🔄 恢复默认</button></div>
-                <div id="prompt-status" class="action-status"></div>
-            </div>
-
-            <div class="settings-section">
-                <h3>❓ Q&A 问题管理</h3>
-                <p class="section-desc">管理 AI 深度阅读的问题列表，修改后点击「应用到 Prompt」同步</p>
-                <div id="qa-questions-list" class="qa-questions-list"></div>
-                <div class="qa-add-row"><input type="text" id="qa-new-question" placeholder="输入新问题"><button class="action-btn" onclick="addQuestion()">➕</button></div>
-                <div class="settings-actions" style="margin-top:12px;"><button class="action-btn btn-primary" onclick="applyQuestionsToPrompt()">📝 应用到 Prompt</button><button class="action-btn" onclick="resetQuestions()">🔄 恢复默认</button></div>
-                <div id="qa-status" class="action-status"></div>
             </div>
         </div>
 
         <!-- ============ Tab 2: 数据库 ============ -->
         <div id="tab-db" class="tab-panel">
-            <div class="settings-section">
-                <h3>💾 数据库信息</h3>
-                <div id="db-info" class="db-info-grid"></div>
+            <div class="settings-group" id="grp-db-overview">
+                <div class="settings-group-title" onclick="toggleGroup('grp-db-overview')">
+                    <span>📊 数据库概览</span>
+                    <span class="collapse-arrow">▾</span>
+                </div>
+                <div class="settings-group-body">
+                    <div class="settings-section">
+                        <h3>💾 数据库信息</h3>
+                        <div id="db-info" class="db-info-grid"></div>
+                    </div>
+                    <div class="settings-section">
+                        <h3>📂 存储路径</h3>
+                        <div id="db-paths" class="db-paths-list"></div>
+                    </div>
+                </div>
             </div>
-            <div class="settings-section">
-                <h3>📂 存储路径</h3>
-                <div id="db-paths" class="db-paths-list"></div>
-            </div>
-            <div class="settings-section">
-                <h3>☁️ WebDAV 云同步备份</h3>
-                <p class="section-desc">每天定时任务结束后自动备份数据库快照、<code>settings.json</code> 和 <code>output/</code> 报告目录。注意：备份包会包含 API Key、管理密码哈希和 session secret 等敏感配置。</p>
-                <div class="form-group"><label><input type="checkbox" id="webdav-enabled"> 启用每日自动 WebDAV 备份</label></div>
-                <div class="form-row">
-                    <div class="form-group" style="flex:2;">
-                        <label>WebDAV 地址</label>
-                        <input type="text" id="webdav-url" placeholder="https://example.com/remote.php/dav/files/user">
-                    </div>
-                    <div class="form-group">
-                        <label>远端目录</label>
-                        <input type="text" id="webdav-remote-dir" placeholder="arxiv-backups">
+
+            <div class="settings-group" id="grp-db-backup">
+                <div class="settings-group-title" onclick="toggleGroup('grp-db-backup')">
+                    <span>☁️ 云备份</span>
+                    <span class="collapse-arrow">▾</span>
+                </div>
+                <div class="settings-group-body">
+                    <div class="settings-section">
+                        <h3>☁️ WebDAV 云同步备份</h3>
+                        <p class="section-desc">每天定时任务结束后自动备份数据库快照、<code>settings.json</code> 和 <code>output/</code> 报告目录。注意：备份包会包含 API Key、管理密码哈希和 session secret 等敏感配置。</p>
+                        <div class="form-group"><label><input type="checkbox" id="webdav-enabled"> 启用每日自动 WebDAV 备份</label></div>
+                        <div class="form-row">
+                            <div class="form-group" style="flex:2;">
+                                <label>WebDAV 地址</label>
+                                <input type="text" id="webdav-url" placeholder="https://example.com/remote.php/dav/files/user">
+                            </div>
+                            <div class="form-group">
+                                <label>远端目录</label>
+                                <input type="text" id="webdav-remote-dir" placeholder="arxiv-backups">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>用户名</label>
+                                <input type="text" id="webdav-username" autocomplete="username">
+                            </div>
+                            <div class="form-group">
+                                <label>密码 / 应用密码</label>
+                                <div class="input-group"><input type="password" id="webdav-password" autocomplete="new-password" placeholder="留空表示不修改"><button class="btn-small" onclick="togglePwd('webdav-password')">👁</button></div>
+                            </div>
+                            <div class="form-group" style="max-width:180px;">
+                                <label>历史保留天数</label>
+                                <input type="number" id="webdav-history-days" min="1" max="3650" step="1" value="3">
+                            </div>
+                        </div>
+                        <div class="settings-actions">
+                            <button class="action-btn btn-primary" onclick="saveWebdavBackup()">💾 保存云备份配置</button>
+                            <button class="action-btn" onclick="runWebdavBackup(this)">☁️ 立即备份</button>
+                        </div>
+                        <div id="webdav-backup-status" class="db-info-grid webdav-status-grid"></div>
+                        <div id="webdav-backup-action-status" class="action-status"></div>
                     </div>
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>用户名</label>
-                        <input type="text" id="webdav-username" autocomplete="username">
-                    </div>
-                    <div class="form-group">
-                        <label>密码 / 应用密码</label>
-                        <div class="input-group"><input type="password" id="webdav-password" autocomplete="new-password" placeholder="留空表示不修改"><button class="btn-small" onclick="togglePwd('webdav-password')">👁</button></div>
-                    </div>
-                    <div class="form-group" style="max-width:180px;">
-                        <label>历史保留天数</label>
-                        <input type="number" id="webdav-history-days" min="1" max="3650" step="1" value="3">
-                    </div>
-                </div>
-                <div class="settings-actions">
-                    <button class="action-btn btn-primary" onclick="saveWebdavBackup()">💾 保存云备份配置</button>
-                    <button class="action-btn" onclick="runWebdavBackup(this)">☁️ 立即备份</button>
-                </div>
-                <div id="webdav-backup-status" class="db-info-grid webdav-status-grid"></div>
-                <div id="webdav-backup-action-status" class="action-status"></div>
-            </div>
-            <div class="settings-section">
-                <h3>✉️ 报告邮件发送</h3>
-                <p class="section-desc">每天定时任务生成日报后，将同一份 HTML 报告通过 SMTP 发送给指定收件人。测试发送会使用最近一份已生成报告。</p>
-                <div class="form-group"><label><input type="checkbox" id="email-report-enabled"> 启用每日自动发送报告邮件</label></div>
-                <div class="form-row">
-                    <div class="form-group" style="flex:2;">
-                        <label>SMTP 服务器</label>
-                        <input type="text" id="email-smtp-host" placeholder="smtp.example.com">
-                    </div>
-                    <div class="form-group" style="max-width:140px;">
-                        <label>端口</label>
-                        <input type="number" id="email-smtp-port" min="1" max="65535" step="1" value="587">
-                    </div>
-                    <div class="form-group" style="max-width:160px;">
-                        <label>加密方式</label>
-                        <select id="email-security">
-                            <option value="starttls">STARTTLS</option>
-                            <option value="ssl">SSL/TLS</option>
-                            <option value="none">不加密</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>SMTP 用户名</label>
-                        <input type="text" id="email-username" autocomplete="username">
-                    </div>
-                    <div class="form-group">
-                        <label>SMTP 密码 / 授权码</label>
-                        <div class="input-group"><input type="password" id="email-password" autocomplete="new-password" placeholder="留空表示不修改"><button class="btn-small" onclick="togglePwd('email-password')">👁</button></div>
-                    </div>
-                    <div class="form-group">
-                        <label>发件人</label>
-                        <input type="text" id="email-sender" placeholder="留空则使用 SMTP 用户名">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>收件人</label>
-                    <textarea id="email-recipients" rows="3" placeholder="多个邮箱可用逗号、分号或换行分隔"></textarea>
-                </div>
-                <div class="form-row">
-                    <div class="form-group" style="flex:2;">
-                        <label>主题模板</label>
-                        <input type="text" id="email-subject-template" placeholder="AI 论文日报 {date} - {paper_count} 篇论文">
-                    </div>
-                    <div class="form-group">
-                        <label>站点地址</label>
-                        <input type="text" id="email-site-url" placeholder="https://your-domain.example">
-                    </div>
-                </div>
-                <div class="settings-actions">
-                    <button class="action-btn btn-primary" onclick="saveEmailReport()">💾 保存邮件配置</button>
-                    <button class="action-btn" onclick="testEmailReport(this)">✉️ 测试发送</button>
-                </div>
-                <div id="email-report-status" class="db-info-grid webdav-status-grid"></div>
-                <div id="email-report-action-status" class="action-status"></div>
             </div>
         </div>
 
@@ -404,6 +480,7 @@
         let aiUsageState = { days: 7, selectedModel: '' };
         let currentPromptProfile = 'deep_reading';
         let modelFetchTimer = null;
+        let providerFormMode = 'add';
         let recommendationEventSource = null;
 
         function escapeHtml(value) {
@@ -430,6 +507,61 @@
             event.target.classList.add('active');
             if (name === 'db') loadDbInfo();
             if (name === 'admin') loadSystemStatus();
+            if (name === 'ai') initSidebar();
+        }
+
+        /* ---- 设置页分区折叠 + 侧栏滚动高亮 ---- */
+        const SETTINGS_GROUPS = ['grp-providers', 'grp-routing', 'grp-content', 'grp-network', 'grp-email'];
+        let sidebarObserver = null;
+
+        function toggleGroup(id) {
+            const grp = document.getElementById(id);
+            if (!grp) return;
+            const collapsed = grp.classList.toggle('collapsed');
+            try {
+                const saved = JSON.parse(localStorage.getItem('settings-group-collapse') || '{}');
+                saved[id] = collapsed;
+                localStorage.setItem('settings-group-collapse', JSON.stringify(saved));
+            } catch (e) {}
+        }
+
+        function restoreGroupStates() {
+            let saved = {};
+            try { saved = JSON.parse(localStorage.getItem('settings-group-collapse') || '{}'); } catch (e) {}
+            for (const id of SETTINGS_GROUPS) {
+                const grp = document.getElementById(id);
+                if (grp && saved[id]) grp.classList.add('collapsed');
+            }
+        }
+
+        function scrollToGroup(id) {
+            const grp = document.getElementById(id);
+            if (!grp) return;
+            const offset = 72;
+            const top = grp.getBoundingClientRect().top + window.scrollY - offset;
+            window.scrollTo({ top, behavior: 'smooth' });
+        }
+
+        function setActiveNav(id) {
+            document.querySelectorAll('.settings-nav-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.target === id);
+            });
+        }
+
+        function initSidebar() {
+            if (sidebarObserver) sidebarObserver.disconnect();
+            restoreGroupStates();
+            const sidebar = document.getElementById('ai-settings-sidebar');
+            if (!sidebar) return;
+            sidebarObserver = new IntersectionObserver(entries => {
+                for (const entry of entries) {
+                    if (entry.isIntersecting) { setActiveNav(entry.target.id); break; }
+                }
+            }, { rootMargin: '-80px 0px -60% 0px', threshold: 0 });
+            for (const id of SETTINGS_GROUPS) {
+                const grp = document.getElementById(id);
+                if (grp) sidebarObserver.observe(grp);
+            }
         }
 
         async function init() {
@@ -472,6 +604,8 @@
             document.getElementById('fetch-request-delay').value = fetchData.request_delay || 3;
             document.getElementById('fetch-batch-days').value = fetchData.batch_days || 30;
             document.getElementById('fetch-batch-delay').value = fetchData.batch_delay || 5;
+
+            initSidebar();
         }
 
         /* ---- AI Task Routing ---- */
@@ -953,7 +1087,7 @@
         async function fetchModelsForForm(silent = false) {
             const statusEl = document.getElementById('model-list-status');
             const key = document.getElementById('add-key').value.trim();
-            const isEdit = document.getElementById('add-key').readOnly;
+            const isEdit = providerFormMode === 'edit';
             const apiKey = document.getElementById('add-api-key').value.trim();
             const baseUrl = document.getElementById('add-base-url').value.trim();
             if (!baseUrl) { if (!silent) statusEl.textContent = '请先填写 Base URL'; return; }
@@ -997,10 +1131,11 @@
         }
 
         function showAddForm(presetKey) {
+            providerFormMode = 'add';
             setAddProviderSection(true);
             const preset = presets[presetKey] || {};
             document.getElementById('add-key').value = presetKey;
-            document.getElementById('add-key').readOnly = !!presetKey;
+            document.getElementById('add-key').readOnly = !!presetKey && presetKey !== 'custom';
             document.getElementById('add-name').value = preset.name || presetKey;
             document.getElementById('add-api-key').value = '';
             document.getElementById('add-api-key').placeholder = '输入 API Key';
@@ -1024,11 +1159,12 @@
         function cancelAdd() {
             document.getElementById('add-form').style.display = 'none';
             document.getElementById('model-list-status').textContent = '';
+            providerFormMode = 'add';
         }
 
         async function submitAdd() {
             const statusEl = document.getElementById('test-status');
-            const isEdit = document.getElementById('add-key').readOnly;
+            const isEdit = providerFormMode === 'edit';
             const data = {
                 key: document.getElementById('add-key').value.trim(),
                 name: document.getElementById('add-name').value.trim(),
@@ -1070,6 +1206,7 @@
         }
 
         function editProvider(key) {
+            providerFormMode = 'edit';
             setAddProviderSection(true);
             const prov = providerData.providers[key]; if (!prov) return;
             const preset = presets[key] || {};
