@@ -183,6 +183,25 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_name ON task_logs(task_name)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_status ON task_logs(status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_logs_started ON task_logs(started_at)")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS task_log_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_log_id INTEGER NOT NULL,
+            step_key TEXT NOT NULL,
+            step_name TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            message TEXT,
+            detail TEXT,
+            started_at TEXT,
+            finished_at TEXT,
+            duration_sec REAL,
+            UNIQUE(task_log_id, step_key),
+            FOREIGN KEY (task_log_id) REFERENCES task_logs(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_log_steps_log ON task_log_steps(task_log_id, position)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_task_log_steps_status ON task_log_steps(status)")
 
     # ==================== reports 表：每日 Web 报告 ====================
     # 存储生成的 HTML 格式报告，按日期唯一
@@ -1328,6 +1347,79 @@ def finish_task_log(log_id, status, message="", detail=""):
     conn.close()
 
 
+def initialize_task_log_steps(log_id, steps):
+    """为一次流水线执行初始化有序步骤。
+
+    ``steps`` 是 ``(step_key, step_name)`` 二元组列表。重复初始化不会覆盖
+    已经开始或完成的步骤，便于调用方安全重试日志初始化。
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.executemany(
+        """
+        INSERT OR IGNORE INTO task_log_steps
+            (task_log_id, step_key, step_name, position, status)
+        VALUES (?, ?, ?, ?, 'pending')
+        """,
+        [
+            (log_id, step_key, step_name, position)
+            for position, (step_key, step_name) in enumerate(steps, start=1)
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+
+def set_task_log_step_status(log_id, step_key, status, message="", detail=""):
+    """更新流水线步骤状态，并维护步骤开始/结束时间和耗时。"""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT started_at FROM task_log_steps WHERE task_log_id = ? AND step_key = ?",
+        (log_id, step_key),
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False
+
+    if status == "running":
+        cursor.execute(
+            """
+            UPDATE task_log_steps
+            SET status = ?, message = ?, detail = ?,
+                started_at = COALESCE(started_at, ?), finished_at = NULL, duration_sec = NULL
+            WHERE task_log_id = ? AND step_key = ?
+            """,
+            (status, message, detail, now, log_id, step_key),
+        )
+    elif status == "pending":
+        cursor.execute(
+            """
+            UPDATE task_log_steps SET status = ?, message = ?, detail = ?
+            WHERE task_log_id = ? AND step_key = ?
+            """,
+            (status, message, detail, log_id, step_key),
+        )
+    else:
+        started_at = row["started_at"] or now
+        started = datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S")
+        duration = round((datetime.now() - started).total_seconds(), 1)
+        cursor.execute(
+            """
+            UPDATE task_log_steps
+            SET status = ?, message = ?, detail = ?, started_at = ?,
+                finished_at = ?, duration_sec = ?
+            WHERE task_log_id = ? AND step_key = ?
+            """,
+            (status, message, detail, started_at, now, max(0, duration), log_id, step_key),
+        )
+    conn.commit()
+    conn.close()
+    return True
+
+
 def get_task_logs(task_name=None, limit=50, offset=0):
     """获取任务日志列表，支持按任务名筛选和分页。
     
@@ -1361,9 +1453,27 @@ def get_task_logs(task_name=None, limit=50, offset=0):
 
     cursor.execute(query, params)
     rows = cursor.fetchall()
+    results = [dict(row) for row in rows]
+    if results:
+        log_ids = [row["id"] for row in results]
+        placeholders = ",".join("?" for _ in log_ids)
+        cursor.execute(
+            f"""
+            SELECT * FROM task_log_steps
+            WHERE task_log_id IN ({placeholders})
+            ORDER BY task_log_id, position
+            """,
+            log_ids,
+        )
+        steps_by_log = {log_id: [] for log_id in log_ids}
+        for step in cursor.fetchall():
+            step_data = dict(step)
+            steps_by_log.setdefault(step_data["task_log_id"], []).append(step_data)
+        for row in results:
+            row["steps"] = steps_by_log.get(row["id"], [])
     conn.close()
 
-    return [dict(row) for row in rows], total
+    return results, total
 
 
 def get_task_stats():
@@ -1409,6 +1519,53 @@ def get_running_tasks():
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+def interrupt_running_task_logs(reason="服务重启，任务已中断"):
+    """在应用启动时收口上一次进程遗留的运行中任务。"""
+    now_dt = datetime.now()
+    now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, started_at FROM task_logs WHERE status = 'running'")
+    running_logs = cursor.fetchall()
+    for row in running_logs:
+        duration = 0
+        if row["started_at"]:
+            started = datetime.strptime(row["started_at"], "%Y-%m-%d %H:%M:%S")
+            duration = max(0, round((now_dt - started).total_seconds(), 1))
+        cursor.execute(
+            """
+            UPDATE task_logs
+            SET status = 'interrupted', message = ?, finished_at = ?, duration_sec = ?
+            WHERE id = ?
+            """,
+            (reason, now, duration, row["id"]),
+        )
+        cursor.execute(
+            """
+            UPDATE task_log_steps
+            SET status = 'interrupted', message = ?, finished_at = ?,
+                duration_sec = CASE
+                    WHEN started_at IS NULL THEN 0
+                    ELSE MAX(0, ROUND((julianday(?) - julianday(started_at)) * 86400, 1))
+                END
+            WHERE task_log_id = ? AND status = 'running'
+            """,
+            (reason, now, now, row["id"]),
+        )
+        cursor.execute(
+            """
+            UPDATE task_log_steps
+            SET status = 'skipped', message = '父任务中断前未执行',
+                started_at = COALESCE(started_at, ?), finished_at = ?, duration_sec = 0
+            WHERE task_log_id = ? AND status = 'pending'
+            """,
+            (now, now, row["id"]),
+        )
+    conn.commit()
+    conn.close()
+    return len(running_logs)
 
 
 def clear_task_logs(keep_days=30):

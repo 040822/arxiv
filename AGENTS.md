@@ -48,8 +48,8 @@ arxiv/
 │   ├── paper_chat.html # 论文学习页（对话、问答、苏格拉底追问）
 │   ├── about.html      # 公开项目宣传页（研究闭环、优势、竞品定位）
 │   ├── vision.html     # 实验室愿景页（科研价值、竞品格局、发展路线）
-│   ├── settings.html   # 设置页（AI/数据库/管理三个Tab）
-│   └── tasks.html      # 任务管理页（定时任务、统计、日志）
+│   ├── settings.html   # 设置页（含独立的定时任务、邮件和执行日志管理）
+│   └── tasks.html      # 论文处理页（抓取、分析、报告、添加指定论文）
 ├── static/style.css    # 全局样式
 ├── static/promo.css    # 宣传页独立样式（公开版 + 深色愿景版）
 ├── data/               # 运行时数据（不提交到git）
@@ -110,12 +110,30 @@ CREATE TABLE analysis (
 CREATE TABLE task_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_name TEXT NOT NULL,           -- daily_pipeline/fetch/analyze/generate/run/webdav_backup/email_report
-    status TEXT NOT NULL DEFAULT 'running',  -- running/success/error
+    status TEXT NOT NULL DEFAULT 'running',  -- running/success/warning/error/skipped/interrupted
     message TEXT,
     detail TEXT,
     started_at TEXT DEFAULT CURRENT_TIMESTAMP,
     finished_at TEXT,
     duration_sec REAL
+);
+```
+
+### task_log_steps 表
+```sql
+CREATE TABLE task_log_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_log_id INTEGER NOT NULL,       -- FK -> task_logs.id (CASCADE DELETE)
+    step_key TEXT NOT NULL,             -- fetch/analyze/recommend/report/email/backup
+    step_name TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    status TEXT DEFAULT 'pending',      -- pending/running/success/warning/error/skipped/interrupted
+    message TEXT,
+    detail TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    duration_sec REAL,
+    UNIQUE(task_log_id, step_key)
 );
 ```
 
@@ -226,18 +244,19 @@ POST /api/paper/<arxiv_id>/socratic/sessions/<session_id>/reply
 
 ### 4.4 定时任务流程
 ```
-APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
+APScheduler cron(day_of_week, hour, minute)
   → daily_pipeline()
-    → start_task_log()
-    → fetch_latest_papers(days=3)
-    → analyze_pending_papers()
-    → generate_report_content(latest_date)
-    → save_report()
-    → 检查 email_report.last_sent_report_date
-    → send_report_email()  # 未发送过才发送；失败单独记录，不中断日报任务
-    → run_webdav_backup()  # 如已启用；失败单独记录，不中断日报任务
-    → finish_task_log(status="success")
+    → 初始化 task_logs + 六条 task_log_steps
+    → fetch_latest_papers(days=schedule.fetch_days)
+    → analyze_pending_papers(limit=schedule.analyze_limit)
+    → 按研究兴趣补齐推荐评分（未设置时 skipped）
+    → generate_report_content(latest_date) + save_report()
+    → send_report_email()  # 未启用/已发送时 skipped；失败记 warning
+    → run_webdav_backup()  # 未启用时 skipped；失败记 warning
+    → finish_task_log(success/warning/error)
 ```
+
+应用启动时会将上一次进程遗留的 `running` 日志改为 `interrupted`。定时日报和 `/api/run` 共享非阻塞互斥锁；自动冲突记为 `skipped`，手动冲突返回 HTTP 409。
 
 ---
 
@@ -279,7 +298,14 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
     "subject_template": "AI 论文日报 {date} - {paper_count} 篇论文",
     "site_url": "https://your-domain.example"
   },
-  "schedule": {"enabled": true, "hour": 10, "minute": 0},
+  "schedule": {
+    "enabled": true,
+    "days_of_week": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+    "hour": 10,
+    "minute": 0,
+    "fetch_days": 3,
+    "analyze_limit": 1000
+  },
   "providers": {
     "deepseek": {
       "name": "DeepSeek",
@@ -328,7 +354,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 - `get_prompt_profile()` / `get_prompt_profiles()` — 获取任务级 Prompt Profile；`get_prompts()` 保留旧接口兼容
 - `get_concurrency()` — 获取并发数
 - `get_per_page()` — 获取每页论文数
-- `get_schedule_config()` / `save_schedule_config()` — 获取/保存每日定时任务配置
+- `get_schedule_config()` / `save_schedule_config()` — 获取/保存内置日报的星期、时间、回看天数和分析上限
 - `get_fetch_config()` / `save_fetch_config()` — 抓取配置（请求间隔、批次天数、批次间隔）
 - `get_proxy_config()` / `save_proxy_config()` — 代理配置
 - `get_personalization_config()` / `save_personalization_config()` — 个性化推荐研究兴趣
@@ -354,8 +380,8 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 | `GET /paper/<arxiv_id>/chat` | 论文学习页（对话/问答/苏格拉底追问） |
 | `GET /about` | 公开项目宣传页（首页提供入口） |
 | `GET /vision` | 实验室科研情报基础设施愿景页（仅直接访问） |
-| `GET /settings` | 设置页（AI/数据库/管理） |
-| `GET /tasks` | 任务管理页 |
+| `GET /settings` | 设置页（含独立定时任务标签） |
+| `GET /tasks` | 论文处理页 |
 
 ### 任务 API
 | 端点 | 方法 | 说明 |
@@ -363,7 +389,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 | `/api/fetch` | POST | 抓取论文 |
 | `/api/analyze` | POST | AI分析（?limit=50） |
 | `/api/generate` | POST | 生成报告 |
-| `/api/run` | POST | 一键执行全部 |
+| `/api/run` | POST | 抓取、分析、推荐并生成报告；流水线冲突返回 409 |
 
 ### 论文 API
 | 端点 | 方法 | 说明 |
@@ -413,7 +439,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 | `/api/settings/email-report` | GET/POST | 读取/保存每日报告邮件配置（GET 不返回明文密码） |
 | `/api/email-report/test` | POST | 使用最近一份日报告测试发送邮件 |
 | `/api/settings/concurrency` | POST | 保存并发数 |
-| `/api/settings/schedule` | GET/POST | 读取/保存每日定时任务配置 |
+| `/api/settings/schedule` | GET/POST | 读取/保存内置日报的星期、时间、抓取天数和分析上限 |
 | `/api/db/info` | GET | 数据库信息 |
 | `/api/admin/password` | POST/DELETE | 设置/清除密码 |
 
@@ -421,8 +447,8 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/api/tasks/stats` | GET | 任务统计 |
-| `/api/tasks/logs` | GET | 日志列表（?task=&page=） |
-| `/api/tasks/scheduled` | GET | 定时任务列表 |
+| `/api/tasks/logs` | GET | 日志列表（?task=&page=），日报日志附带 `steps` |
+| `/api/tasks/scheduled` | GET | 内置日报配置、时区、下次执行与最近运行 |
 | `/api/tasks/clear` | POST | 清理旧日志（?keep_days=30） |
 
 ---
@@ -525,12 +551,13 @@ cp data/papers.db data/papers.db.bak
 # 历史备份默认保留 3 天，可在设置页修改。
 
 # 报告邮件发送
-# 设置页「数据库 → 报告邮件发送」可配置 SMTP、收件人、主题模板和站点地址。
+# 设置页「定时任务 → 报告邮件」可配置 SMTP、收件人、主题模板和站点地址。
 # 启用后每日定时任务会在报告生成并保存后发送邮件专用摘要版 HTML：
 # report_summary 导读、推荐分 >80 重点精读、最多 20 篇快速速览。
 # 自动发送前会检查 last_sent_report_date，同一日报成功发送后不再重复发送；
 # 手动测试发送可重复执行，但不会更新自动任务的去重日期。
-# 发送失败只记录 email_report 任务日志和最近错误，不中断日报任务。
+# 自动流程中的发送失败写入日报步骤并使父任务标记 warning，不中断后续备份；
+# 手动测试发送仍记录独立 email_report 日志。
 # SMTP 连接复用现有网络代理配置，代理启用时通过 HTTP CONNECT 连接 SMTP 服务器，
 # 不新增邮件专用代理配置。
 ```

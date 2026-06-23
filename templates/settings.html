@@ -17,10 +17,11 @@
         </header>
 
         <div class="settings-tabs">
-            <button class="tab-btn active" onclick="switchTab('ai')">🤖 AI 设置</button>
-            <button class="tab-btn" onclick="switchTab('db')">💾 数据库</button>
-            <button class="tab-btn" onclick="switchTab('admin')">🔒 管理</button>
-            <button class="tab-btn" onclick="switchTab('billing')">📊 账单</button>
+            <button class="tab-btn active" onclick="switchTab('ai', this)">🤖 AI 设置</button>
+            <button class="tab-btn" onclick="switchTab('schedule', this)">⏰ 定时任务</button>
+            <button class="tab-btn" onclick="switchTab('db', this)">💾 数据库</button>
+            <button class="tab-btn" onclick="switchTab('admin', this)">🔒 管理</button>
+            <button class="tab-btn" onclick="switchTab('billing', this)">📊 账单</button>
         </div>
 
         {% if not auth_enabled %}
@@ -42,7 +43,6 @@
                     <button class="settings-nav-btn" data-target="grp-routing" onclick="scrollToGroup('grp-routing')">🧭 路由与参数</button>
                     <button class="settings-nav-btn" data-target="grp-content" onclick="scrollToGroup('grp-content')">🎯 个性化与内容</button>
                     <button class="settings-nav-btn" data-target="grp-network" onclick="scrollToGroup('grp-network')">🌐 抓取与网络</button>
-                    <button class="settings-nav-btn" data-target="grp-email" onclick="scrollToGroup('grp-email')">✉️ 报告邮件</button>
                 </aside>
 
                 <div class="settings-main">
@@ -264,77 +264,137 @@
                         </div>
                     </div>
 
-                    <!-- 分区 5：报告邮件 -->
-                    <div class="settings-group" id="grp-email">
-                        <div class="settings-group-title" onclick="toggleGroup('grp-email')">
-                            <span>✉️ 报告邮件</span>
-                            <span class="collapse-arrow">▾</span>
-                        </div>
-                        <div class="settings-group-body">
-                            <div class="settings-section">
-                                <h3>✉️ 报告邮件发送</h3>
-                                <p class="section-desc">每天定时任务生成日报后，将同一份 HTML 报告通过 SMTP 发送给指定收件人。测试发送会使用最近一份已生成报告。</p>
-                                <div class="form-group"><label><input type="checkbox" id="email-report-enabled"> 启用每日自动发送报告邮件</label></div>
-                                <div class="form-row">
-                                    <div class="form-group" style="flex:2;">
-                                        <label>SMTP 服务器</label>
-                                        <input type="text" id="email-smtp-host" placeholder="smtp.example.com">
-                                    </div>
-                                    <div class="form-group" style="max-width:140px;">
-                                        <label>端口</label>
-                                        <input type="number" id="email-smtp-port" min="1" max="65535" step="1" value="587">
-                                    </div>
-                                    <div class="form-group" style="max-width:160px;">
-                                        <label>加密方式</label>
-                                        <select id="email-security">
-                                            <option value="starttls">STARTTLS</option>
-                                            <option value="ssl">SSL/TLS</option>
-                                            <option value="none">不加密</option>
-                                        </select>
-                                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============ Tab 2: 定时任务 ============ -->
+        <div id="tab-schedule" class="tab-panel">
+            <div class="settings-group">
+                <div class="settings-group-title">
+                    <span>⏰ 内置任务：AI 论文日报</span>
+                </div>
+                <div class="settings-group-body">
+                    <div class="settings-section">
+                        <p class="section-desc">系统仅提供这一条内置任务，不支持添加自定义任务。服务停机错过触发后不会自动补跑。</p>
+                        <div id="schedule-runtime-status" class="db-info-grid schedule-runtime-grid"></div>
+                        <div class="form-row">
+                            <div class="form-group" style="flex:1;">
+                                <label><input type="checkbox" id="schedule-enabled"> 启用 AI 论文日报</label>
+                            </div>
+                            <div class="form-group" style="flex:2;">
+                                <label>执行时间</label>
+                                <div class="schedule-time-row">
+                                    <select id="schedule-hour">
+                                        {% for h in range(24) %}<option value="{{ h }}">{{ '%02d' % h }}</option>{% endfor %}
+                                    </select>
+                                    <span>:</span>
+                                    <input type="number" id="schedule-minute" min="0" max="59" step="1" value="0">
                                 </div>
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label>SMTP 用户名</label>
-                                        <input type="text" id="email-username" autocomplete="username">
-                                    </div>
-                                    <div class="form-group">
-                                        <label>SMTP 密码 / 授权码</label>
-                                        <div class="input-group"><input type="password" id="email-password" autocomplete="new-password" placeholder="留空表示不修改"><button class="btn-small" onclick="togglePwd('email-password')">👁</button></div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label>发件人</label>
-                                        <input type="text" id="email-sender" placeholder="留空则使用 SMTP 用户名">
-                                    </div>
-                                </div>
-                                <div class="form-group">
-                                    <label>收件人</label>
-                                    <textarea id="email-recipients" rows="3" placeholder="多个邮箱可用逗号、分号或换行分隔"></textarea>
-                                </div>
-                                <div class="form-row">
-                                    <div class="form-group" style="flex:2;">
-                                        <label>主题模板</label>
-                                        <input type="text" id="email-subject-template" placeholder="AI 论文日报 {date} - {paper_count} 篇论文">
-                                    </div>
-                                    <div class="form-group">
-                                        <label>站点地址</label>
-                                        <input type="text" id="email-site-url" placeholder="https://your-domain.example">
-                                    </div>
-                                </div>
-                                <div class="settings-actions">
-                                    <button class="action-btn btn-primary" onclick="saveEmailReport()">💾 保存邮件配置</button>
-                                    <button class="action-btn" onclick="testEmailReport(this)">✉️ 测试发送</button>
-                                </div>
-                                <div id="email-report-status" class="db-info-grid webdav-status-grid"></div>
-                                <div id="email-report-action-status" class="action-status"></div>
                             </div>
                         </div>
+                        <div class="form-group">
+                            <label>重复日期</label>
+                            <div class="schedule-days">
+                                {% for value, label in [('mon','周一'),('tue','周二'),('wed','周三'),('thu','周四'),('fri','周五'),('sat','周六'),('sun','周日')] %}
+                                <label><input type="checkbox" class="schedule-day" value="{{ value }}"> {{ label }}</label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>抓取回看天数</label>
+                                <input type="number" id="schedule-fetch-days" min="1" max="3650" value="3">
+                                <p class="section-desc">每次抓取最近 N 天的论文。</p>
+                            </div>
+                            <div class="form-group">
+                                <label>单次分析上限</label>
+                                <input type="number" id="schedule-analyze-limit" min="1" max="10000" value="1000">
+                                <p class="section-desc">每次最多处理的待分析论文数。</p>
+                            </div>
+                        </div>
+                        <div class="settings-actions">
+                            <button class="action-btn btn-primary" onclick="saveSchedule()">💾 保存定时任务</button>
+                            <a class="action-btn" href="/tasks">📋 前往论文处理</a>
+                        </div>
+                        <div id="schedule-save-status" class="action-status"></div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3>固定执行流程</h3>
+                        <div class="pipeline-step-list">
+                            <div class="pipeline-step"><span>1</span><div><strong>抓取论文</strong><p id="pipeline-fetch-desc">读取调度配置后抓取最近论文。</p></div></div>
+                            <div class="pipeline-step"><span>2</span><div><strong>基础分析</strong><p id="pipeline-analyze-desc">处理尚未完成基础分析的论文。</p></div></div>
+                            <div class="pipeline-step"><span>3</span><div><strong>推荐评分</strong><p id="pipeline-recommend-desc">按研究兴趣计算推荐分；未设置兴趣时跳过。</p></div></div>
+                            <div class="pipeline-step"><span>4</span><div><strong>生成报告</strong><p>为数据库中的最新论文日期生成日报。</p></div></div>
+                            <div class="pipeline-step"><span>5</span><div><strong>发送邮件</strong><p id="pipeline-email-desc">读取下方报告邮件配置；未启用时跳过。</p></div></div>
+                            <div class="pipeline-step"><span>6</span><div><strong>WebDAV 备份</strong><p id="pipeline-backup-desc">读取“数据库 → 云备份”配置；未启用时跳过。</p></div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-group" id="grp-email">
+                <div class="settings-group-title" onclick="toggleGroup('grp-email')">
+                    <span>✉️ 报告邮件</span>
+                    <span class="collapse-arrow">▾</span>
+                </div>
+                <div class="settings-group-body">
+                    <div class="settings-section">
+                        <p class="section-desc">日报生成后使用这一份共享 SMTP 配置发送邮件。测试发送使用最近一份已生成报告。</p>
+                        <div class="form-group"><label><input type="checkbox" id="email-report-enabled"> 启用日报邮件步骤</label></div>
+                        <div class="form-row">
+                            <div class="form-group" style="flex:2;"><label>SMTP 服务器</label><input type="text" id="email-smtp-host" placeholder="smtp.example.com"></div>
+                            <div class="form-group" style="max-width:140px;"><label>端口</label><input type="number" id="email-smtp-port" min="1" max="65535" step="1" value="587"></div>
+                            <div class="form-group" style="max-width:160px;"><label>加密方式</label><select id="email-security"><option value="starttls">STARTTLS</option><option value="ssl">SSL/TLS</option><option value="none">不加密</option></select></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group"><label>SMTP 用户名</label><input type="text" id="email-username" autocomplete="username"></div>
+                            <div class="form-group"><label>SMTP 密码 / 授权码</label><div class="input-group"><input type="password" id="email-password" autocomplete="new-password" placeholder="留空表示不修改"><button class="btn-small" onclick="togglePwd('email-password')">👁</button></div></div>
+                            <div class="form-group"><label>发件人</label><input type="text" id="email-sender" placeholder="留空则使用 SMTP 用户名"></div>
+                        </div>
+                        <div class="form-group"><label>收件人</label><textarea id="email-recipients" rows="3" placeholder="多个邮箱可用逗号、分号或换行分隔"></textarea></div>
+                        <div class="form-row">
+                            <div class="form-group" style="flex:2;"><label>主题模板</label><input type="text" id="email-subject-template" placeholder="AI 论文日报 {date} - {paper_count} 篇论文"></div>
+                            <div class="form-group"><label>站点地址</label><input type="text" id="email-site-url" placeholder="https://your-domain.example"></div>
+                        </div>
+                        <div class="settings-actions">
+                            <button class="action-btn btn-primary" onclick="saveEmailReport()">💾 保存邮件配置</button>
+                            <button class="action-btn" onclick="testEmailReport(this)">✉️ 测试发送</button>
+                        </div>
+                        <div id="email-report-status" class="db-info-grid webdav-status-grid"></div>
+                        <div id="email-report-action-status" class="action-status"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <div class="settings-group-title"><span>📜 执行日志</span></div>
+                <div class="settings-group-body">
+                    <div class="settings-section">
+                        <div class="log-controls schedule-log-controls">
+                            <select id="schedule-log-filter" onchange="loadTaskLogs(1)">
+                                <option value="">全部已记录任务</option>
+                                <option value="daily_pipeline">AI 论文日报</option>
+                                <option value="fetch">抓取论文</option>
+                                <option value="analyze">AI 分析</option>
+                                <option value="recommend">推荐评分</option>
+                                <option value="generate">生成报告</option>
+                                <option value="run">组合处理</option>
+                                <option value="email_report">报告邮件</option>
+                                <option value="webdav_backup">WebDAV 备份</option>
+                            </select>
+                            <button class="action-btn" onclick="loadTaskLogs()">🔄 刷新</button>
+                            <button class="action-btn" onclick="clearTaskLogs()">🗑️ 清理 30 天前日志</button>
+                        </div>
+                        <div id="schedule-task-logs" class="task-log-list"></div>
+                        <div id="schedule-log-pagination" class="pagination"></div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- ============ Tab 2: 数据库 ============ -->
+        <!-- ============ Tab 3: 数据库 ============ -->
         <div id="tab-db" class="tab-panel">
             <div class="settings-group" id="grp-db-overview">
                 <div class="settings-group-title" onclick="toggleGroup('grp-db-overview')">
@@ -482,6 +542,9 @@
         let modelFetchTimer = null;
         let providerFormMode = 'add';
         let recommendationEventSource = null;
+        let currentTaskLogPage = 1;
+        let scheduleRefreshTimer = null;
+        let scheduleWebdavConfig = {};
 
         function escapeHtml(value) {
             return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -500,18 +563,30 @@
                 .replace(/\n/g, '\\n'));
         }
 
-        function switchTab(name) {
+        function switchTab(name, button) {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
             document.getElementById('tab-' + name).classList.add('active');
-            event.target.classList.add('active');
+            if (button) button.classList.add('active');
             if (name === 'db') loadDbInfo();
             if (name === 'admin') loadSystemStatus();
             if (name === 'ai') initSidebar();
+            if (scheduleRefreshTimer) {
+                clearInterval(scheduleRefreshTimer);
+                scheduleRefreshTimer = null;
+            }
+            if (name === 'schedule') {
+                loadSchedulePanel();
+                loadTaskLogs();
+                scheduleRefreshTimer = setInterval(() => {
+                    loadSchedulePanel(false);
+                    loadTaskLogs();
+                }, 30000);
+            }
         }
 
         /* ---- 设置页分区折叠 + 侧栏滚动高亮 ---- */
-        const SETTINGS_GROUPS = ['grp-providers', 'grp-routing', 'grp-content', 'grp-network', 'grp-email'];
+        const SETTINGS_GROUPS = ['grp-providers', 'grp-routing', 'grp-content', 'grp-network'];
         let sidebarObserver = null;
 
         function toggleGroup(id) {
@@ -585,6 +660,7 @@
             const personalizationData = await personalizationResp.json();
             const webdavData = await webdavResp.json();
             const emailData = await emailResp.json();
+            scheduleWebdavConfig = webdavData;
 
             renderProviderList();
             renderPresetGrid();
@@ -1441,6 +1517,7 @@
 
         /* ---- Database Info ---- */
         function renderWebdavBackup(data) {
+            scheduleWebdavConfig = data || {};
             document.getElementById('webdav-enabled').checked = !!data.enabled;
             document.getElementById('webdav-url').value = data.url || '';
             document.getElementById('webdav-username').value = data.username || '';
@@ -1519,6 +1596,180 @@
             }
         }
 
+        /* ---- Scheduled daily pipeline & task logs ---- */
+        const TASK_NAMES = {
+            daily_pipeline: '⏰ AI 论文日报',
+            fetch: '📥 抓取论文',
+            analyze: '🤖 AI 分析',
+            recommend: '🎯 推荐评分',
+            generate: '📝 生成报告',
+            run: '🚀 组合处理',
+            email_report: '✉️ 报告邮件',
+            webdav_backup: '☁️ WebDAV 备份',
+        };
+        const TASK_STATUS = {
+            success: {icon: '✅', label: '成功', css: 'log-success'},
+            warning: {icon: '⚠️', label: '部分成功', css: 'log-warning'},
+            error: {icon: '❌', label: '失败', css: 'log-error'},
+            skipped: {icon: '⏭️', label: '已跳过', css: 'log-skipped'},
+            interrupted: {icon: '🛑', label: '已中断', css: 'log-interrupted'},
+            running: {icon: '⏳', label: '运行中', css: 'log-running'},
+            pending: {icon: '•', label: '等待中', css: 'log-pending'},
+        };
+
+        function taskStatus(status) {
+            return TASK_STATUS[status] || TASK_STATUS.running;
+        }
+
+        function durationText(value) {
+            return value === null || value === undefined ? '' : `${value}s`;
+        }
+
+        async function loadSchedulePanel(updateForm = true) {
+            try {
+                const [scheduleResp, webdavResp] = await Promise.all([
+                    fetch('/api/tasks/scheduled'),
+                    fetch('/api/settings/webdav-backup'),
+                ]);
+                const data = await scheduleResp.json();
+                scheduleWebdavConfig = await webdavResp.json();
+                if (updateForm) {
+                    document.getElementById('schedule-enabled').checked = !!data.enabled;
+                    document.getElementById('schedule-hour').value = data.hour ?? 10;
+                    document.getElementById('schedule-minute').value = data.minute ?? 0;
+                    document.getElementById('schedule-fetch-days').value = data.fetch_days ?? 3;
+                    document.getElementById('schedule-analyze-limit').value = data.analyze_limit ?? 1000;
+                    const selectedDays = new Set(data.days_of_week || []);
+                    document.querySelectorAll('.schedule-day').forEach(box => {
+                        box.checked = selectedDays.has(box.value);
+                    });
+                }
+
+                const job = (data.jobs || [])[0];
+                const lastRun = data.last_run;
+                const lastMeta = lastRun ? taskStatus(lastRun.status) : null;
+                document.getElementById('schedule-runtime-status').innerHTML = `
+                    <div class="db-stat"><div class="db-stat-value">${data.enabled ? '已启用' : '已停用'}</div><div class="db-stat-label">任务状态</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(data.timezone || '本地时区')}</div><div class="db-stat-label">服务时区</div></div>
+                    <div class="db-stat db-stat-wide"><div class="db-stat-label">下次执行</div><div class="db-stat-value">${escapeHtml(job ? job.next_run : '未调度')}</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${lastMeta ? `${lastMeta.icon} ${lastMeta.label}` : '暂无'}</div><div class="db-stat-label">上次结果</div></div>
+                    <div class="db-stat"><div class="db-stat-value">${escapeHtml(lastRun ? durationText(lastRun.duration_sec) || '运行中' : 'N/A')}</div><div class="db-stat-label">上次耗时</div></div>
+                    <div class="db-stat db-stat-wide"><div class="db-stat-label">上次运行</div><div class="db-stat-value">${escapeHtml(lastRun ? lastRun.started_at : 'N/A')}</div></div>
+                `;
+                document.getElementById('pipeline-fetch-desc').textContent = `抓取最近 ${data.fetch_days || 3} 天论文。`;
+                document.getElementById('pipeline-analyze-desc').textContent = `最多分析 ${data.analyze_limit || 1000} 篇待处理论文。`;
+                const hasInterest = !!document.getElementById('research-interests').value.trim();
+                document.getElementById('pipeline-recommend-desc').textContent = hasInterest
+                    ? '已设置研究兴趣，将为报告日期补齐推荐评分。'
+                    : '未设置研究兴趣，执行时将跳过。';
+                document.getElementById('pipeline-email-desc').textContent = document.getElementById('email-report-enabled').checked
+                    ? '已启用，报告生成后发送邮件。'
+                    : '未启用，执行时将跳过。';
+                document.getElementById('pipeline-backup-desc').textContent = scheduleWebdavConfig.enabled
+                    ? '已启用，流程末尾执行 WebDAV 备份。'
+                    : '未启用；可在“数据库 → 云备份”中配置。';
+            } catch (e) {
+                document.getElementById('schedule-runtime-status').innerHTML = '<p>调度状态加载失败</p>';
+            }
+        }
+
+        async function saveSchedule() {
+            const statusEl = document.getElementById('schedule-save-status');
+            const days = Array.from(document.querySelectorAll('.schedule-day:checked')).map(box => box.value);
+            if (!days.length) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ 请至少选择一个执行日';
+                return;
+            }
+            const data = {
+                enabled: document.getElementById('schedule-enabled').checked,
+                days_of_week: days,
+                hour: parseInt(document.getElementById('schedule-hour').value || '0', 10),
+                minute: parseInt(document.getElementById('schedule-minute').value || '0', 10),
+                fetch_days: parseInt(document.getElementById('schedule-fetch-days').value || '3', 10),
+                analyze_limit: parseInt(document.getElementById('schedule-analyze-limit').value || '1000', 10),
+            };
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在保存...';
+            try {
+                const resp = await fetch('/api/settings/schedule', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data),
+                });
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + (result.message || '保存失败');
+                if (result.status === 'ok') await loadSchedulePanel();
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            }
+        }
+
+        function renderTaskStep(step) {
+            const meta = taskStatus(step.status);
+            return `<div class="pipeline-log-step ${meta.css}">
+                <span class="log-status">${meta.icon}</span>
+                <strong>${escapeHtml(step.position)}. ${escapeHtml(step.step_name)}</strong>
+                <span>${escapeHtml(step.message || meta.label)}</span>
+                <span class="log-dur">${escapeHtml(durationText(step.duration_sec))}</span>
+                ${step.detail ? `<div class="log-detail">${escapeHtml(step.detail)}</div>` : ''}
+            </div>`;
+        }
+
+        async function loadTaskLogs(page) {
+            if (page) currentTaskLogPage = page;
+            const filter = document.getElementById('schedule-log-filter').value;
+            try {
+                const resp = await fetch(`/api/tasks/logs?task=${encodeURIComponent(filter)}&page=${currentTaskLogPage}`);
+                const data = await resp.json();
+                const box = document.getElementById('schedule-task-logs');
+                if (!(data.logs || []).length) {
+                    box.innerHTML = '<div class="empty-state"><p>暂无日志</p></div>';
+                    document.getElementById('schedule-log-pagination').innerHTML = '';
+                    return;
+                }
+                box.innerHTML = data.logs.map(log => {
+                    const meta = taskStatus(log.status);
+                    const main = `<span class="log-status">${meta.icon}</span>
+                        <span class="log-task">${escapeHtml(TASK_NAMES[log.task_name] || log.task_name)}</span>
+                        <span class="log-msg">${escapeHtml(log.message || meta.label)}</span>
+                        <span class="log-dur">${escapeHtml(durationText(log.duration_sec))}</span>
+                        <span class="log-time">${escapeHtml(log.started_at || '')}</span>`;
+                    const steps = log.steps || [];
+                    if (steps.length) {
+                        return `<details class="log-item ${meta.css}"><summary class="log-main">${main}<span class="log-expand">展开步骤</span></summary><div class="pipeline-log-steps">${steps.map(renderTaskStep).join('')}</div>${log.detail ? `<div class="log-detail">${escapeHtml(log.detail)}</div>` : ''}</details>`;
+                    }
+                    return `<div class="log-item ${meta.css}"><div class="log-main">${main}</div>${log.detail ? `<div class="log-detail">${escapeHtml(log.detail)}</div>` : ''}</div>`;
+                }).join('');
+
+                const totalPages = Math.ceil(data.total / data.per_page);
+                let pagination = '';
+                if (totalPages > 1) {
+                    if (currentTaskLogPage > 1) pagination += `<a href="#" onclick="loadTaskLogs(${currentTaskLogPage - 1});return false;" class="page-link">← 上一页</a>`;
+                    pagination += `<span class="page-info">第 ${currentTaskLogPage} / ${totalPages} 页</span>`;
+                    if (currentTaskLogPage < totalPages) pagination += `<a href="#" onclick="loadTaskLogs(${currentTaskLogPage + 1});return false;" class="page-link">下一页 →</a>`;
+                }
+                document.getElementById('schedule-log-pagination').innerHTML = pagination;
+            } catch (e) {
+                document.getElementById('schedule-task-logs').innerHTML = '<div class="empty-state"><p>日志加载失败</p></div>';
+            }
+        }
+
+        async function clearTaskLogs() {
+            if (!confirm('确定清理 30 天前的任务日志？')) return;
+            try {
+                const resp = await fetch('/api/tasks/clear', {method: 'POST'});
+                const data = await resp.json();
+                alert(data.message);
+                await loadTaskLogs(1);
+                await loadSchedulePanel(false);
+            } catch (e) {
+                alert('清理失败: ' + e.message);
+            }
+        }
+
         function renderEmailReport(data) {
             document.getElementById('email-report-enabled').checked = !!data.enabled;
             document.getElementById('email-smtp-host').value = data.smtp_host || '';
@@ -1532,6 +1783,8 @@
             document.getElementById('email-subject-template').value = data.subject_template || 'AI 论文日报 {date} - {paper_count} 篇论文';
             document.getElementById('email-site-url').value = data.site_url || '';
             renderEmailReportStatus(data);
+            const emailDesc = document.getElementById('pipeline-email-desc');
+            if (emailDesc) emailDesc.textContent = data.enabled ? '已启用，报告生成后发送邮件。' : '未启用，执行时将跳过。';
         }
 
         function renderEmailReportStatus(data) {

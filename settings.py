@@ -435,8 +435,11 @@ DEFAULT_SETTINGS = {
     },
     "schedule": {
         "enabled": True,
+        "days_of_week": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
         "hour": SCHEDULE_HOUR,
         "minute": SCHEDULE_MINUTE,
+        "fetch_days": 3,
+        "analyze_limit": 1000,
     },
     "providers": {
         "deepseek": {
@@ -509,14 +512,29 @@ def _as_int(value, default):
 
 
 def _normalize_schedule(schedule):
-    """补齐并约束定时任务配置。"""
+    """补齐并约束内置日报任务配置。"""
     schedule = dict(schedule or {})
+    valid_days = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+    raw_days = schedule.get("days_of_week", valid_days)
+    if not isinstance(raw_days, (list, tuple)):
+        raw_days = valid_days
+    days_of_week = []
+    for day in valid_days:
+        if day in raw_days:
+            days_of_week.append(day)
+    if not days_of_week:
+        days_of_week = list(valid_days)
     hour = _as_int(schedule.get("hour"), SCHEDULE_HOUR)
     minute = _as_int(schedule.get("minute"), SCHEDULE_MINUTE)
+    fetch_days = _as_int(schedule.get("fetch_days"), 3)
+    analyze_limit = _as_int(schedule.get("analyze_limit"), 1000)
     return {
         "enabled": _as_bool(schedule.get("enabled"), True),
+        "days_of_week": days_of_week,
         "hour": max(0, min(23, hour)),
         "minute": max(0, min(59, minute)),
+        "fetch_days": max(1, min(3650, fetch_days)),
+        "analyze_limit": max(1, min(10000, analyze_limit)),
     }
 
 

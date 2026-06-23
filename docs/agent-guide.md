@@ -86,17 +86,18 @@ analyzer.analyze_paper_full(paper_data)
 ### 5. 定时任务流程
 
 ```
-APScheduler cron(hour=10, minute=0)
+APScheduler cron(day_of_week, hour, minute)
   → daily_pipeline()
-    → fetch_latest_papers(days=3)  # 近 3 日
-    → analyze_pending_papers(limit=1000)
-    → recommend_pending_papers(latest_date)  # 如已设置研究兴趣
+    → 初始化父日志与六条 task_log_steps
+    → fetch_latest_papers(days=schedule.fetch_days)
+    → analyze_pending_papers(limit=schedule.analyze_limit)
+    → recommend_pending_papers(latest_date)  # 未设置研究兴趣时 skipped
     → generate_report_content(latest_date)
     → save_report()
-    → run_webdav_backup()  # 如已启用；失败单独记日志，不中断日报任务
+    → send_report_email() / run_webdav_backup()  # 未启用时 skipped，失败时 warning
 ```
 
-实际执行时间从 `settings.json` 的 `schedule` 字段读取，`config.py` 仅提供首次默认值。
+执行星期、时间、抓取回看天数和分析上限从 `settings.json.schedule` 读取，`config.py` 仅提供首次默认时间。应用启动时遗留 `running` 日志会变为 `interrupted`；定时日报和 `/api/run` 共用互斥锁。
 
 ---
 
@@ -119,7 +120,7 @@ if "new_field" in migrated:
 - 管理登录默认持久 180 天，使用签名 cookie；`session_secret` 存在 `settings.json` 中以保证服务重启后仍有效，修改管理密码会使旧登录状态失效
 - `GET /api/providers` 只能返回 `api_key_masked`，不要返回完整 `api_key`
 - 个性化推荐的研究兴趣保存在 `settings.personalization.research_interests`；推荐评分必须使用独立 `recommendation` 任务路由，并且只有 `recommendation_interest_hash` 匹配当前兴趣时才能用于报告排序
-- WebDAV 云备份配置保存在 `settings.webdav_backup`；GET 接口只返回 `password_masked`，每日任务备份失败不能中断日报流程
+- WebDAV 云备份配置保存在 `settings.webdav_backup`；GET 接口只返回 `password_masked`，自动备份失败写入 backup 步骤并使父任务变为 `warning`
 - 用户/AI/数据库内容进入 HTML 前必须转义，报告页的 `|safe` 只用于后端生成且已转义的 HTML
 ### 3. arXiv API 注意事项
 
@@ -241,8 +242,8 @@ if r.get("authors") and isinstance(r["authors"], str):
 | PDF 下载失败 | `pdf_reader.py` + 代理配置 + 令牌桶限速 |
 | 页面显示异常 | `templates/*.html` + `static/style.css` |
 | 数据库问题 | `database.py` + `data/papers.db` |
-| WebDAV 备份失败 | `backup.py` + `settings.webdav_backup` + task log `webdav_backup` |
-| 定时任务不执行 | `app.py` 的 `daily_pipeline()` + APScheduler 日志 |
+| WebDAV 备份失败 | `backup.py` + `settings.webdav_backup` + 日报 backup 步骤/手动日志 |
+| 定时任务不执行 | `app.py` 的 `daily_pipeline()` + APScheduler + `task_logs/task_log_steps` |
 | 配置不生效 | `settings.py` 的 `load_settings()` 合并逻辑 |
 
 ---

@@ -28,7 +28,7 @@
 | `GET /about` | GET | about.html | 公开项目介绍；首页提供入口 |
 | `GET /vision` | GET | vision.html | 实验室科研情报基础设施愿景；仅直接访问 |
 | `GET /settings` | GET | settings.html | 设置（设置管理密码后需登录） |
-| `GET /tasks` | GET | tasks.html | 任务管理（设置管理密码后需登录） |
+| `GET /tasks` | GET | tasks.html | 论文处理（设置管理密码后需登录） |
 | `GET /reports` | GET | reports.html | 报告列表 |
 | `GET /reports/<date>` | GET | report_detail.html | 报告详情 |
 | `GET /reading-list` | GET | reading_list.html | 阅读清单 |
@@ -159,7 +159,7 @@ POST /api/generate
 | `ai_summary` | bool | 传 `1/true` 时使用 `report_summary` 任务模型生成 AI 导读；默认不调用 LLM |
 | `recommend` | bool | 默认补齐当前研究兴趣下缺失/过期的推荐分；传 `0/false/no/off` 跳过 |
 
-### 一键执行
+### 抓取、分析并生成报告
 
 ```
 POST /api/run
@@ -171,7 +171,7 @@ POST /api/run
 |------|------|------|
 | `task_id` | string | SSE 进度任务 ID |
 
-依次执行：抓取 → 分析 → 生成报告
+依次执行：抓取 → 分析 → 推荐评分 → 生成报告。该接口与定时日报共享完整流水线互斥锁；已有流水线运行时返回 HTTP 409。
 
 ### SSE 进度流
 
@@ -570,8 +570,8 @@ POST /api/settings/ai-tasks      # 保存 AI 功能模型路由
 GET  /api/settings/ai-usage      # 获取近期 LLM token 用量汇总和趋势
 GET  /api/settings/personalization   # 获取研究兴趣
 POST /api/settings/personalization   # 保存研究兴趣（不自动重算）
-GET  /api/settings/schedule      # 获取每日定时任务配置
-POST /api/settings/schedule      # 保存每日定时任务配置并重建 APScheduler job
+GET  /api/settings/schedule      # 获取内置日报调度配置
+POST /api/settings/schedule      # 保存调度配置并重建 APScheduler job
 GET  /api/settings/proxy         # 获取代理配置
 POST /api/settings/proxy         # 保存代理配置
 GET  /api/settings/fetch         # 获取抓取配置
@@ -594,12 +594,15 @@ POST /api/settings/email-report  # 保存每日报告邮件配置
 ```json
 {
     "enabled": true,
+    "days_of_week": ["mon", "tue", "wed", "thu", "fri"],
     "hour": 8,
-    "minute": 0
+    "minute": 0,
+    "fetch_days": 3,
+    "analyze_limit": 1000
 }
 ```
 
-保存后会立即重建 APScheduler 中的每日任务。未设置 `data/settings.json.schedule` 时，首次默认值来自 `config.py` 的 `SCHEDULE_HOUR/SCHEDULE_MINUTE`。
+POST 支持部分更新，缺失字段沿用当前配置；保存后立即重建唯一的 APScheduler job。旧配置迁移时默认全周执行、回看 3 天、分析上限 1000；时区使用服务器本地时区，不补跑停机期间错过的触发。
 
 `POST /api/settings/webdav-backup` Body：
 
@@ -678,7 +681,7 @@ POST /api/backup/webdav/run
 POST /api/email-report/test
 ```
 
-需要登录。使用最近一份已生成的日报告测试 SMTP 发送；即使未启用每日自动发送，也可用于手动验证配置。若暂无报告，返回 400。邮件正文是摘要版：先尝试调用 `report_summary` 生成 AI 导读，再展示推荐分 `>80` 的重点论文和最多 20 篇速览；导读失败不阻断发送。测试发送和每日自动发送都会复用现有 `/api/settings/proxy` 网络代理配置。每日自动发送只在 `daily_pipeline` 生成并保存报告后触发；发送失败会记录 `email_report` 任务日志和设置页最近错误，不影响日报任务成功状态。
+需要登录。使用最近一份已生成的日报告测试 SMTP 发送；即使未启用日报邮件步骤，也可用于手动验证配置。若暂无报告，返回 400。邮件正文是摘要版：先尝试调用 `report_summary` 生成 AI 导读，再展示推荐分 `>80` 的重点论文和最多 20 篇速览；导读失败不阻断发送。测试发送和每日自动发送都会复用现有 `/api/settings/proxy` 网络代理配置。自动发送失败写入日报 email 步骤并使父任务标记为 `warning`，随后仍执行备份；手动测试发送写独立 `email_report` 日志。
 
 ### 数据库信息
 
@@ -711,7 +714,7 @@ DELETE /api/admin/password       # 清除密码
 GET /api/tasks/stats
 ```
 
-返回每个任务类型的执行次数、成功率、平均耗时、最后执行时间。
+兼容保留的统计接口；设置页不再展示该统计卡片。
 
 ### 任务日志
 
@@ -724,22 +727,29 @@ GET /api/tasks/logs
 | `task` | string | 任务类型筛选 |
 | `page` | int | 页码 |
 
+日报父日志额外包含 `steps` 数组；步骤状态可能为 `pending/running/success/warning/error/skipped/interrupted`。
+
 ### 定时任务
 
 ```
 GET /api/tasks/scheduled
 ```
 
-返回当前配置和实际注册到 APScheduler 的 job：
+返回完整配置、服务器时区、实际注册的 job 和最近一次日报运行：
 
 ```json
 {
     "enabled": true,
+    "days_of_week": ["mon", "tue", "wed", "thu", "fri"],
     "hour": 8,
     "minute": 0,
+    "fetch_days": 3,
+    "analyze_limit": 1000,
+    "timezone": "CST",
     "jobs": [
-        {"id": "daily_pipeline", "name": "daily_pipeline", "next_run_time": "..."}
-    ]
+        {"id": "daily_pipeline", "name": "AI 论文日报", "next_run": "...", "trigger": "..."}
+    ],
+    "last_run": {"id": 42, "status": "warning", "steps": []}
 }
 ```
 

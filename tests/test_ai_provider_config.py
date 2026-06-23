@@ -175,6 +175,30 @@ class AiTaskSettingsTests(unittest.TestCase):
             settings.DB_DIR = original_dir
             settings.SETTINGS_PATH = original_path
 
+    def test_legacy_schedule_is_upgraded_to_full_daily_pipeline_defaults(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "schedule": {"enabled": True, "hour": 8, "minute": 30},
+                    }, f)
+
+                loaded = settings.load_settings()["schedule"]
+
+            self.assertEqual(loaded["days_of_week"], ["mon", "tue", "wed", "thu", "fri", "sat", "sun"])
+            self.assertEqual(loaded["fetch_days"], 3)
+            self.assertEqual(loaded["analyze_limit"], 1000)
+            self.assertEqual((loaded["hour"], loaded["minute"]), (8, 30))
+        finally:
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
+
     def test_get_session_secret_generates_and_persists_secret(self):
         import settings
 
@@ -460,6 +484,98 @@ class AiTaskSettingsTests(unittest.TestCase):
         self.assertIn("问题一？", instruction)
         self.assertIn("问题二？", instruction)
         self.assertIn("必须输出 Q1 到 Q2 的全部条目", instruction)
+
+
+class TaskLogDatabaseTests(unittest.TestCase):
+    def test_task_logs_include_ordered_pipeline_steps(self):
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                database.DB_DIR = tmp
+                database.DB_PATH = os.path.join(tmp, "papers.db")
+                database.init_db()
+
+                log_id = database.start_task_log("daily_pipeline", "每日定时任务启动")
+                database.initialize_task_log_steps(log_id, [
+                    ("fetch", "抓取论文"),
+                    ("analyze", "基础分析"),
+                ])
+                database.set_task_log_step_status(log_id, "fetch", "running", "正在抓取")
+                database.set_task_log_step_status(log_id, "fetch", "success", "抓取 2 篇")
+                database.finish_task_log(log_id, "warning", "完成但有警告")
+
+                logs, total = database.get_task_logs(task_name="daily_pipeline")
+
+            self.assertEqual(total, 1)
+            self.assertEqual(logs[0]["status"], "warning")
+            self.assertEqual([step["step_key"] for step in logs[0]["steps"]], ["fetch", "analyze"])
+            self.assertEqual(logs[0]["steps"][0]["status"], "success")
+            self.assertEqual(logs[0]["steps"][1]["status"], "pending")
+        finally:
+            database.DB_DIR = original_dir
+            database.DB_PATH = original_path
+
+    def test_startup_reconciliation_interrupts_orphaned_task_runs(self):
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                database.DB_DIR = tmp
+                database.DB_PATH = os.path.join(tmp, "papers.db")
+                database.init_db()
+
+                running_id = database.start_task_log("daily_pipeline", "每日定时任务启动")
+                database.initialize_task_log_steps(running_id, [
+                    ("fetch", "抓取论文"),
+                    ("analyze", "基础分析"),
+                ])
+                database.set_task_log_step_status(running_id, "fetch", "running", "正在抓取")
+                finished_id = database.start_task_log("fetch", "手动抓取")
+                database.finish_task_log(finished_id, "success", "已完成")
+
+                interrupted = database.interrupt_running_task_logs("服务重启，任务已中断")
+                logs, _ = database.get_task_logs()
+
+            by_id = {log["id"]: log for log in logs}
+            self.assertEqual(interrupted, 1)
+            self.assertEqual(by_id[running_id]["status"], "interrupted")
+            self.assertEqual(by_id[running_id]["steps"][0]["status"], "interrupted")
+            self.assertEqual(by_id[running_id]["steps"][1]["status"], "skipped")
+            self.assertEqual(by_id[finished_id]["status"], "success")
+        finally:
+            database.DB_DIR = original_dir
+            database.DB_PATH = original_path
+
+    def test_clearing_parent_logs_cascades_pipeline_steps(self):
+        import database
+
+        original_dir = database.DB_DIR
+        original_path = database.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                database.DB_DIR = tmp
+                database.DB_PATH = os.path.join(tmp, "papers.db")
+                database.init_db()
+                log_id = database.start_task_log("daily_pipeline", "AI 论文日报启动")
+                database.initialize_task_log_steps(log_id, [("fetch", "抓取论文")])
+                with database.get_connection() as conn:
+                    conn.execute("UPDATE task_logs SET started_at = '2020-01-01 00:00:00' WHERE id = ?", (log_id,))
+                    conn.commit()
+
+                deleted = database.clear_task_logs(keep_days=30)
+                with database.get_connection() as conn:
+                    step_count = conn.execute("SELECT COUNT(*) FROM task_log_steps").fetchone()[0]
+
+            self.assertEqual(deleted, 1)
+            self.assertEqual(step_count, 0)
+        finally:
+            database.DB_DIR = original_dir
+            database.DB_PATH = original_path
 
 
 class DummyOpenAI:
@@ -863,16 +979,86 @@ class ProviderEndpointTests(unittest.TestCase):
 
     def test_schedule_endpoint_saves_and_reconfigures(self):
         app_module = self.app_module
-        schedule = {"enabled": True, "hour": 8, "minute": 30}
-        app_module.request = FakeRequest(schedule)
+        current = {
+            "enabled": True,
+            "days_of_week": ["mon", "wed", "fri"],
+            "hour": 10,
+            "minute": 0,
+            "fetch_days": 7,
+            "analyze_limit": 250,
+        }
+        saved = {**current, "hour": 8, "minute": 30}
+        app_module.request = FakeRequest({"enabled": True, "hour": 8, "minute": 30})
 
-        with patch.object(app_module, "save_schedule_config", return_value=True), \
-             patch.object(app_module, "get_schedule_config", return_value=schedule), \
+        with patch.object(app_module, "save_schedule_config", return_value=True) as save_schedule, \
+             patch.object(app_module, "get_schedule_config", side_effect=[current, saved]), \
              patch.object(app_module, "configure_daily_job") as configure_daily_job:
             result = app_module.api_save_schedule_config()
 
         self.assertEqual(result["status"], "ok")
-        configure_daily_job.assert_called_once_with(schedule)
+        save_schedule.assert_called_once_with(saved)
+        configure_daily_job.assert_called_once_with(saved)
+
+    def test_scheduler_uses_selected_days_and_prevents_overlapping_instances(self):
+        app_module = self.app_module
+        schedule = {
+            "enabled": True,
+            "days_of_week": ["mon", "wed", "fri"],
+            "hour": 8,
+            "minute": 30,
+            "fetch_days": 3,
+            "analyze_limit": 1000,
+        }
+
+        with patch.object(app_module.scheduler, "get_job", return_value=None), \
+             patch.object(app_module.scheduler, "add_job") as add_job:
+            app_module.configure_daily_job(schedule)
+
+        kwargs = add_job.call_args.kwargs
+        self.assertEqual(kwargs["day_of_week"], "mon,wed,fri")
+        self.assertEqual((kwargs["hour"], kwargs["minute"]), (8, 30))
+        self.assertEqual(kwargs["max_instances"], 1)
+        self.assertTrue(kwargs["coalesce"])
+
+    def test_scheduled_tasks_endpoint_includes_timezone_config_and_last_run(self):
+        app_module = self.app_module
+        schedule = {
+            "enabled": True,
+            "days_of_week": ["mon", "tue"],
+            "hour": 8,
+            "minute": 30,
+            "fetch_days": 5,
+            "analyze_limit": 200,
+        }
+        job = types.SimpleNamespace(
+            id="daily_pipeline",
+            name="AI 论文日报",
+            next_run_time=datetime(2026, 6, 24, 8, 30),
+            trigger="cron[day_of_week='mon,tue', hour='8', minute='30']",
+        )
+        last_run = {"id": 9, "status": "warning", "steps": [{"step_key": "backup"}]}
+
+        with patch.object(app_module, "get_schedule_config", return_value=schedule), \
+             patch.object(app_module.scheduler, "get_jobs", return_value=[job]), \
+             patch.object(app_module, "get_task_logs", return_value=([last_run], 1)):
+            result = app_module.api_scheduled_tasks()
+
+        self.assertEqual(result["days_of_week"], ["mon", "tue"])
+        self.assertEqual(result["fetch_days"], 5)
+        self.assertEqual(result["analyze_limit"], 200)
+        self.assertTrue(result["timezone"])
+        self.assertEqual(result["last_run"], last_run)
+
+    def test_app_startup_reconciles_orphaned_running_tasks_before_scheduling(self):
+        app_module = self.app_module
+
+        with patch.object(app_module, "init_db"), \
+             patch.object(app_module, "interrupt_running_task_logs", return_value=2) as interrupt, \
+             patch.object(app_module, "configure_daily_job") as configure:
+            app_module.create_app()
+
+        interrupt.assert_called_once()
+        configure.assert_called_once()
 
     def test_get_webdav_backup_endpoint_masks_password(self):
         app_module = self.app_module
@@ -937,25 +1123,70 @@ class ProviderEndpointTests(unittest.TestCase):
         start_log.assert_called_once_with("webdav_backup", "WebDAV 云同步备份")
         self.assertEqual(finish_log.call_args.args[1], "success")
 
+    def test_daily_pipeline_uses_saved_limits_and_records_six_steps(self):
+        app_module = self.app_module
+        schedule = {
+            "enabled": True,
+            "days_of_week": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+            "hour": 10,
+            "minute": 0,
+            "fetch_days": 5,
+            "analyze_limit": 200,
+        }
+
+        with patch.object(app_module, "start_task_log", return_value=1), \
+             patch.object(app_module, "initialize_task_log_steps") as initialize_steps, \
+             patch.object(app_module, "set_task_log_step_status") as set_step, \
+             patch.object(app_module, "finish_task_log") as finish_log, \
+             patch.object(app_module, "get_schedule_config", return_value=schedule), \
+             patch.object(app_module, "fetch_latest_papers", return_value=[]) as fetch, \
+             patch.object(app_module, "get_concurrency", return_value=2), \
+             patch.object(app_module, "analyze_pending_papers", return_value=0) as analyze, \
+             patch.object(app_module, "get_all_dates", return_value=[("2026-06-23",)]), \
+             patch.object(app_module, "get_personalization_config", return_value={"research_interests": ""}), \
+             patch.object(app_module, "recommend_pending_papers") as recommend, \
+             patch.object(app_module, "generate_report_content", return_value=("html", 0, 0, 0.0)), \
+             patch.object(app_module, "save_report"), \
+             patch.object(app_module, "get_email_report_config", return_value={"enabled": False}), \
+             patch.object(app_module, "get_webdav_backup_config", return_value={"enabled": False}):
+            result = app_module.daily_pipeline()
+
+        self.assertEqual(result["status"], "success")
+        fetch.assert_called_once_with(days=5)
+        self.assertEqual(analyze.call_args.kwargs["limit"], 200)
+        self.assertEqual(len(initialize_steps.call_args.args[1]), 6)
+        recommend.assert_not_called()
+        step_statuses = {(call.args[1], call.args[2]) for call in set_step.call_args_list}
+        self.assertIn(("recommend", "skipped"), step_statuses)
+        self.assertIn(("email", "skipped"), step_statuses)
+        self.assertIn(("backup", "skipped"), step_statuses)
+        self.assertEqual(finish_log.call_args.args[1], "success")
+
     def test_daily_pipeline_backup_failure_does_not_fail_pipeline(self):
         app_module = self.app_module
 
         with patch.object(app_module, "start_task_log", return_value=1), \
+             patch.object(app_module, "initialize_task_log_steps"), \
+             patch.object(app_module, "set_task_log_step_status") as set_step, \
              patch.object(app_module, "finish_task_log") as finish_log, \
+             patch.object(app_module, "get_schedule_config", return_value={"fetch_days": 3, "analyze_limit": 1000}), \
              patch.object(app_module, "fetch_latest_papers", return_value=[]), \
              patch.object(app_module, "get_concurrency", return_value=2), \
              patch.object(app_module, "analyze_pending_papers", return_value=0), \
              patch.object(app_module, "get_all_dates", return_value=[("2026-06-15",)]), \
+             patch.object(app_module, "get_personalization_config", return_value={"research_interests": "robotics"}), \
              patch.object(app_module, "recommend_pending_papers", return_value=0), \
              patch.object(app_module, "generate_report_content", return_value=("html", 1, 1, 0.0)), \
              patch.object(app_module, "save_report"), \
              patch.object(app_module, "get_email_report_config", return_value={"enabled": False}), \
              patch.object(app_module, "get_webdav_backup_config", return_value={"enabled": True}), \
              patch.object(app_module, "_run_webdav_backup_task", side_effect=RuntimeError("dav down")):
-            app_module.daily_pipeline()
+            result = app_module.daily_pipeline()
 
-        self.assertEqual(finish_log.call_args.args[1], "success")
-        self.assertIn("云备份失败", finish_log.call_args.args[2])
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(finish_log.call_args.args[1], "warning")
+        self.assertIn("WebDAV 备份失败", finish_log.call_args.args[2])
+        self.assertIn(("backup", "warning"), {(call.args[1], call.args[2]) for call in set_step.call_args_list})
 
     def test_daily_pipeline_duplicate_email_skip_does_not_fail_pipeline(self):
         app_module = self.app_module
@@ -967,11 +1198,15 @@ class ProviderEndpointTests(unittest.TestCase):
         }
 
         with patch.object(app_module, "start_task_log", return_value=1), \
+             patch.object(app_module, "initialize_task_log_steps"), \
+             patch.object(app_module, "set_task_log_step_status") as set_step, \
              patch.object(app_module, "finish_task_log") as finish_log, \
+             patch.object(app_module, "get_schedule_config", return_value={"fetch_days": 3, "analyze_limit": 1000}), \
              patch.object(app_module, "fetch_latest_papers", return_value=[]), \
              patch.object(app_module, "get_concurrency", return_value=2), \
              patch.object(app_module, "analyze_pending_papers", return_value=0), \
              patch.object(app_module, "get_all_dates", return_value=[("2026-06-17",)]), \
+             patch.object(app_module, "get_personalization_config", return_value={"research_interests": "robotics"}), \
              patch.object(app_module, "recommend_pending_papers", return_value=0), \
              patch.object(app_module, "generate_report_content", return_value=("html", 1, 1, 4.0)), \
              patch.object(app_module, "save_report"), \
@@ -980,9 +1215,61 @@ class ProviderEndpointTests(unittest.TestCase):
              patch.object(app_module, "get_webdav_backup_config", return_value={"enabled": False}):
             app_module.daily_pipeline()
 
-        email_task.assert_called_once()
+        self.assertFalse(email_task.call_args.kwargs["log_task"])
         self.assertEqual(finish_log.call_args.args[1], "success")
-        self.assertIn("已发送，跳过重复发送", finish_log.call_args.args[2])
+        self.assertIn(("email", "skipped"), {(call.args[1], call.args[2]) for call in set_step.call_args_list})
+
+    def test_scheduled_pipeline_skips_when_full_pipeline_is_already_running(self):
+        app_module = self.app_module
+        self.assertTrue(app_module.pipeline_lock.acquire(blocking=False))
+        try:
+            with patch.object(app_module, "start_task_log", return_value=12), \
+                 patch.object(app_module, "finish_task_log") as finish_log, \
+                 patch.object(app_module, "fetch_latest_papers") as fetch:
+                result = app_module.daily_pipeline()
+        finally:
+            app_module.pipeline_lock.release()
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(finish_log.call_args.args[1], "skipped")
+        fetch.assert_not_called()
+
+    def test_manual_combined_run_returns_conflict_when_pipeline_is_busy(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest(args={"task_id": "manual-1"})
+        self.assertTrue(app_module.pipeline_lock.acquire(blocking=False))
+        try:
+            with patch.object(app_module, "start_task_log") as start_log, \
+                 patch.object(app_module, "fetch_latest_papers") as fetch:
+                result, status = app_module.api_run()
+        finally:
+            app_module.pipeline_lock.release()
+
+        self.assertEqual(status, 409)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("正在运行", result["message"])
+        start_log.assert_not_called()
+        fetch.assert_not_called()
+
+    def test_daily_pipeline_stops_after_core_step_failure(self):
+        app_module = self.app_module
+
+        with patch.object(app_module, "start_task_log", return_value=1), \
+             patch.object(app_module, "initialize_task_log_steps"), \
+             patch.object(app_module, "set_task_log_step_status") as set_step, \
+             patch.object(app_module, "finish_task_log") as finish_log, \
+             patch.object(app_module, "get_schedule_config", return_value={"fetch_days": 3, "analyze_limit": 1000}), \
+             patch.object(app_module, "fetch_latest_papers", side_effect=RuntimeError("arXiv down")), \
+             patch.object(app_module, "analyze_pending_papers") as analyze:
+            result = app_module.daily_pipeline()
+
+        self.assertEqual(result["status"], "error")
+        analyze.assert_not_called()
+        statuses = [(call.args[1], call.args[2]) for call in set_step.call_args_list]
+        self.assertIn(("fetch", "error"), statuses)
+        for step_key in ("analyze", "recommend", "report", "email", "backup"):
+            self.assertIn((step_key, "skipped"), statuses)
+        self.assertEqual(finish_log.call_args.args[1], "error")
 
     def test_email_report_task_sends_when_ai_summary_fails(self):
         app_module = self.app_module
@@ -2928,6 +3215,31 @@ class EmailReportTests(unittest.TestCase):
 
 
 class TemplateSafetyTests(unittest.TestCase):
+    def test_paper_processing_page_excludes_schedule_stats_and_logs(self):
+        with open("templates/tasks.html", "r", encoding="utf-8") as f:
+            template = f.read()
+
+        self.assertIn("论文处理 - AI 论文数据库", template)
+        self.assertIn("抓取、分析并生成报告", template)
+        self.assertNotIn("schedule-enabled", template)
+        self.assertNotIn("task-stats", template)
+        self.assertNotIn("/api/tasks/logs", template)
+        self.assertNotIn("运行中的任务", template)
+
+    def test_settings_has_independent_schedule_tab_with_email_and_logs(self):
+        with open("templates/settings.html", "r", encoding="utf-8") as f:
+            template = f.read()
+
+        ai_start = template.index('id="tab-ai"')
+        schedule_start = template.index('id="tab-schedule"')
+        db_start = template.index('id="tab-db"')
+        self.assertLess(ai_start, schedule_start)
+        self.assertLess(schedule_start, db_start)
+        self.assertNotIn('id="grp-email"', template[ai_start:schedule_start])
+        self.assertIn('id="grp-email"', template[schedule_start:db_start])
+        self.assertIn('id="schedule-task-logs"', template[schedule_start:db_start])
+        self.assertIn("固定执行流程", template[schedule_start:db_start])
+
     def test_public_promo_page_presents_the_complete_research_workflow(self):
         with open("templates/about.html", "r", encoding="utf-8") as f:
             html = f.read()

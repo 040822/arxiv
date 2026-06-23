@@ -32,7 +32,8 @@ from database import (
     update_analysis, hide_paper, unhide_paper, delete_paper,
     insert_analysis,
     start_task_log, finish_task_log, get_task_logs, get_task_stats,
-    get_running_tasks, clear_task_logs,
+    get_running_tasks, clear_task_logs, initialize_task_log_steps,
+    set_task_log_step_status, interrupt_running_task_logs,
     save_report, get_reports, get_report_by_date, get_report_dates,
     generate_report_content, get_ai_usage_summary,
     add_to_reading_list, remove_from_reading_list, is_in_reading_list,
@@ -89,6 +90,8 @@ app.config.update(
 progress_store = {}
 # 线程锁：保证多线程环境下进度数据的读写安全
 progress_lock = threading.Lock()
+# 完整流水线互斥锁：定时日报与手动组合任务不能并行执行。
+pipeline_lock = threading.Lock()
 
 
 def update_progress(task_id, data):
@@ -269,39 +272,46 @@ def configure_daily_job(schedule=None):
     scheduler.add_job(
         daily_pipeline,
         "cron",
+        day_of_week=",".join(schedule.get("days_of_week", ["mon", "tue", "wed", "thu", "fri", "sat", "sun"])),
         hour=schedule["hour"],
         minute=schedule["minute"],
         id="daily_pipeline",
-        name="每日定时任务",
+        name="AI 论文日报",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=60,
     )
     logger.info(f"Scheduler daily job configured: {schedule['hour']:02d}:{schedule['minute']:02d}")
 
 
-def _run_webdav_backup_task(force=False):
-    """执行 WebDAV 云备份并写入独立任务日志。"""
-    log_id = start_task_log("webdav_backup", "WebDAV 云同步备份")
+def _run_webdav_backup_task(force=False, log_task=True):
+    """执行 WebDAV 云备份；独立调用时写顶级日志。"""
+    log_id = start_task_log("webdav_backup", "WebDAV 云同步备份") if log_task else None
     try:
         result = run_webdav_backup(force=force)
         if result.get("status") == "skipped":
-            finish_task_log(log_id, "success", result.get("message", "WebDAV 云备份已跳过"))
+            if log_id:
+                finish_task_log(log_id, "success", result.get("message", "WebDAV 云备份已跳过"))
             return result
         detail = (
             f"uploaded={','.join(result.get('uploaded_files', []))}, "
             f"deleted={','.join(result.get('deleted_files', []))}, "
             f"archive_size={result.get('archive_size', '')}, db_size={result.get('db_size', '')}"
         )
-        finish_task_log(log_id, "success", result.get("message", "WebDAV 备份完成"), detail)
+        if log_id:
+            finish_task_log(log_id, "success", result.get("message", "WebDAV 备份完成"), detail)
         return result
     except Exception as e:
         logger.error(f"WebDAV backup error: {e}")
-        finish_task_log(log_id, "error", f"WebDAV 备份失败：{e}")
+        if log_id:
+            finish_task_log(log_id, "error", f"WebDAV 备份失败：{e}")
         raise
 
 
-def _run_email_report_task(report, force=False):
-    """发送每日报告邮件并写入独立任务日志。"""
-    log_id = start_task_log("email_report", "发送每日报告邮件")
+def _run_email_report_task(report, force=False, log_task=True):
+    """发送每日报告邮件；独立调用时写顶级日志。"""
+    log_id = start_task_log("email_report", "发送每日报告邮件") if log_task else None
     try:
         email_config = get_email_report_config(mask_password=False)
         report_date = str(report.get("report_date") or "").strip()
@@ -314,12 +324,13 @@ def _run_email_report_task(report, force=False):
                 "message": message,
                 "report_date": report_date,
             }
-            finish_task_log(
-                log_id,
-                "success",
-                message,
-                f"report_date={report_date}, reason=already_sent",
-            )
+            if log_id:
+                finish_task_log(
+                    log_id,
+                    "success",
+                    message,
+                    f"report_date={report_date}, reason=already_sent",
+                )
             return result
 
         ai_summary = None
@@ -338,7 +349,8 @@ def _run_email_report_task(report, force=False):
             ai_summary_error=ai_summary_error,
         )
         if result.get("status") == "skipped":
-            finish_task_log(log_id, "success", result.get("message", "报告邮件发送已跳过"))
+            if log_id:
+                finish_task_log(log_id, "success", result.get("message", "报告邮件发送已跳过"))
             return result
         detail = (
             f"report_date={result.get('report_date', '')}, "
@@ -348,88 +360,196 @@ def _run_email_report_task(report, force=False):
         )
         if ai_summary_error:
             detail += f", ai_summary_error={ai_summary_error}"
-        finish_task_log(log_id, "success", result.get("message", "报告邮件发送完成"), detail)
+        if log_id:
+            finish_task_log(log_id, "success", result.get("message", "报告邮件发送完成"), detail)
         return result
     except Exception as e:
         logger.error(f"Email report error: {e}")
-        finish_task_log(log_id, "error", f"报告邮件发送失败：{e}")
+        if log_id:
+            finish_task_log(log_id, "error", f"报告邮件发送失败：{e}")
         raise
 
 
+DAILY_PIPELINE_STEPS = (
+    ("fetch", "抓取论文"),
+    ("analyze", "基础分析"),
+    ("recommend", "推荐评分"),
+    ("report", "生成报告"),
+    ("email", "发送邮件"),
+    ("backup", "WebDAV 备份"),
+)
+
+
+def _skip_pending_pipeline_steps(log_id, current_step, reason):
+    """将核心步骤失败后尚未执行的步骤收口为 skipped。"""
+    keys = [key for key, _ in DAILY_PIPELINE_STEPS]
+    start = keys.index(current_step) + 1 if current_step in keys else 0
+    for step_key in keys[start:]:
+        set_task_log_step_status(log_id, step_key, "skipped", reason)
+
+
 def daily_pipeline():
-    """
-    每日定时任务主流程
+    """执行唯一的内置 AI 论文日报流水线，并记录六步结构化日志。"""
+    if not pipeline_lock.acquire(blocking=False):
+        log_id = start_task_log("daily_pipeline", "AI 论文日报触发")
+        message = "已有完整流水线正在运行，本次定时触发已跳过"
+        finish_task_log(log_id, "skipped", message)
+        return {"status": "skipped", "message": message}
 
-    执行顺序：
-    1. 抓取近 3 天的新论文
-    2. 对未分析的论文进行 AI 分析
-    3. 生成当日报告
-    """
-    log_id = start_task_log("daily_pipeline", "每日定时任务启动")
+    log_id = None
+    warnings = []
+    current_step = "fetch"
     try:
-        # 步骤1：抓取近 3 天的论文
-        new_papers = fetch_latest_papers(days=3)
-        logger.info(f"Fetched {len(new_papers)} new papers.")
+        log_id = start_task_log("daily_pipeline", "AI 论文日报启动")
+        initialize_task_log_steps(log_id, DAILY_PIPELINE_STEPS)
+        schedule = get_schedule_config()
+        fetch_days = schedule.get("fetch_days", 3)
+        analyze_limit = schedule.get("analyze_limit", 1000)
 
-        # 步骤2：AI 分析未分析的论文
+        set_task_log_step_status(log_id, "fetch", "running", f"抓取最近 {fetch_days} 天论文")
+        new_papers = fetch_latest_papers(days=fetch_days)
+        fetch_message = f"抓取完成：{len(new_papers)} 篇新论文（回看 {fetch_days} 天）"
+        set_task_log_step_status(log_id, "fetch", "success", fetch_message)
+        logger.info(fetch_message)
+
+        current_step = "analyze"
+        analysis_progress = {}
+
+        def analysis_progress_callback(data):
+            if data.get("status") in ("completed", "error"):
+                analysis_progress.update(data)
+
         concurrency = get_concurrency()
-        analyzed_count = analyze_pending_papers(limit=1000, concurrency=concurrency)
-        logger.info(f"Analyzed {analyzed_count} papers.")
+        set_task_log_step_status(log_id, "analyze", "running", f"最多分析 {analyze_limit} 篇论文")
+        analyzed_count = analyze_pending_papers(
+            limit=analyze_limit,
+            concurrency=concurrency,
+            progress_callback=analysis_progress_callback,
+        )
+        analysis_failures = int(analysis_progress.get("fail", 0) or 0)
+        analysis_status = "warning" if analysis_failures else "success"
+        analysis_message = f"基础分析完成：{analyzed_count} 篇成功"
+        if analysis_failures:
+            analysis_message += f"，{analysis_failures} 篇失败"
+            warnings.append(analysis_message)
+        set_task_log_step_status(
+            log_id,
+            "analyze",
+            analysis_status,
+            analysis_message,
+            json.dumps(analysis_progress, ensure_ascii=False),
+        )
 
-        # 步骤3：为报告日期补齐个性化推荐分（如已设置研究兴趣）
-        from datetime import datetime
         dates = get_all_dates()
         report_date = dates[0][0] if dates else datetime.now().strftime("%Y-%m-%d")
-        recommended_count = recommend_pending_papers(limit=1000, date=report_date, concurrency=concurrency)
-        if recommended_count:
-            logger.info(f"Recommended {recommended_count} papers for {report_date}.")
 
-        # 步骤4：生成报告（使用最新的论文日期）
+        current_step = "recommend"
+        personalization = get_personalization_config()
+        recommended_count = 0
+        if not personalization.get("research_interests"):
+            set_task_log_step_status(log_id, "recommend", "skipped", "未设置研究兴趣，跳过推荐评分")
+        else:
+            recommendation_progress = {}
+
+            def recommendation_progress_callback(data):
+                if data.get("status") in ("completed", "error"):
+                    recommendation_progress.update(data)
+
+            set_task_log_step_status(log_id, "recommend", "running", f"计算 {report_date} 推荐评分")
+            recommended_count = recommend_pending_papers(
+                limit=1000,
+                date=report_date,
+                concurrency=concurrency,
+                progress_callback=recommendation_progress_callback,
+            )
+            recommendation_failures = int(recommendation_progress.get("fail", 0) or 0)
+            recommendation_status = "warning" if recommendation_failures else "success"
+            recommendation_message = f"推荐评分完成：{recommended_count} 篇成功"
+            if recommendation_failures:
+                recommendation_message += f"，{recommendation_failures} 篇失败"
+                warnings.append(recommendation_message)
+            set_task_log_step_status(
+                log_id,
+                "recommend",
+                recommendation_status,
+                recommendation_message,
+                json.dumps(recommendation_progress, ensure_ascii=False),
+            )
+
+        current_step = "report"
+        set_task_log_step_status(log_id, "report", "running", f"生成 {report_date} 日报")
         content, paper_count, analyzed_count_r, avg_rating = generate_report_content(report_date)
-        if content:
-            save_report(report_date, content, paper_count, analyzed_count_r, avg_rating)
-            logger.info(f"Report generated for {report_date}: {paper_count} papers, avg rating {avg_rating}")
+        if not content:
+            raise RuntimeError(f"{report_date} 无论文数据，无法生成报告")
+        save_report(report_date, content, paper_count, analyzed_count_r, avg_rating)
+        report_message = f"报告已生成：{report_date}，{paper_count} 篇论文"
+        set_task_log_step_status(log_id, "report", "success", report_message)
 
-        # 步骤5：按配置发送报告邮件；失败只记录，不中断日报流程
-        email_message = "报告邮件未启用"
-        email_detail = ""
+        current_step = "email"
         try:
             email_config = get_email_report_config(mask_password=False)
-            if content and email_config.get("enabled"):
-                email_report = {
+            if not email_config.get("enabled"):
+                email_message = "报告邮件未启用"
+                set_task_log_step_status(log_id, "email", "skipped", email_message)
+            else:
+                set_task_log_step_status(log_id, "email", "running", "发送每日报告邮件")
+                email_result = _run_email_report_task({
                     "report_date": report_date,
                     "content": content,
                     "paper_count": paper_count,
                     "analyzed_count": analyzed_count_r,
                     "avg_rating": avg_rating,
-                }
-                email_result = _run_email_report_task(email_report, force=False)
+                }, force=False, log_task=False)
                 email_message = email_result.get("message", "报告邮件发送完成")
-                email_detail = f", email_report={email_result.get('report_date', '')}"
+                email_status = "skipped" if email_result.get("status") == "skipped" else "success"
+                set_task_log_step_status(log_id, "email", email_status, email_message)
         except Exception as email_error:
             email_message = f"报告邮件发送失败：{email_error}"
-            email_detail = f", email_error={email_error}"
+            warnings.append(email_message)
+            set_task_log_step_status(log_id, "email", "warning", email_message)
 
-        # 步骤6：按配置执行 WebDAV 云备份；失败只记录，不中断日报流程
-        backup_message = "云备份未启用"
-        backup_detail = ""
+        current_step = "backup"
         try:
             backup_config = get_webdav_backup_config(mask_password=False)
-            if backup_config.get("enabled"):
-                backup_result = _run_webdav_backup_task(force=False)
-                backup_message = backup_result.get("message", "云备份完成")
-                backup_detail = f", backup={backup_result.get('last_uploaded_file', '')}"
+            if not backup_config.get("enabled"):
+                backup_message = "WebDAV 云备份未启用"
+                set_task_log_step_status(log_id, "backup", "skipped", backup_message)
+            else:
+                set_task_log_step_status(log_id, "backup", "running", "执行 WebDAV 云备份")
+                backup_result = _run_webdav_backup_task(force=False, log_task=False)
+                backup_message = backup_result.get("message", "WebDAV 备份完成")
+                backup_status = "skipped" if backup_result.get("status") == "skipped" else "success"
+                set_task_log_step_status(log_id, "backup", backup_status, backup_message)
         except Exception as backup_error:
-            backup_message = f"云备份失败：{backup_error}"
-            backup_detail = f", backup_error={backup_error}"
+            backup_message = f"WebDAV 备份失败：{backup_error}"
+            warnings.append(backup_message)
+            set_task_log_step_status(log_id, "backup", "warning", backup_message)
 
-        # 记录任务完成日志
-        finish_task_log(log_id, "success",
-            f"完成：抓取 {len(new_papers)} 篇（近3日），分析 {analyzed_count} 篇，推荐评分 {recommended_count} 篇，报告已生成，{email_message}，{backup_message}",
-            f"new_papers={len(new_papers)}, analyzed={analyzed_count}, recommended={recommended_count}, concurrency={concurrency}{email_detail}{backup_detail}")
+        final_status = "warning" if warnings else "success"
+        message = (
+            f"完成：抓取 {len(new_papers)} 篇，分析 {analyzed_count} 篇，"
+            f"推荐评分 {recommended_count} 篇，报告 {report_date} 已生成"
+        )
+        if warnings:
+            message += f"；警告：{'；'.join(warnings)}"
+        detail = json.dumps({
+            "new_papers": len(new_papers),
+            "analyzed": analyzed_count,
+            "recommended": recommended_count,
+            "report_date": report_date,
+            "concurrency": concurrency,
+        }, ensure_ascii=False)
+        finish_task_log(log_id, final_status, message, detail)
+        return {"status": final_status, "message": message, "log_id": log_id}
     except Exception as e:
         logger.error(f"Daily pipeline error: {e}")
-        finish_task_log(log_id, "error", f"失败：{e}")
+        if log_id is not None:
+            set_task_log_step_status(log_id, current_step, "error", f"执行失败：{e}")
+            _skip_pending_pipeline_steps(log_id, current_step, "前置步骤失败，未执行")
+            finish_task_log(log_id, "error", f"失败：{e}")
+        return {"status": "error", "message": str(e), "log_id": log_id}
+    finally:
+        pipeline_lock.release()
 
 
 # ====================================================================
@@ -683,17 +803,8 @@ def settings_page():
 
 @app.route("/tasks")
 def tasks_page():
-    """
-    任务管理页路由
-
-    显示定时任务状态、任务统计和日志。传入定时任务的执行时间配置。
-    """
-    schedule = get_schedule_config()
-    return render_template("tasks.html",
-        schedule_enabled=schedule["enabled"],
-        schedule_hour=schedule["hour"],
-        schedule_minute=schedule["minute"]
-    )
+    """论文处理页：提供抓取、分析、生成报告和添加指定论文操作。"""
+    return render_template("tasks.html")
 
 
 @app.route("/reports")
@@ -895,14 +1006,20 @@ def api_recalculate_recommendations():
 @app.route("/api/run", methods=["POST"])
 def api_run():
     """
-    一键执行全部流程 API
+    抓取、分析并生成报告 API
 
-    依次执行：抓取论文 → AI 分析 → 生成报告
+    依次执行：抓取论文 → AI 分析 → 推荐评分 → 生成报告
     通过进度回调实时更新各阶段状态。
     """
     task_id = request.args.get("task_id", "run")
-    log_id = start_task_log("run", "一键执行全部")
+    if not pipeline_lock.acquire(blocking=False):
+        return jsonify({
+            "status": "error",
+            "message": "已有完整流水线正在运行，请等待完成后再试",
+        }), 409
+    log_id = None
     try:
+        log_id = start_task_log("run", "抓取、分析并生成报告")
         # 阶段1：抓取论文
         update_progress(task_id, {"current": 0, "total": 4, "status": "running", "message": "正在抓取论文..."})
         new_papers = fetch_latest_papers()
@@ -943,9 +1060,12 @@ def api_run():
         update_progress(task_id, {"current": 4, "total": 4, "status": "completed", "message": msg})
         return jsonify({"status": "ok", "fetched": len(new_papers), "analyzed": analyzed_count, "recommended": recommended_count, "concurrency": concurrency, "message": msg})
     except Exception as e:
-        finish_task_log(log_id, "error", str(e))
+        if log_id is not None:
+            finish_task_log(log_id, "error", str(e))
         update_progress(task_id, {"status": "error", "message": str(e)})
         return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        pipeline_lock.release()
 
 
 @app.route("/api/progress/<task_id>")
@@ -1777,11 +1897,14 @@ def api_save_schedule_config():
     """保存每日定时任务配置，并立即重建 APScheduler job。"""
     try:
         data = request.get_json() or {}
-        schedule_config = {
-            "enabled": _request_bool(data, "enabled", True),
-            "hour": _request_int(data, "hour", 10),
-            "minute": _request_int(data, "minute", 0),
-        }
+        schedule_config = dict(get_schedule_config())
+        if "enabled" in data:
+            schedule_config["enabled"] = _request_bool(data, "enabled", schedule_config["enabled"])
+        for key in ("hour", "minute", "fetch_days", "analyze_limit"):
+            if key in data:
+                schedule_config[key] = _request_int(data, key, schedule_config[key])
+        if "days_of_week" in data:
+            schedule_config["days_of_week"] = data.get("days_of_week")
         if not save_schedule_config(schedule_config):
             return jsonify({"status": "error", "message": "保存失败"}), 500
         schedule = get_schedule_config()
@@ -2302,7 +2425,7 @@ def api_clear_logs():
 
 @app.route("/api/tasks/scheduled", methods=["GET"])
 def api_scheduled_tasks():
-    """获取 APScheduler 中所有已注册的定时任务信息（ID、名称、下次执行时间、触发器类型）"""
+    """获取内置日报配置、运行时状态和最近一次执行结果。"""
     schedule = get_schedule_config()
     jobs = []
     for job in scheduler.get_jobs():
@@ -2313,11 +2436,13 @@ def api_scheduled_tasks():
             "next_run": next_run.strftime("%Y-%m-%d %H:%M:%S") if next_run else "未调度",
             "trigger": str(job.trigger),
         })
+    recent_runs, _ = get_task_logs(task_name="daily_pipeline", limit=1, offset=0)
     return jsonify({
-        "enabled": schedule["enabled"],
-        "hour": schedule["hour"],
-        "minute": schedule["minute"],
+        **schedule,
+        "schedule": schedule,
+        "timezone": str(datetime.now().astimezone().tzinfo),
         "jobs": jobs,
+        "last_run": recent_runs[0] if recent_runs else None,
     })
 
 
@@ -2335,6 +2460,9 @@ def create_app():
     3. 启动调度器
     """
     init_db()
+    interrupted = interrupt_running_task_logs()
+    if interrupted:
+        logger.warning(f"Marked {interrupted} orphaned task logs as interrupted.")
     configure_daily_job()
     if not getattr(scheduler, "running", False):
         scheduler.start()

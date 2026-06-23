@@ -1887,6 +1887,10 @@ footer {
 .log-success { border-left-color: #28a745; }
 .log-error { border-left-color: #dc3545; background: #fff8f8; }
 .log-running { border-left-color: #f59e0b; background: #fffdf0; }
+.log-warning { border-left-color: #f59e0b; background: #fffbeb; }
+.log-skipped { border-left-color: #94a3b8; background: #f8fafc; }
+.log-interrupted { border-left-color: #7c3aed; background: #faf5ff; }
+.log-pending { border-left-color: #cbd5e1; background: #f8fafc; }
 
 .log-main {
     display: flex;
@@ -1911,6 +1915,107 @@ footer {
     word-break: break-all;
 }
 
+details.log-item > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+details.log-item > summary::-webkit-details-marker {
+    display: none;
+}
+
+.log-expand {
+    color: #1a73e8;
+    font-size: 0.8em;
+}
+
+.schedule-time-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.schedule-time-row select,
+.schedule-time-row input {
+    width: 92px;
+}
+
+.schedule-days {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.schedule-days label {
+    padding: 8px 12px;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.pipeline-step-list {
+    display: grid;
+    gap: 10px;
+}
+
+.pipeline-step {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #f8fafc;
+}
+
+.pipeline-step > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    border-radius: 50%;
+    background: #1a73e8;
+    color: #fff;
+    font-weight: 700;
+}
+
+.pipeline-step p {
+    margin: 4px 0 0;
+    color: #64748b;
+    font-size: 0.88em;
+}
+
+.pipeline-log-steps {
+    display: grid;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 10px 0 0 24px;
+    border-top: 1px solid #e2e8f0;
+}
+
+.pipeline-log-step {
+    display: grid;
+    grid-template-columns: 24px minmax(110px, auto) 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 7px 9px;
+    border-left: 3px solid #cbd5e1;
+    border-radius: 6px;
+    background: #fff;
+}
+
+.pipeline-log-step .log-detail {
+    grid-column: 2 / -1;
+}
+
+.schedule-log-controls {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
 @media (max-width: 768px) {
     .task-stats-grid {
         grid-template-columns: 1fr;
@@ -1929,6 +2034,28 @@ footer {
 
     .log-time, .log-dur {
         text-align: left;
+    }
+
+    .settings-tabs {
+        overflow-x: auto;
+    }
+
+    .tab-btn {
+        white-space: nowrap;
+        padding: 10px 14px;
+    }
+
+    .pipeline-log-steps {
+        padding-left: 0;
+    }
+
+    .pipeline-log-step {
+        grid-template-columns: 24px 1fr;
+    }
+
+    .pipeline-log-step > span:not(.log-status),
+    .pipeline-log-step .log-dur {
+        grid-column: 2;
     }
 }
 

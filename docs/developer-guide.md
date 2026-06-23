@@ -49,7 +49,7 @@ arxiv/
 │   ├── search.html     # 搜索
 │   ├── paper.html      # 论文详情
 │   ├── settings.html   # 设置
-│   ├── tasks.html      # 任务管理
+│   ├── tasks.html      # 论文处理（手动抓取/分析/报告/添加论文）
 │   ├── reports.html    # 报告列表
 │   ├── report_detail.html  # 报告详情
 │   ├── reading_list.html   # 阅读清单
@@ -141,8 +141,8 @@ CREATE TABLE analysis (
 ```sql
 CREATE TABLE task_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_name TEXT NOT NULL,           -- daily_pipeline/fetch/analyze/generate/run
-    status TEXT NOT NULL DEFAULT 'running',  -- running/success/error
+    task_name TEXT NOT NULL,           -- daily_pipeline/fetch/analyze/generate/run/...
+    status TEXT NOT NULL DEFAULT 'running',  -- running/success/warning/error/skipped/interrupted
     message TEXT,
     detail TEXT,
     started_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -150,6 +150,8 @@ CREATE TABLE task_logs (
     duration_sec REAL
 );
 ```
+
+`task_log_steps` 通过 `task_log_id` 级联关联父日志，保存六步的 `step_key`、顺序、状态、消息、起止时间和耗时；`GET /api/tasks/logs` 会把步骤数组附在对应父日志上。
 
 #### reports — 报告表
 
@@ -250,7 +252,8 @@ CREATE TABLE paper_quiz_attempts (
 | `prompt_profiles` | 按 AI 功能拆分的稳定 system/instruction prompt |
 | `personalization` | 个性化推荐配置，当前包含 `research_interests` |
 | `webdav_backup` | WebDAV 云同步备份配置，包含地址、账号、远端目录、历史保留天数和最近备份状态 |
-| `email_report` | 每日报告邮件配置，包含 SMTP、收件人、主题模板、站点地址和最近发送状态 |
+| `email_report` | 每日报告邮件配置，包含 SMTP、收件人、主题模板、站点地址和最近发送状态；UI 位于定时任务标签 |
+| `schedule` | 唯一内置日报的星期、时间、抓取回看天数和分析上限 |
 | `prompts` | 旧版 system/user prompt 兼容字段，映射到 `deep_reading` |
 | `concurrency` | AI 分析并发数 |
 | `per_page` | 首页每页论文数 |
@@ -268,7 +271,9 @@ AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.b
 
 WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 `output/` 打包上传。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。
 
-报告邮件发送由 `email_report.py` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分 `>80` 的论文进入重点精读区，其余论文最多展示 20 篇速览，并可按 `site_url` 生成论文详情和完整报告链接。每日任务会在生成 AI 导读前检查 `last_sent_report_date`，同一日报成功发送后直接跳过；发送失败不会更新该日期，因此仍可重试。手动测试发送允许重复执行，并且不参与自动任务去重。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。每日任务中的邮件失败只记录 `email_report` 任务日志和最近错误，不中断日报流程。
+报告邮件发送由 `email_report.py` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分 `>80` 的论文进入重点精读区，其余论文最多展示 20 篇速览，并可按 `site_url` 生成论文详情和完整报告链接。每日任务会在生成 AI 导读前检查 `last_sent_report_date`，同一日报成功发送后直接跳过；发送失败不会更新该日期，因此仍可重试。手动测试发送允许重复执行，并且不参与自动任务去重。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。自动日报通过 `task_log_steps` 记录邮件/备份结果，附加步骤失败使父日志变为 `warning`；手动测试仍写独立顶级日志。
+
+定时日报固定为六步流程，`task_logs` 保存父任务，`task_log_steps` 保存步骤状态和耗时。核心步骤异常时后续步骤标记 `skipped`；服务启动时遗留 `running` 记录会被收口为 `interrupted`。`daily_pipeline` 与 `/api/run` 共用进程内非阻塞互斥锁。
 
 ---
 
