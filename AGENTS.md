@@ -514,7 +514,7 @@ if "new_column" not in columns:
 
 ### 7.7 CSS 样式约定
 - 组件样式使用 kebab-case：`.paper-card`、`.qa-item`
-- 状态样式使用前缀：`.log-success`、`.log-error`、`.log-running`
+- 状态样式使用前缀：`.log-success`、`.log-warning`、`.log-error`、`.log-skipped`、`.log-interrupted`、`.log-running`
 - 响应式断点：`@media (max-width: 768px)`
 
 ---

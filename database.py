@@ -172,7 +172,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS task_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             task_name TEXT NOT NULL,           -- 任务名称：daily_pipeline/fetch/analyze/generate/run
-            status TEXT NOT NULL DEFAULT 'running',  -- 状态：running/success/error
+            status TEXT NOT NULL DEFAULT 'running',  -- running/success/warning/error/skipped/interrupted
             message TEXT,                      -- 人类可读的消息
             detail TEXT,                       -- 技术细节
             started_at TEXT DEFAULT CURRENT_TIMESTAMP,  -- 开始时间
@@ -1325,7 +1325,7 @@ def finish_task_log(log_id, status, message="", detail=""):
     
     参数：
         log_id (int): 日志记录 ID（由 start_task_log 返回）
-        status (str): 最终状态，"success" 或 "error"
+        status (str): 最终状态，如 success/warning/error/skipped/interrupted
         message (str): 结果描述信息
         detail (str): 技术细节（如错误堆栈）
     """

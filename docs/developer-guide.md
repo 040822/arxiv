@@ -350,7 +350,7 @@ if "new_column" not in columns:
 ### CSS
 
 - 组件样式使用 kebab-case：`.paper-card`、`.qa-item`
-- 状态样式使用前缀：`.log-success`、`.log-error`
+- 状态样式使用前缀：`.log-success`、`.log-warning`、`.log-error`、`.log-skipped`、`.log-interrupted`
 - 响应式断点：`@media (max-width: 768px)`
 
 ### 模板
