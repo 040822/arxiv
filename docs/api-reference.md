@@ -25,6 +25,8 @@
 | `GET /paper/<arxiv_id>/chat` | GET | paper_chat.html | 单篇论文学习页（对话、问答、苏格拉底追问；设置管理密码后需登录） |
 | `GET /search?q=` | GET | search.html | 搜索 |
 | `GET /browse` | GET | browse.html | 分类浏览 |
+| `GET /about` | GET | about.html | 公开项目介绍；首页提供入口 |
+| `GET /vision` | GET | vision.html | 实验室科研情报基础设施愿景；仅直接访问 |
 | `GET /settings` | GET | settings.html | 设置（设置管理密码后需登录） |
 | `GET /tasks` | GET | tasks.html | 任务管理（设置管理密码后需登录） |
 | `GET /reports` | GET | reports.html | 报告列表 |
@@ -36,7 +38,7 @@
 
 ## 认证
 
-未设置管理密码时，系统保持本地免登录兼容。设置管理密码后，`/settings`、`/tasks`、`/paper/<arxiv_id>/chat`、所有 `POST/PUT/DELETE` 写接口、设置读取接口、任务日志接口都需要登录。
+未设置管理密码时，系统保持本地免登录兼容。设置管理密码后，`/settings`、`/tasks`、`/paper/<arxiv_id>/chat`、所有 `POST/PUT/DELETE` 写接口、设置读取接口、任务日志接口都需要登录。`/about` 与 `/vision` 为公开只读页面，不受管理密码限制。
 
 管理登录默认通过签名 cookie 持久保存 180 天，不需要“记住我”开关。默认使用 `data/settings.json` 内部字段 `session_secret` 作为 Flask session 签名密钥，因此服务重启后仍可保持登录；如果部署环境设置了 `FLASK_SECRET_KEY`，则优先使用该环境变量。修改管理密码后，旧 cookie 会因密码版本 token 不匹配而失效。
 

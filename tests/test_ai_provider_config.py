@@ -772,6 +772,34 @@ class ProviderEndpointTests(unittest.TestCase):
                 with patch.object(app_module, "has_admin_password", return_value=True):
                     self.assertIsNone(app_module.require_auth_for_protected_routes())
 
+    def test_promo_pages_are_public_even_when_password_enabled(self):
+        app_module = self.app_module
+        app_module.session.clear()
+
+        for endpoint, path in (("about_page", "/about"), ("vision_page", "/vision")):
+            with self.subTest(endpoint=endpoint):
+                app_module.request = FakeRequest(
+                    endpoint=endpoint,
+                    method="GET",
+                    path=path,
+                )
+                with patch.object(app_module, "has_admin_password", return_value=True):
+                    self.assertIsNone(app_module.require_auth_for_protected_routes())
+
+    def test_promo_page_routes_render_their_public_templates(self):
+        app_module = self.app_module
+
+        for view_name, template_name in (
+            ("about_page", "about.html"),
+            ("vision_page", "vision.html"),
+        ):
+            with self.subTest(view_name=view_name), \
+                 patch.object(app_module, "render_template", return_value=template_name) as render:
+                result = getattr(app_module, view_name)()
+
+                self.assertEqual(result, template_name)
+                render.assert_called_once_with(template_name)
+
     def test_todo_read_status_changes_still_require_login(self):
         app_module = self.app_module
         app_module.session.clear()
@@ -2900,6 +2928,58 @@ class EmailReportTests(unittest.TestCase):
 
 
 class TemplateSafetyTests(unittest.TestCase):
+    def test_public_promo_page_presents_the_complete_research_workflow(self):
+        with open("templates/about.html", "r", encoding="utf-8") as f:
+            html = f.read()
+
+        self.assertIn('href="/static/promo.css"', html)
+        self.assertIn("从发现论文，", html)
+        self.assertIn("到真正读懂。", html)
+        for label in ("每日抓取", "AI 筛选", "个性化推荐", "PDF 精读", "主动问答", "报告与备份"):
+            with self.subTest(label=label):
+                self.assertIn(label, html)
+        self.assertIn('href="/reports"', html)
+        self.assertIn('href="/browse"', html)
+        self.assertNotIn('href="/vision"', html)
+        self.assertIn('rel="noopener noreferrer"', html)
+        self.assertTrue(os.path.exists("static/promo.css"))
+
+    def test_vision_page_separates_current_capabilities_from_the_roadmap(self):
+        with open("templates/vision.html", "r", encoding="utf-8") as f:
+            html = f.read()
+
+        self.assertIn('href="/static/promo.css"', html)
+        self.assertIn("从个人阅读工具，", html)
+        self.assertIn("进化为实验室科研情报基础设施", html)
+        for status in ("已实现", "下一步", "长期愿景"):
+            with self.subTest(status=status):
+                self.assertIn(status, html)
+        for phase in ("实验室方向雷达", "协作型科研工作台", "实验室研究记忆"):
+            with self.subTest(phase=phase):
+                self.assertIn(phase, html)
+        for tool in ("Cool Papers", "Elicit", "ResearchRabbit", "OpenClaw"):
+            with self.subTest(tool=tool):
+                self.assertIn(tool, html)
+        self.assertIn('rel="noopener noreferrer"', html)
+
+    def test_home_links_to_public_promo_without_exposing_internal_vision(self):
+        with open("templates/index.html", "r", encoding="utf-8") as f:
+            index_html = f.read()
+
+        self.assertIn('href="/about"', index_html)
+        self.assertIn("项目介绍", index_html)
+        for path in (
+            "templates/index.html",
+            "templates/about.html",
+            "templates/browse.html",
+            "templates/search.html",
+            "templates/reports.html",
+            "templates/reading_list.html",
+        ):
+            with self.subTest(path=path):
+                with open(path, "r", encoding="utf-8") as f:
+                    self.assertNotIn('href="/vision"', f.read())
+
     def test_paper_inline_json_handlers_use_single_quoted_attributes(self):
         with open("templates/paper.html", "r", encoding="utf-8") as f:
             html = f.read()

@@ -40,10 +40,10 @@ arxiv/
 ├── email_report.py     # 每日报告 SMTP 邮件发送
 ├── pdf_reader.py       # PDF 下载与文本提取（令牌桶限速）
 ├── markdown_gen.py     # Markdown 报告生成
-├── app.py              # Flask Web 服务 + APScheduler（~1050 行）
+├── app.py              # Flask Web 服务 + APScheduler
 ├── main.py             # CLI 入口（fetch/analyze/generate/run）
 ├── requirements.txt    # Python 依赖
-├── templates/          # Jinja2 HTML 模板（9 个文件）
+├── templates/          # Jinja2 HTML 模板
 │   ├── index.html      # 首页（每日论文）
 │   ├── browse.html     # 分类浏览
 │   ├── search.html     # 搜索
@@ -53,8 +53,11 @@ arxiv/
 │   ├── reports.html    # 报告列表
 │   ├── report_detail.html  # 报告详情
 │   ├── reading_list.html   # 阅读清单
-│   └── paper_chat.html     # 单篇论文学习页
-├── static/style.css    # 全局样式（~1860 行）
+│   ├── paper_chat.html     # 单篇论文学习页
+│   ├── about.html          # 公开项目宣传页
+│   └── vision.html         # 实验室愿景页
+├── static/style.css    # 全局样式
+├── static/promo.css    # 宣传页独立样式（.promo-* 命名空间）
 ├── data/               # 运行时数据（不提交 git）
 │   ├── papers.db       # SQLite 数据库
 │   ├── settings.json   # 运行时配置
@@ -305,6 +308,8 @@ def api_new_endpoint():
 ### 4. 添加新样式
 
 在 `static/style.css` 中添加，使用 kebab-case 命名。
+
+宣传类独立页面使用 `static/promo.css`，所有类名以 `.promo-` 为前缀，避免影响现有业务页面。
 
 ---
 

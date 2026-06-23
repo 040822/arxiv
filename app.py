@@ -107,6 +107,8 @@ def get_progress(task_id):
 
 PUBLIC_GET_ENDPOINTS = {
     "index",
+    "about_page",
+    "vision_page",
     "paper_detail",
     "search",
     "browse",
@@ -468,6 +470,18 @@ def api_auth_logout():
     """退出登录。"""
     _clear_admin_session()
     return jsonify({"status": "ok", "message": "已退出登录"})
+
+
+@app.route("/about")
+def about_page():
+    """面向普通用户的项目介绍页。"""
+    return render_template("about.html")
+
+
+@app.route("/vision")
+def vision_page():
+    """面向实验室内部汇报的项目愿景页。"""
+    return render_template("vision.html")
 
 
 @app.route("/")

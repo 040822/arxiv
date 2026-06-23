@@ -46,9 +46,12 @@ arxiv/
 │   ├── search.html     # 搜索页
 │   ├── paper.html      # 论文详情（含编辑功能）
 │   ├── paper_chat.html # 论文学习页（对话、问答、苏格拉底追问）
+│   ├── about.html      # 公开项目宣传页（研究闭环、优势、竞品定位）
+│   ├── vision.html     # 实验室愿景页（科研价值、竞品格局、发展路线）
 │   ├── settings.html   # 设置页（AI/数据库/管理三个Tab）
 │   └── tasks.html      # 任务管理页（定时任务、统计、日志）
 ├── static/style.css    # 全局样式
+├── static/promo.css    # 宣传页独立样式（公开版 + 深色愿景版）
 ├── data/               # 运行时数据（不提交到git）
 │   ├── papers.db       # SQLite 数据库
 │   ├── settings.json   # 运行时配置
@@ -349,6 +352,8 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 | `GET /search?q=` | 搜索 |
 | `GET /paper/<arxiv_id>` | 论文详情（含编辑） |
 | `GET /paper/<arxiv_id>/chat` | 论文学习页（对话/问答/苏格拉底追问） |
+| `GET /about` | 公开项目宣传页（首页提供入口） |
+| `GET /vision` | 实验室科研情报基础设施愿景页（仅直接访问） |
 | `GET /settings` | 设置页（AI/数据库/管理） |
 | `GET /tasks` | 任务管理页 |
 
@@ -428,7 +433,7 @@ APScheduler cron(hour=settings.schedule.hour, minute=settings.schedule.minute)
 1. 如果涉及新数据库表/字段 → 修改 `database.py` 的 `init_db()` 并添加迁移逻辑
 2. 如果涉及新 API → 在 `app.py` 添加路由函数
 3. 如果涉及新页面 → 创建 `templates/xxx.html`，在 `app.py` 添加页面路由
-4. 如果涉及新样式 → 在 `static/style.css` 添加
+4. 如果涉及新样式 → 通用业务页面在 `static/style.css` 添加；独立宣传页使用 `static/promo.css` 和 `.promo-*` 命名空间
 5. 更新 `AGENTS.md` 记录变更
 
 ### 7.2 数据库迁移模式
