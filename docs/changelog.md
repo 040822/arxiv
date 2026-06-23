@@ -2,6 +2,13 @@
 
 ## 未发布
 
+### 论文学习页接入 Markdown 与 LaTeX 渲染
+- 自由讨论、主动问答练习、苏格拉底追问三处的 AI 回复、题目、评分反馈与改进版答案，从自写轻量 markdown（`renderMarkdownLite`，仅支持段落/行内代码/粗体/列表）升级为 marked + KaTeX 渲染，支持完整 Markdown 语法与 LaTeX 数学公式（`$...$`/`$$...$$`/`\(...\)`/`\[...\]` 四种定界符）
+- 数学片段先替换为占位符再交 marked 解析，避免 `$a*b*$` 中的 `*` 被 marked 当强调符号误解析；还原后由 `renderMathInElement` 在 DOM 上渲染公式
+- 安全：marked 默认透传原始 HTML，新增 `sanitizeDom` 在 DOM 层兜底——移除 `script/style/iframe/object/embed/link/meta` 标签、所有 `on*` 事件属性、`javascript:` 协议的 href/src；用户输入始终走 `escapeHtml` 不经 marked
+- 引入 vendor 静态资源：marked.min.js、katex.min.js + katex.min.css、auto-render.min.js 及 KaTeX 字体（已在 git 追踪）
+- 已知边界：数学占位符 `@@KX{n}@@` 若与 AI 原文里恰好出现的该字面字符串碰撞会误替换，极端罕见且 sanitizeDom 兜底，实际风险可忽略
+
 ### 宣传页视觉重构与无障碍修复
 - vision 愿景页从深色主题整体转为亮色高对比度主题：正文 `#10203b`/`#f6f8fb` ≈ 15:1、次要文字 `#5f6e84` ≈ 6.5:1，全部满足 WCAG AA；原深底上多处 2–3.5:1 的低对比度灰蓝（→箭头、各节眉标、能力列标题、roadmap 编号等约 10 处）随之消除
 - hero「研究记忆」示意图保留深色控制台卡片作为视觉锚点，青色辉光在深底上保持效果；控制台内浅字同步提亮保证可读
