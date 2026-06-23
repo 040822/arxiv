@@ -85,7 +85,7 @@
                     <p class="promo-vision-overline">THE FOUNDATION IS RUNNING</p>
                     <h2>关键不是从零画饼，<br>而是闭环已经跑通。</h2>
                 </div>
-                <p>现有系统已经覆盖从信息采集到学习反馈的完整链路。下一阶段是在这条可运行的链路上增加团队协作与知识关联，而不是推倒重来。</p>
+                <p>现有系统已经覆盖从信息采集到学习反馈的完整链路。下一阶段是在这条可运行的链路上增加团队协作与知识关联，而不是推倒重来。当前为单用户私有部署，成员账户与团队协作在路线图第二阶段引入。</p>
             </div>
 
             <div class="promo-capability-map" aria-label="当前系统能力地图">
@@ -120,6 +120,25 @@
                 <i aria-hidden="true"></i>
                 <span>原生 Web 工作台</span>
             </div>
+
+            <div class="promo-deploy-row" aria-label="部署与落地成本">
+                <div class="promo-deploy-item">
+                    <strong>本地私有部署</strong>
+                    <small>一台服务器即可运行，论文与学习记录全部留在实验室自有数据库，不依赖第三方托管。</small>
+                </div>
+                <div class="promo-deploy-item">
+                    <strong>数据始终可控</strong>
+                    <small>SQLite 单文件 + WebDAV 定时备份，迁移与归档成本极低，模型更换不影响积累。</small>
+                </div>
+                <div class="promo-deploy-item">
+                    <strong>模型按需自选</strong>
+                    <small>对接任意 OpenAI 兼容 API，可按任务分工配置不同供应商，在质量与成本之间灵活权衡。</small>
+                </div>
+                <div class="promo-deploy-item">
+                    <strong>低维护开销</strong>
+                    <small>定时任务自动抓取、分析与汇报，日常无需专人值守；升级时只改配置，不必重建数据。</small>
+                </div>
+            </div>
         </section>
 
         <section class="promo-vision-section promo-vision-section-panel" id="impact">
@@ -129,7 +148,7 @@
                         <p class="promo-vision-overline">VALUE TO THE LAB</p>
                         <h2>辅助效果不止是“读得更快”，<br>而是让科研过程更连续。</h2>
                     </div>
-                    <p>系统不替代研究判断，而是把低价值重复劳动交给自动化，把高价值判断保留给研究者，并让判断结果能够被团队再次利用。</p>
+                    <p>系统不替代研究判断，而是把低价值重复劳动交给自动化，把高价值判断保留给研究者，并让判断结果能够为综述、开题、组会与实验设计参考再次利用。</p>
                 </div>
 
                 <div class="promo-impact-grid">
@@ -141,7 +160,7 @@
                     <article class="promo-impact-card">
                         <span class="promo-impact-index">02</span>
                         <div class="promo-impact-transition"><span>个人笔记</span><i>→</i><strong>团队资产</strong></div>
-                        <p>摘要、评价、问答和理解盲区被结构化保存，为组会讨论与后续研究提供上下文。</p>
+                        <p>摘要、评价、问答和理解盲区被结构化保存，为组会讨论、综述撰写与开题调研提供可直接调用的上下文。</p>
                     </article>
                     <article class="promo-impact-card">
                         <span class="promo-impact-index">03</span>
@@ -151,14 +170,29 @@
                     <article class="promo-impact-card">
                         <span class="promo-impact-index">04</span>
                         <div class="promo-impact-transition"><span>经验流失</span><i>→</i><strong>组织记忆</strong></div>
-                        <p>研究方向、选文理由和方法判断随项目沉淀，新成员可以沿着已有脉络更快建立背景。</p>
+                        <p>研究方向、选文理由和方法判断随项目沉淀，新成员可以沿着已有脉络更快建立背景，为实验设计与方法选型保留可追溯的依据。</p>
                     </article>
                 </div>
 
                 <div class="promo-use-cases">
                     <p class="promo-capability-label">优先服务实验室的四个场景</p>
                     <div class="promo-use-case-row">
-                        <span>方向动态跟踪</span><span>组会选题准备</span><span>新生阅读路径</span><span>方法与证据复用</span>
+                        <article>
+                            <strong>方向动态跟踪</strong>
+                            <small>系统按实验室关注分类每日自动收录，结合研究兴趣给出推荐分，成员只需在更新后的候选集中判断，而非每次重新检索。</small>
+                        </article>
+                        <article>
+                            <strong>组会选题准备</strong>
+                            <small>组会前调用近期高推荐论文的中文摘要、简评与深度问答，快速形成可讨论的候选清单与背景材料。</small>
+                        </article>
+                        <article>
+                            <strong>新生阅读路径</strong>
+                            <small>新生围绕实验室方向描述研究兴趣，系统据此推荐入门论文并支持围绕原文的问答练习，缩短上手周期。</small>
+                        </article>
+                        <article>
+                            <strong>方法与证据复用</strong>
+                            <small>历史评级、标签与讨论记录沉淀在库，开题或实验设计时可按方法、数据集召回已有判断与结论对比。</small>
+                        </article>
                     </div>
                 </div>
             </div>
@@ -242,7 +276,7 @@
                         <div class="promo-roadmap-content">
                             <div class="promo-roadmap-meta"><div class="promo-status promo-status-next"><i></i> 下一步</div><span>协作层</span></div>
                             <h3>协作型科研工作台</h3>
-                            <p>让成员不只共享论文链接，还能共享为什么值得看、谁正在读、得出了什么判断，以及下一步要验证什么。</p>
+                            <p>让成员不只共享论文链接，还能共享为什么值得看、谁正在读、得出了什么判断，以及下一步要验证什么——这是从单用户走向实验室共用的关键一步。</p>
                             <ul>
                                 <li>成员账户、角色与实验室兴趣模型</li>
                                 <li>共享清单、批注与阅读任务</li>
