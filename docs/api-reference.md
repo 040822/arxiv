@@ -598,11 +598,13 @@ POST /api/settings/email-report  # 保存每日报告邮件配置
     "hour": 8,
     "minute": 0,
     "fetch_days": 3,
-    "analyze_limit": 1000
+    "analyze_limit": 1000,
+    "fetch_retry_interval_minutes": 10,
+    "fetch_max_retries": 20
 }
 ```
 
-POST 支持部分更新，缺失字段沿用当前配置；保存后立即重建唯一的 APScheduler job。旧配置迁移时默认全周执行、回看 3 天、分析上限 1000；时区使用服务器本地时区，不补跑停机期间错过的触发。
+POST 支持部分更新，缺失字段沿用当前配置；保存后立即重建唯一的 APScheduler job。旧配置迁移时默认全周执行、回看 3 天、分析上限 1000、抓取失败每 10 分钟重试且最多 20 次；时区使用服务器本地时区，不补跑停机期间错过的触发。抓取重试策略仅作用于内置定时日报，不影响手动抓取或一键执行接口。
 
 `POST /api/settings/webdav-backup` Body：
 
@@ -745,6 +747,8 @@ GET /api/tasks/scheduled
     "minute": 0,
     "fetch_days": 3,
     "analyze_limit": 1000,
+    "fetch_retry_interval_minutes": 10,
+    "fetch_max_retries": 20,
     "timezone": "CST",
     "jobs": [
         {"id": "daily_pipeline", "name": "AI 论文日报", "next_run": "...", "trigger": "..."}

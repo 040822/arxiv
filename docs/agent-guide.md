@@ -89,7 +89,7 @@ analyzer.analyze_paper_full(paper_data)
 APScheduler cron(day_of_week, hour, minute)
   → daily_pipeline()
     → 初始化父日志与六条 task_log_steps
-    → fetch_latest_papers(days=schedule.fetch_days)
+    → fetch_latest_papers(days=schedule.fetch_days)  # 失败按 schedule 重试，仅限定时日报
     → analyze_pending_papers(limit=schedule.analyze_limit)
     → recommend_pending_papers(latest_date)  # 未设置研究兴趣时 skipped
     → generate_report_content(latest_date)
@@ -97,7 +97,7 @@ APScheduler cron(day_of_week, hour, minute)
     → send_report_email() / run_webdav_backup()  # 未启用时 skipped，失败时 warning
 ```
 
-执行星期、时间、抓取回看天数和分析上限从 `settings.json.schedule` 读取，`config.py` 仅提供首次默认时间。应用启动时遗留 `running` 日志会变为 `interrupted`；定时日报和 `/api/run` 共用互斥锁。
+执行星期、时间、抓取回看天数、分析上限和抓取失败重试策略从 `settings.json.schedule` 读取，`config.py` 仅提供首次默认时间。抓取阶段异常时默认每 10 分钟重试，最多 20 次；该策略只作用于定时日报。应用启动时遗留 `running` 日志会变为 `interrupted`；定时日报和 `/api/run` 共用互斥锁。
 
 ---
 

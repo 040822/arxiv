@@ -313,6 +313,18 @@
                                 <p class="section-desc">每次最多处理的待分析论文数。</p>
                             </div>
                         </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>抓取失败重试间隔（分钟）</label>
+                                <input type="number" id="schedule-fetch-retry-interval" min="1" max="1440" value="10">
+                                <p class="section-desc">仅作用于内置日报抓取阶段。</p>
+                            </div>
+                            <div class="form-group">
+                                <label>抓取最大重试次数</label>
+                                <input type="number" id="schedule-fetch-max-retries" min="0" max="100" value="20">
+                                <p class="section-desc">0 表示抓取失败后不重试。</p>
+                            </div>
+                        </div>
                         <div class="settings-actions">
                             <button class="action-btn btn-primary" onclick="saveSchedule()">💾 保存定时任务</button>
                             <a class="action-btn" href="/tasks">📋 前往论文处理</a>
@@ -1639,6 +1651,8 @@
                     document.getElementById('schedule-minute').value = data.minute ?? 0;
                     document.getElementById('schedule-fetch-days').value = data.fetch_days ?? 3;
                     document.getElementById('schedule-analyze-limit').value = data.analyze_limit ?? 1000;
+                    document.getElementById('schedule-fetch-retry-interval').value = data.fetch_retry_interval_minutes ?? 10;
+                    document.getElementById('schedule-fetch-max-retries').value = data.fetch_max_retries ?? 20;
                     const selectedDays = new Set(data.days_of_week || []);
                     document.querySelectorAll('.schedule-day').forEach(box => {
                         box.checked = selectedDays.has(box.value);
@@ -1656,7 +1670,12 @@
                     <div class="db-stat"><div class="db-stat-value">${escapeHtml(lastRun ? durationText(lastRun.duration_sec) || '运行中' : 'N/A')}</div><div class="db-stat-label">上次耗时</div></div>
                     <div class="db-stat db-stat-wide"><div class="db-stat-label">上次运行</div><div class="db-stat-value">${escapeHtml(lastRun ? lastRun.started_at : 'N/A')}</div></div>
                 `;
-                document.getElementById('pipeline-fetch-desc').textContent = `抓取最近 ${data.fetch_days || 3} 天论文。`;
+                const retryInterval = data.fetch_retry_interval_minutes ?? 10;
+                const maxRetries = data.fetch_max_retries ?? 20;
+                const retryText = maxRetries > 0
+                    ? `失败后每 ${retryInterval} 分钟重试，最多 ${maxRetries} 次。`
+                    : '失败后不重试。';
+                document.getElementById('pipeline-fetch-desc').textContent = `抓取最近 ${data.fetch_days || 3} 天论文；${retryText}`;
                 document.getElementById('pipeline-analyze-desc').textContent = `最多分析 ${data.analyze_limit || 1000} 篇待处理论文。`;
                 const hasInterest = !!document.getElementById('research-interests').value.trim();
                 document.getElementById('pipeline-recommend-desc').textContent = hasInterest
@@ -1688,6 +1707,8 @@
                 minute: parseInt(document.getElementById('schedule-minute').value || '0', 10),
                 fetch_days: parseInt(document.getElementById('schedule-fetch-days').value || '3', 10),
                 analyze_limit: parseInt(document.getElementById('schedule-analyze-limit').value || '1000', 10),
+                fetch_retry_interval_minutes: parseInt(document.getElementById('schedule-fetch-retry-interval').value || '10', 10),
+                fetch_max_retries: parseInt(document.getElementById('schedule-fetch-max-retries').value || '20', 10),
             };
             statusEl.className = 'action-status info';
             statusEl.textContent = '正在保存...';

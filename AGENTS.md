@@ -248,6 +248,8 @@ APScheduler cron(day_of_week, hour, minute)
   → daily_pipeline()
     → 初始化 task_logs + 六条 task_log_steps
     → fetch_latest_papers(days=schedule.fetch_days)
+      # 抓取阶段异常时按 schedule.fetch_retry_interval_minutes 等待重试，
+      # 最多 schedule.fetch_max_retries 次；仅作用于定时日报
     → analyze_pending_papers(limit=schedule.analyze_limit)
     → 按研究兴趣补齐推荐评分（未设置时 skipped）
     → generate_report_content(latest_date) + save_report()
@@ -304,7 +306,9 @@ APScheduler cron(day_of_week, hour, minute)
     "hour": 10,
     "minute": 0,
     "fetch_days": 3,
-    "analyze_limit": 1000
+    "analyze_limit": 1000,
+    "fetch_retry_interval_minutes": 10,
+    "fetch_max_retries": 20
   },
   "providers": {
     "deepseek": {
@@ -354,7 +358,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `get_prompt_profile()` / `get_prompt_profiles()` — 获取任务级 Prompt Profile；`get_prompts()` 保留旧接口兼容
 - `get_concurrency()` — 获取并发数
 - `get_per_page()` — 获取每页论文数
-- `get_schedule_config()` / `save_schedule_config()` — 获取/保存内置日报的星期、时间、回看天数和分析上限
+- `get_schedule_config()` / `save_schedule_config()` — 获取/保存内置日报的星期、时间、回看天数、分析上限和抓取失败重试策略
 - `get_fetch_config()` / `save_fetch_config()` — 抓取配置（请求间隔、批次天数、批次间隔）
 - `get_proxy_config()` / `save_proxy_config()` — 代理配置
 - `get_personalization_config()` / `save_personalization_config()` — 个性化推荐研究兴趣
@@ -439,7 +443,7 @@ APScheduler cron(day_of_week, hour, minute)
 | `/api/settings/email-report` | GET/POST | 读取/保存每日报告邮件配置（GET 不返回明文密码） |
 | `/api/email-report/test` | POST | 使用最近一份日报告测试发送邮件 |
 | `/api/settings/concurrency` | POST | 保存并发数 |
-| `/api/settings/schedule` | GET/POST | 读取/保存内置日报的星期、时间、抓取天数和分析上限 |
+| `/api/settings/schedule` | GET/POST | 读取/保存内置日报的星期、时间、抓取天数、分析上限和抓取失败重试策略 |
 | `/api/db/info` | GET | 数据库信息 |
 | `/api/admin/password` | POST/DELETE | 设置/清除密码 |
 

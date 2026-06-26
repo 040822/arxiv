@@ -388,6 +388,46 @@ def _skip_pending_pipeline_steps(log_id, current_step, reason):
         set_task_log_step_status(log_id, step_key, "skipped", reason)
 
 
+def _daily_fetch_retry_policy_text(retry_interval_minutes, max_retries):
+    """生成定时日报抓取失败重试策略的短描述。"""
+    if max_retries <= 0:
+        return "失败后不重试"
+    return f"失败后每 {retry_interval_minutes} 分钟重试，最多 {max_retries} 次"
+
+
+def _fetch_for_daily_pipeline_with_retries(log_id, fetch_days, retry_interval_minutes, max_retries):
+    """为定时日报抓取阶段执行失败等待重试。"""
+    retry_interval_minutes = max(1, int(retry_interval_minutes or 10))
+    max_retries = max(0, int(max_retries or 0))
+    retry_count = 0
+
+    while True:
+        if retry_count > 0 and log_id is not None:
+            set_task_log_step_status(
+                log_id,
+                "fetch",
+                "running",
+                f"第 {retry_count}/{max_retries} 次重试抓取最近 {fetch_days} 天论文",
+            )
+        try:
+            return fetch_latest_papers(days=fetch_days), retry_count
+        except Exception as fetch_error:
+            if retry_count >= max_retries:
+                raise RuntimeError(f"抓取失败，已重试 {retry_count} 次仍未成功：{fetch_error}") from fetch_error
+
+            next_retry = retry_count + 1
+            wait_seconds = retry_interval_minutes * 60
+            message = (
+                f"抓取失败：{fetch_error}；"
+                f"{retry_interval_minutes} 分钟后第 {next_retry}/{max_retries} 次重试"
+            )
+            logger.warning(message)
+            if log_id is not None:
+                set_task_log_step_status(log_id, "fetch", "running", message)
+            time.sleep(wait_seconds)
+            retry_count = next_retry
+
+
 def daily_pipeline():
     """执行唯一的内置 AI 论文日报流水线，并记录六步结构化日志。"""
     if not pipeline_lock.acquire(blocking=False):
@@ -405,10 +445,18 @@ def daily_pipeline():
         schedule = get_schedule_config()
         fetch_days = schedule.get("fetch_days", 3)
         analyze_limit = schedule.get("analyze_limit", 1000)
+        fetch_retry_interval_minutes = schedule.get("fetch_retry_interval_minutes", 10)
+        fetch_max_retries = schedule.get("fetch_max_retries", 20)
 
-        set_task_log_step_status(log_id, "fetch", "running", f"抓取最近 {fetch_days} 天论文")
-        new_papers = fetch_latest_papers(days=fetch_days)
-        fetch_message = f"抓取完成：{len(new_papers)} 篇新论文（回看 {fetch_days} 天）"
+        retry_policy = _daily_fetch_retry_policy_text(fetch_retry_interval_minutes, fetch_max_retries)
+        set_task_log_step_status(log_id, "fetch", "running", f"抓取最近 {fetch_days} 天论文；{retry_policy}")
+        new_papers, fetch_retries = _fetch_for_daily_pipeline_with_retries(
+            log_id,
+            fetch_days,
+            fetch_retry_interval_minutes,
+            fetch_max_retries,
+        )
+        fetch_message = f"抓取完成：{len(new_papers)} 篇新论文（回看 {fetch_days} 天，重试 {fetch_retries} 次后成功）"
         set_task_log_step_status(log_id, "fetch", "success", fetch_message)
         logger.info(fetch_message)
 
@@ -1900,7 +1948,14 @@ def api_save_schedule_config():
         schedule_config = dict(get_schedule_config())
         if "enabled" in data:
             schedule_config["enabled"] = _request_bool(data, "enabled", schedule_config["enabled"])
-        for key in ("hour", "minute", "fetch_days", "analyze_limit"):
+        for key in (
+            "hour",
+            "minute",
+            "fetch_days",
+            "analyze_limit",
+            "fetch_retry_interval_minutes",
+            "fetch_max_retries",
+        ):
             if key in data:
                 schedule_config[key] = _request_int(data, key, schedule_config[key])
         if "days_of_week" in data:

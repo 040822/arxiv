@@ -440,6 +440,8 @@ DEFAULT_SETTINGS = {
         "minute": SCHEDULE_MINUTE,
         "fetch_days": 3,
         "analyze_limit": 1000,
+        "fetch_retry_interval_minutes": 10,
+        "fetch_max_retries": 20,
     },
     "providers": {
         "deepseek": {
@@ -528,6 +530,8 @@ def _normalize_schedule(schedule):
     minute = _as_int(schedule.get("minute"), SCHEDULE_MINUTE)
     fetch_days = _as_int(schedule.get("fetch_days"), 3)
     analyze_limit = _as_int(schedule.get("analyze_limit"), 1000)
+    fetch_retry_interval_minutes = _as_int(schedule.get("fetch_retry_interval_minutes"), 10)
+    fetch_max_retries = _as_int(schedule.get("fetch_max_retries"), 20)
     return {
         "enabled": _as_bool(schedule.get("enabled"), True),
         "days_of_week": days_of_week,
@@ -535,6 +539,8 @@ def _normalize_schedule(schedule):
         "minute": max(0, min(59, minute)),
         "fetch_days": max(1, min(3650, fetch_days)),
         "analyze_limit": max(1, min(10000, analyze_limit)),
+        "fetch_retry_interval_minutes": max(1, min(1440, fetch_retry_interval_minutes)),
+        "fetch_max_retries": max(0, min(100, fetch_max_retries)),
     }
 
 

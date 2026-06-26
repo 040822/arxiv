@@ -1,5 +1,6 @@
 import os
 import json
+import importlib
 import sqlite3
 import tempfile
 import sys
@@ -194,6 +195,8 @@ class AiTaskSettingsTests(unittest.TestCase):
             self.assertEqual(loaded["days_of_week"], ["mon", "tue", "wed", "thu", "fri", "sat", "sun"])
             self.assertEqual(loaded["fetch_days"], 3)
             self.assertEqual(loaded["analyze_limit"], 1000)
+            self.assertEqual(loaded["fetch_retry_interval_minutes"], 10)
+            self.assertEqual(loaded["fetch_max_retries"], 20)
             self.assertEqual((loaded["hour"], loaded["minute"]), (8, 30))
         finally:
             settings.DB_DIR = original_dir
@@ -1169,7 +1172,12 @@ class ProviderEndpointTests(unittest.TestCase):
              patch.object(app_module, "initialize_task_log_steps"), \
              patch.object(app_module, "set_task_log_step_status") as set_step, \
              patch.object(app_module, "finish_task_log") as finish_log, \
-             patch.object(app_module, "get_schedule_config", return_value={"fetch_days": 3, "analyze_limit": 1000}), \
+             patch.object(app_module, "get_schedule_config", return_value={
+                 "fetch_days": 3,
+                 "analyze_limit": 1000,
+                 "fetch_retry_interval_minutes": 10,
+                 "fetch_max_retries": 20,
+             }), \
              patch.object(app_module, "fetch_latest_papers", return_value=[]), \
              patch.object(app_module, "get_concurrency", return_value=2), \
              patch.object(app_module, "analyze_pending_papers", return_value=0), \
@@ -1201,7 +1209,12 @@ class ProviderEndpointTests(unittest.TestCase):
              patch.object(app_module, "initialize_task_log_steps"), \
              patch.object(app_module, "set_task_log_step_status") as set_step, \
              patch.object(app_module, "finish_task_log") as finish_log, \
-             patch.object(app_module, "get_schedule_config", return_value={"fetch_days": 3, "analyze_limit": 1000}), \
+             patch.object(app_module, "get_schedule_config", return_value={
+                 "fetch_days": 3,
+                 "analyze_limit": 1000,
+                 "fetch_retry_interval_minutes": 10,
+                 "fetch_max_retries": 20,
+             }), \
              patch.object(app_module, "fetch_latest_papers", return_value=[]), \
              patch.object(app_module, "get_concurrency", return_value=2), \
              patch.object(app_module, "analyze_pending_papers", return_value=0), \
@@ -1258,7 +1271,12 @@ class ProviderEndpointTests(unittest.TestCase):
              patch.object(app_module, "initialize_task_log_steps"), \
              patch.object(app_module, "set_task_log_step_status") as set_step, \
              patch.object(app_module, "finish_task_log") as finish_log, \
-             patch.object(app_module, "get_schedule_config", return_value={"fetch_days": 3, "analyze_limit": 1000}), \
+             patch.object(app_module, "get_schedule_config", return_value={
+                 "fetch_days": 3,
+                 "analyze_limit": 1000,
+                 "fetch_retry_interval_minutes": 10,
+                 "fetch_max_retries": 0,
+             }), \
              patch.object(app_module, "fetch_latest_papers", side_effect=RuntimeError("arXiv down")), \
              patch.object(app_module, "analyze_pending_papers") as analyze:
             result = app_module.daily_pipeline()
@@ -3323,6 +3341,134 @@ class TemplateSafetyTests(unittest.TestCase):
         self.assertNotIn("{{ i }}★", browse_html)
         self.assertNotIn("{{ min_rating }}★", browse_html)
         self.assertNotIn("{{ max_rating }}★", browse_html)
+
+
+class ScheduleRetryTests(unittest.TestCase):
+    def import_app_with_temp_settings(self, tmp):
+        import settings
+
+        settings.DB_DIR = tmp
+        settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+        sys.modules.pop("app", None)
+        return importlib.import_module("app")
+
+    def test_schedule_api_saves_and_returns_fetch_retry_config(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                app_module = self.import_app_with_temp_settings(tmp)
+                payload = {
+                    "enabled": True,
+                    "days_of_week": ["mon", "fri"],
+                    "hour": 8,
+                    "minute": 15,
+                    "fetch_days": 5,
+                    "analyze_limit": 500,
+                    "fetch_retry_interval_minutes": 12,
+                    "fetch_max_retries": 25,
+                }
+                with patch.object(app_module, "configure_daily_job"), \
+                        patch.object(app_module, "scheduler", types.SimpleNamespace(running=True)), \
+                        patch.object(app_module, "request", types.SimpleNamespace(get_json=lambda: payload)):
+                    response = app_module.api_save_schedule_config()
+                    self.assertEqual(response["status"], "ok")
+
+                    data = app_module.api_get_schedule_config()
+
+            self.assertEqual(data["fetch_retry_interval_minutes"], 12)
+            self.assertEqual(data["fetch_max_retries"], 25)
+        finally:
+            sys.modules.pop("app", None)
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
+
+    def test_daily_fetch_retries_then_succeeds(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                app_module = self.import_app_with_temp_settings(tmp)
+                with patch.object(app_module, "fetch_latest_papers", side_effect=[
+                    RuntimeError("arXiv 429"),
+                    RuntimeError("still limited"),
+                    [{"id": 1}],
+                ]) as fetch_mock, \
+                        patch.object(app_module.time, "sleep") as sleep_mock, \
+                        patch.object(app_module, "set_task_log_step_status") as step_mock:
+                    papers, retries = app_module._fetch_for_daily_pipeline_with_retries(
+                        log_id=123,
+                        fetch_days=3,
+                        retry_interval_minutes=10,
+                        max_retries=2,
+                    )
+
+            self.assertEqual(papers, [{"id": 1}])
+            self.assertEqual(retries, 2)
+            self.assertEqual(fetch_mock.call_count, 3)
+            sleep_mock.assert_any_call(600)
+            self.assertEqual(sleep_mock.call_count, 2)
+            self.assertGreaterEqual(step_mock.call_count, 2)
+        finally:
+            sys.modules.pop("app", None)
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
+
+    def test_daily_fetch_raises_after_max_retries(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                app_module = self.import_app_with_temp_settings(tmp)
+                with patch.object(app_module, "fetch_latest_papers", side_effect=RuntimeError("offline")) as fetch_mock, \
+                        patch.object(app_module.time, "sleep") as sleep_mock, \
+                        patch.object(app_module, "set_task_log_step_status"):
+                    with self.assertRaisesRegex(RuntimeError, "已重试 2 次仍未成功"):
+                        app_module._fetch_for_daily_pipeline_with_retries(
+                            log_id=123,
+                            fetch_days=3,
+                            retry_interval_minutes=10,
+                            max_retries=2,
+                        )
+
+            self.assertEqual(fetch_mock.call_count, 3)
+            self.assertEqual(sleep_mock.call_count, 2)
+        finally:
+            sys.modules.pop("app", None)
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
+
+    def test_daily_fetch_can_disable_retries(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                app_module = self.import_app_with_temp_settings(tmp)
+                with patch.object(app_module, "fetch_latest_papers", side_effect=RuntimeError("offline")) as fetch_mock, \
+                        patch.object(app_module.time, "sleep") as sleep_mock, \
+                        patch.object(app_module, "set_task_log_step_status"):
+                    with self.assertRaisesRegex(RuntimeError, "已重试 0 次仍未成功"):
+                        app_module._fetch_for_daily_pipeline_with_retries(
+                            log_id=123,
+                            fetch_days=3,
+                            retry_interval_minutes=10,
+                            max_retries=0,
+                        )
+
+            self.assertEqual(fetch_mock.call_count, 1)
+            sleep_mock.assert_not_called()
+        finally:
+            sys.modules.pop("app", None)
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
 
 
 if __name__ == "__main__":
