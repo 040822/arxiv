@@ -586,9 +586,11 @@ class DummyOpenAI:
     models_error = None
     chat_response = None
     last_chat_kwargs = None
+    last_init_kwargs = None
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        DummyOpenAI.last_init_kwargs = kwargs
         self.models = types.SimpleNamespace(list=self._list_models)
         self.chat = types.SimpleNamespace(
             completions=types.SimpleNamespace(create=self._create_chat_completion)
@@ -602,6 +604,14 @@ class DummyOpenAI:
     def _create_chat_completion(self, **kwargs):
         DummyOpenAI.last_chat_kwargs = kwargs
         return DummyOpenAI.chat_response
+
+
+class DummyHttpxClient:
+    last_kwargs = None
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        DummyHttpxClient.last_kwargs = kwargs
 
 
 def install_import_stubs():
@@ -684,6 +694,7 @@ def install_import_stubs():
 
     openai_mod = types.ModuleType("openai")
     openai_mod.OpenAI = DummyOpenAI
+    openai_mod.DefaultHttpxClient = DummyHttpxClient
     sys.modules["openai"] = openai_mod
 
 
@@ -713,6 +724,8 @@ class ProviderEndpointTests(unittest.TestCase):
         DummyOpenAI.models_response = types.SimpleNamespace(data=[])
         DummyOpenAI.chat_response = None
         DummyOpenAI.last_chat_kwargs = None
+        DummyOpenAI.last_init_kwargs = None
+        DummyHttpxClient.last_kwargs = None
 
     def test_provider_models_endpoint_returns_sorted_models(self):
         app_module = self.app_module
@@ -731,6 +744,25 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["models"], ["model-a", "model-b"])
         update_provider.assert_called_once_with("demo", {"available_models": ["model-a", "model-b"]})
+
+    def test_provider_models_uses_shared_openai_client(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest({
+            "provider_key": "demo",
+            "api_key": "sk-test",
+            "base_url": "https://api.example.com/v1",
+        })
+        fake_client = types.SimpleNamespace(
+            models=types.SimpleNamespace(list=lambda: types.SimpleNamespace(data=[{"id": "model-a"}]))
+        )
+
+        with patch.object(app_module, "get_openai_client", return_value=fake_client) as get_client, \
+                patch.object(app_module, "update_provider"):
+            result = app_module.api_provider_models()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(get_client.call_args.args[0]["api_key"], "sk-test")
+        self.assertEqual(get_client.call_args.args[0]["base_url"], "https://api.example.com/v1")
 
     def test_provider_models_endpoint_reports_fetch_errors(self):
         app_module = self.app_module
@@ -778,6 +810,70 @@ class ProviderEndpointTests(unittest.TestCase):
             "deepseek",
             {"is_thinking": True, "thinking_effort": "high"},
         )
+
+    def test_openai_client_uses_matching_proxy_and_ignores_env(self):
+        import analyzer
+
+        with patch.object(analyzer, "get_proxy_config", return_value={
+            "enabled": True,
+            "http": "http://proxy.local:8080",
+            "https": "http://secure-proxy.local:7890",
+        }):
+            analyzer.get_openai_client({
+                "api_key": "sk-test",
+                "base_url": "https://api.example.com/v1",
+            })
+
+        self.assertEqual(DummyHttpxClient.last_kwargs["proxy"], "http://secure-proxy.local:7890")
+        self.assertFalse(DummyHttpxClient.last_kwargs["trust_env"])
+        self.assertIs(DummyOpenAI.last_init_kwargs["http_client"].__class__, DummyHttpxClient)
+
+    def test_openai_client_disables_environment_proxy_when_proxy_is_off(self):
+        import analyzer
+
+        with patch.object(analyzer, "get_proxy_config", return_value={
+            "enabled": False,
+            "http": "http://proxy.local:8080",
+            "https": "http://secure-proxy.local:7890",
+        }):
+            analyzer.get_openai_client({
+                "api_key": "sk-test",
+                "base_url": "https://api.example.com/v1",
+            })
+
+        self.assertNotIn("proxy", DummyHttpxClient.last_kwargs)
+        self.assertFalse(DummyHttpxClient.last_kwargs["trust_env"])
+
+    def test_network_llm_test_uses_basic_analysis_route(self):
+        app_module = self.app_module
+        message = types.SimpleNamespace(content="ok")
+        fake_client = types.SimpleNamespace(
+            chat=types.SimpleNamespace(
+                completions=types.SimpleNamespace(
+                    create=lambda **kwargs: types.SimpleNamespace(
+                        choices=[types.SimpleNamespace(message=message)]
+                    )
+                )
+            )
+        )
+        cfg = {
+            "provider_key": "deepseek",
+            "api_key": "sk-test",
+            "base_url": "https://api.deepseek.com",
+            "model": "deepseek-chat",
+            "max_tokens_enabled": True,
+            "max_tokens": 100,
+        }
+
+        with patch.object(app_module, "get_ai_task_config", return_value=cfg), \
+                patch.object(app_module, "get_openai_client", return_value=fake_client) as get_client:
+            result = app_module.api_network_test_llm()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["provider_key"], "deepseek")
+        self.assertEqual(result["model"], "deepseek-chat")
+        self.assertGreaterEqual(result["duration_ms"], 0)
+        get_client.assert_called_once_with(cfg)
 
     def test_provider_list_does_not_return_plain_api_key(self):
         app_module = self.app_module
@@ -3341,6 +3437,17 @@ class TemplateSafetyTests(unittest.TestCase):
         self.assertNotIn("{{ i }}★", browse_html)
         self.assertNotIn("{{ min_rating }}★", browse_html)
         self.assertNotIn("{{ max_rating }}★", browse_html)
+
+    def test_settings_has_network_proxy_tab_and_diagnostics(self):
+        with open("templates/settings.html", "r", encoding="utf-8") as f:
+            html = f.read()
+
+        self.assertIn("网络与代理", html)
+        self.assertIn("switchTab('network'", html)
+        self.assertIn("id=\"tab-network\"", html)
+        self.assertIn("testProxy()", html)
+        self.assertIn("testLlmConnection()", html)
+        self.assertIn("/api/network/test-llm", html)
 
 
 class ScheduleRetryTests(unittest.TestCase):

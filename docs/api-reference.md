@@ -535,9 +535,12 @@ POST /api/providers/models       # 从供应商 /models 接口获取模型列表
 POST /api/test_connection        # 测试 AI API 连接
 POST /api/detect_thinking        # 检测是否为思考模型
 POST /api/test_proxy             # 测试 arXiv 代理连接
+POST /api/network/test-llm       # 测试基础分析 LLM 路由连接
 ```
 
 `POST /api/detect_thinking` 返回 `is_thinking`、`confidence`、`thinking_protocol`，并会把检测结果保存到当前激活供应商。
+
+`POST /api/network/test-llm` 使用 `basic_analysis` 任务路由发送极短 chat 请求，返回 `status/message/provider_key/model/duration_ms`。LLM 客户端复用 `/api/settings/proxy` 全局代理配置；代理关闭时不会读取系统代理环境变量。
 
 ### Prompt 管理
 

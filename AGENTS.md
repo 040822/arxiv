@@ -354,6 +354,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `get_ai_task_config(task_key)` — 获取某个 AI 功能的实际供应商、模型和参数配置
 - `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的模型路由
 - `build_chat_completion_kwargs()` — 统一构建 Chat Completions 参数（思考模型会省略采样参数）
+- LLM 客户端必须通过 `analyzer.get_openai_client()` 创建，以复用全局代理配置并禁用环境变量代理
 - `normalize_provider_config()` — 补齐供应商配置字段，兼容旧版 settings.json
 - `get_prompt_profile()` / `get_prompt_profiles()` — 获取任务级 Prompt Profile；`get_prompts()` 保留旧接口兼容
 - `get_concurrency()` — 获取并发数
@@ -433,6 +434,7 @@ APScheduler cron(day_of_week, hour, minute)
 | `/api/providers/models` | POST | 从供应商 API 自动获取模型列表 |
 | `/api/test_connection` | POST | 测试API连接 |
 | `/api/detect_thinking` | POST | 检测是否为思考模型 |
+| `/api/network/test-llm` | POST | 测试基础分析任务路由的 LLM 连接 |
 | `/api/prompts` | GET/POST | 读取/保存Prompt |
 | `/api/settings/ai-tasks` | GET/POST | 读取/保存 AI 功能模型路由 |
 | `/api/settings/ai-usage` | GET | 查看近期 LLM token 用量 |

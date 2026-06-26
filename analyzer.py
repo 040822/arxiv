@@ -16,12 +16,13 @@ AI 论文分析模块
 
 import json
 import logging
+from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from openai import OpenAI
+from openai import DefaultHttpxClient, OpenAI
 from config import TAG_CANDIDATES, RATING_CRITERIA
 from settings import (
     build_chat_completion_kwargs, get_ai_config, get_ai_task_config, get_prompt_profile,
-    get_concurrency, get_personalization_config, get_research_interest_hash
+    get_concurrency, get_personalization_config, get_proxy_config, get_research_interest_hash
 )
 from database import (
     get_connection, insert_analysis, update_analysis, get_unanalyzed_papers, record_ai_usage,
@@ -36,6 +37,26 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # 客户端初始化
 # ============================================================
+
+def _select_proxy_for_base_url(base_url, proxy_config=None):
+    """按供应商 base_url 的 scheme 选择全局代理地址。"""
+    proxy = proxy_config if proxy_config is not None else get_proxy_config()
+    if not proxy.get("enabled"):
+        return ""
+    scheme = urlparse(str(base_url or "")).scheme.lower()
+    if scheme == "http":
+        return str(proxy.get("http") or proxy.get("https") or "").strip()
+    return str(proxy.get("https") or proxy.get("http") or "").strip()
+
+
+def _build_openai_http_client(cfg):
+    """创建不读取环境变量代理的 OpenAI HTTP 客户端。"""
+    kwargs = {"trust_env": False}
+    proxy_url = _select_proxy_for_base_url(cfg.get("base_url", ""))
+    if proxy_url:
+        kwargs["proxy"] = proxy_url
+    return DefaultHttpxClient(**kwargs)
+
 
 def get_openai_client(cfg=None):
     """
@@ -52,6 +73,7 @@ def get_openai_client(cfg=None):
     return OpenAI(
         api_key=cfg["api_key"],
         base_url=cfg["base_url"],
+        http_client=_build_openai_http_client(cfg),
     )
 
 

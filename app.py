@@ -47,13 +47,14 @@ from fetcher import fetch_latest_papers, fetch_paper_by_id, parse_arxiv_id
 from analyzer import (
     analyze_pending_papers, analyze_paper_basic, analyze_paper_full,
     analyze_papers, generate_report_ai_summary, recommend_pending_papers,
-    chat_about_paper, generate_paper_quiz, grade_quiz_answer, socratic_reply
+    chat_about_paper, generate_paper_quiz, get_openai_client,
+    grade_quiz_answer, socratic_reply
 )
 from settings import (
     load_settings, save_settings, get_provider_presets, get_all_providers,
     add_provider, remove_provider, switch_provider, update_provider,
     get_prompts, save_prompts, get_concurrency, get_per_page,
-    get_ai_tasks, save_ai_tasks, get_prompt_profiles, save_prompt_profile,
+    get_ai_task_config, get_ai_tasks, save_ai_tasks, get_prompt_profiles, save_prompt_profile,
     get_admin_password, get_session_secret, set_admin_password, verify_admin_password, has_admin_password,
     build_chat_completion_kwargs, get_ai_config, get_thinking_protocol,
     normalize_provider_config, get_schedule_config, save_schedule_config,
@@ -1810,6 +1811,49 @@ def api_test_proxy():
         return jsonify({"status": "error", "message": f"连接失败: {str(e)}"})
 
 
+@app.route("/api/network/test-llm", methods=["POST"])
+def api_network_test_llm():
+    """测试基础分析任务路由的 LLM chat/completions 连接。"""
+    cfg = {}
+    started = time.time()
+    try:
+        cfg = get_ai_task_config("basic_analysis")
+        if not cfg.get("api_key"):
+            return jsonify({
+                "status": "error",
+                "message": "基础分析模型路由缺少 API Key",
+                "provider_key": cfg.get("provider_key", ""),
+                "model": cfg.get("model", ""),
+                "duration_ms": 0,
+            }), 400
+
+        client = get_openai_client(cfg)
+        kwargs = build_chat_completion_kwargs(
+            cfg,
+            [{"role": "user", "content": "Hello, reply with 'ok' only."}],
+            token_limit_override=10,
+        )
+        response = client.chat.completions.create(**kwargs)
+        reply = (response.choices[0].message.content or "").strip()
+        duration_ms = int((time.time() - started) * 1000)
+        return jsonify({
+            "status": "ok",
+            "message": f"基础分析 LLM 连接成功：{reply or 'ok'}",
+            "provider_key": cfg.get("provider_key", ""),
+            "model": cfg.get("model", ""),
+            "duration_ms": duration_ms,
+        })
+    except Exception as e:
+        duration_ms = int((time.time() - started) * 1000)
+        return jsonify({
+            "status": "error",
+            "message": f"基础分析 LLM 连接失败: {str(e)}",
+            "provider_key": cfg.get("provider_key", ""),
+            "model": cfg.get("model", ""),
+            "duration_ms": duration_ms,
+        }), 500
+
+
 # ====================================================================
 #              设置 API — WebDAV 云备份（WebDAV Backup）
 # ====================================================================
@@ -2118,8 +2162,6 @@ def api_provider_presets():
 def api_provider_models():
     """从供应商的 OpenAI 兼容 /models 接口拉取可用模型列表。"""
     try:
-        from openai import OpenAI
-
         data = request.get_json() or {}
         provider_key = data.get("provider_key", "")
         saved_provider = {}
@@ -2133,7 +2175,7 @@ def api_provider_models():
         if not base_url:
             return jsonify({"status": "error", "message": "Base URL 不能为空"}), 400
 
-        client = OpenAI(api_key=api_key, base_url=base_url)
+        client = get_openai_client({"api_key": api_key, "base_url": base_url})
         models = _extract_model_ids(client.models.list())
         if provider_key and models:
             update_provider(provider_key, {"available_models": models})
@@ -2216,11 +2258,10 @@ def api_activate_provider(key):
 def api_test_connection():
     """测试当前激活的 AI 供应商连接：发送简单请求验证 API 可用性"""
     try:
-        from openai import OpenAI
         cfg = get_ai_config()
         if not cfg["api_key"]:
             return jsonify({"status": "error", "message": "请先配置 API Key"}), 400
-        client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
+        client = get_openai_client(cfg)
         kwargs = build_chat_completion_kwargs(
             cfg,
             [{"role": "user", "content": "Hello, reply with 'ok' only."}],
@@ -2241,11 +2282,10 @@ def api_detect_thinking():
     使用当前供应商对应的思考协议发送请求，并结合响应字段、usage 和模型名启发式判断。
     """
     try:
-        from openai import OpenAI
         cfg = get_ai_config()
         if not cfg["api_key"]:
             return jsonify({"status": "error", "message": "请先配置 API Key"}), 400
-        client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
+        client = get_openai_client(cfg)
         kwargs = build_chat_completion_kwargs(
             cfg,
             [{"role": "user", "content": "What is 1+1? Reply with just the number."}],

@@ -259,17 +259,17 @@ CREATE TABLE paper_quiz_attempts (
 | `per_page` | 首页每页论文数 |
 | `schedule` | 每日定时任务启用状态和执行时间 |
 | `fetch` | 抓取延迟配置 |
-| `proxy` | 代理配置 |
+| `proxy` | 全局代理配置，用于 arXiv、PDF 下载、LLM API 和 SMTP 邮件 |
 | `admin_password` | 管理密码（SHA-256） |
 | `session_secret` | 内部 Flask session 签名密钥，用于服务重启后保持登录 |
 
 > **⚠️ 重要：** 在 `load_settings()` 中添加新字段时，必须在合并逻辑中显式添加 `if "key" in migrated: merged["key"] = migrated["key"]`，否则新字段在读取时会丢失！
 
-AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要绕过任务级模型路由。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
+AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成，OpenAI 兼容客户端统一通过 `analyzer.get_openai_client()` 创建以复用全局代理并禁用环境变量代理。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要绕过任务级模型路由。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
 
 设置管理密码后，写接口和敏感设置读取接口需要登录；管理登录默认通过签名 cookie 持久保存 180 天，修改管理密码后旧登录状态失效。供应商列表接口只能返回脱敏后的 `api_key_masked`。
 
-WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 `output/` 打包上传。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。
+WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 `output/` 打包上传。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。当前 WebDAV 按内网服务处理，不接入全局代理。
 
 报告邮件发送由 `email_report.py` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分 `>80` 的论文进入重点精读区，其余论文最多展示 20 篇速览，并可按 `site_url` 生成论文详情和完整报告链接。每日任务会在生成 AI 导读前检查 `last_sent_report_date`，同一日报成功发送后直接跳过；发送失败不会更新该日期，因此仍可重试。手动测试发送允许重复执行，并且不参与自动任务去重。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。自动日报通过 `task_log_steps` 记录邮件/备份结果，附加步骤失败使父日志变为 `warning`；手动测试仍写独立顶级日志。
 

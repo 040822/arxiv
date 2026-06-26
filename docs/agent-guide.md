@@ -225,7 +225,7 @@ if r.get("authors") and isinstance(r["authors"], str):
 
 ### 4. 代理环境变量
 
-`fetcher.py` 的 `_apply_proxy()` 会设置/清除 `http_proxy` 和 `https_proxy` 环境变量，影响所有 HTTP 请求。
+代理配置保存在 `settings.proxy`，设置页「网络与代理」可保存全局 HTTP/HTTPS 代理并测试 arXiv 与基础分析 LLM 连接。`fetcher.py` 的 `_apply_proxy()` 会设置/清除 `http_proxy` 和 `https_proxy` 环境变量，供 arXiv 客户端使用；LLM 调用不依赖环境变量，而是由 `analyzer.get_openai_client()` 显式创建 `DefaultHttpxClient(trust_env=False, proxy=...)`。PDF 下载和 SMTP 邮件也会读取全局代理；WebDAV 当前按内网服务处理，不接入代理。
 
 ### 5. SSE 进度推送
 
@@ -238,7 +238,7 @@ if r.get("authors") and isinstance(r["authors"], str):
 | 问题 | 检查文件 |
 |------|----------|
 | 论文抓取失败 | `fetcher.py` + 代理配置 + arXiv API 状态 |
-| AI 分析失败 | `analyzer.py` + API 配置 + 模型可用性 |
+| AI 分析失败 | `analyzer.py` + API 配置 + 模型可用性 + 网络与代理页的 LLM 测试 |
 | PDF 下载失败 | `pdf_reader.py` + 代理配置 + 令牌桶限速 |
 | 页面显示异常 | `templates/*.html` + `static/style.css` |
 | 数据库问题 | `database.py` + `data/papers.db` |
