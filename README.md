@@ -84,6 +84,20 @@ python app.py
 
 浏览器访问 `http://localhost:5000`
 
+### 使用 systemctl 管理服务
+
+服务器长期运行时可把 `app.py` 注册为 `systemd` 服务，完整配置见 [`docs/systemd-service.md`](docs/systemd-service.md)。常用命令：
+
+```bash
+sudo systemctl enable --now arxiv-paper.service
+systemctl status arxiv-paper.service
+sudo systemctl restart arxiv-paper.service
+sudo systemctl stop arxiv-paper.service
+journalctl -u arxiv-paper.service -f
+```
+
+不要同时手动运行 `python app.py` 和 systemd 服务；应用内置 APScheduler 定时任务，多进程可能导致日报重复执行。
+
 ## 项目结构
 
 ```

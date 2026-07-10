@@ -7,6 +7,7 @@
 | 文档 | 说明 | 适用人群 |
 |------|------|----------|
 | [用户使用手册](user-guide.md) | 安装部署、配置、页面功能、常见操作、FAQ | 用户、运维 |
+| [systemd 服务管理](systemd-service.md) | systemctl 托管、开机自启、日志查看、常见排查 | 运维 |
 | [开发者指南](developer-guide.md) | 项目结构、技术栈、开发规范、数据库设计 | 开发者 |
 | [API 接口文档](api-reference.md) | 页面、任务、论文、设置、认证等接口的参数、响应、示例 | 前端/后端开发者 |
 | [AI Agent 开发指南](agent-guide.md) | 快速理解项目、常见修改场景、已知坑 | AI Agent |
@@ -27,6 +28,7 @@ python app.py
 ```
 
 详细步骤请参阅 [用户使用手册](user-guide.md)。
+长期运行和开机自启请参阅 [systemd 服务管理](systemd-service.md)。
 
 ## 📁 项目结构
 

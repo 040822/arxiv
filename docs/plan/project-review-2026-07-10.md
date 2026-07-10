@@ -175,9 +175,7 @@
 | # | 优先级 | 改进方向 | 现状 | 建议 | 位置 |
 |---|--------|----------|------|------|------|
 | C1 | **高** | **列表接入推荐分排序与展示** | 首页/浏览页排序固定为 `published_date DESC, rating DESC`，不显示推荐分 | 增加"按推荐分排序"选项，卡片展示 `🎯 推荐 X/100` 徽章 | `database.py:527,656-657`, `index.html:60-78` |
-| C2 | **高** | **搜索能力重建** | `search_papers` 仅 5 字段 `LIKE %keyword%` 单关键词，无相关性排序、无多词、无高亮 | 短期：支持多关键词 + 按匹配字段加权排序 + 高亮；中期：建 FTS5 虚拟表 | `database.py:900-912` |
 | C3 | **高** | **阅读笔记 / 进度 / 学习状态展示** | `reading_list` 仅 `status(unread/read)`，无笔记表；详情/学习页不显示"已讨论 N 条 / 已做 M 轮"（数据已存在但未展示） | 新增 notes 表；详情/学习页头部加"学习进度卡" | `database.py:224-232`, `paper.html`, `paper_chat.html` |
-| C4 | 中 | **报告跨日趋势** | `get_daily_stats` 仅 total/analyzed/avg_rating，日报只看单日 | 报告增加趋势区块（近 7 日标签走势、新标签、推荐分分布） | `database.py:931-953`, `markdown_gen.py:332` |
 | C5 | 低 | 邮件阈值固定 | 推荐>80 重点，最多 20 篇速览 | 阈值放入 email_report 配置 | `analyzer.py:795` |
 
 ### 3.2 阅读质量

@@ -3,6 +3,7 @@
 ## 目录
 
 - [安装部署](#安装部署)
+- [systemd 服务管理](#systemd-服务管理)
 - [配置 AI 供应商](#配置-ai-供应商)
 - [配置代理](#配置-代理)
 - [页面功能说明](#页面功能说明)
@@ -63,6 +64,23 @@ python main.py analyze  # 仅分析
 ```
 
 浏览器访问 `http://localhost:5000`
+
+---
+
+## systemd 服务管理
+
+服务器长期运行时，推荐使用 `systemd` 托管 `app.py`，实现开机自启、异常自动重启和统一日志查看。完整服务文件模板、权限设置和排查步骤见 [systemd 服务管理](systemd-service.md)。
+
+常用命令：
+
+```bash
+sudo systemctl enable --now arxiv-paper.service
+systemctl status arxiv-paper.service
+sudo systemctl restart arxiv-paper.service
+journalctl -u arxiv-paper.service -f
+```
+
+注意不要同时手动运行 `python app.py` 和 systemd 服务；本项目内置 APScheduler 定时日报，同时运行多个进程可能导致定时任务重复执行。
 
 ---
 
