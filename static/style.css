@@ -3130,3 +3130,45 @@ details.log-item > summary::-webkit-details-marker {
     color: #ef4444;
     font-style: italic;
 }
+
+/* AI 正在输入气泡 */
+.learning-message.typing .learning-message-body {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 0;
+}
+.typing-dots {
+    display: inline-flex;
+    gap: 5px;
+}
+.typing-dots span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #1a73e8;
+    opacity: 0.35;
+    animation: typing-bounce 1.2s infinite ease-in-out;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typing-bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+    30% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* 通用行内加载 spinner */
+.inline-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #b0c4e0;
+    border-top-color: #1a73e8;
+    border-radius: 50%;
+    animation: inline-spin 0.6s linear infinite;
+    vertical-align: text-bottom;
+    margin-right: 6px;
+}
+@keyframes inline-spin {
+    to { transform: rotate(360deg); }
+}

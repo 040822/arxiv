@@ -262,6 +262,7 @@
         }
 
         async function hidePaper(arxivId, el) {
+            if (!confirm('确定隐藏这篇论文？隐藏后可在「分类浏览」筛选已隐藏项恢复。')) return;
             const card = el.closest('.paper-card');
             try {
                 const resp = await fetch(`/api/paper/${arxivId}/hide`, { method: 'POST' });

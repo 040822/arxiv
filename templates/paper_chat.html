@@ -50,7 +50,9 @@
                     <p class="section-desc">适合追问方法细节、实验设计、和你自己的研究方向有什么关系。</p>
                     <div id="chat-messages" class="learning-chat"></div>
                     <div class="learning-input-row">
-                        <textarea id="chat-input" rows="3" placeholder="例如：这篇论文的方法和 VLA 有什么关系？"></textarea>
+                        <textarea id="chat-input" rows="3" placeholder="例如：这篇论文的方法和 VLA 有什么关系？
+
+(Ctrl/ Cmd + Enter 快速发送)"></textarea>
                         <button class="action-btn btn-primary" id="chat-send-btn" onclick="sendChat()">发送</button>
                     </div>
                     <div id="chat-status" class="action-status"></div>
@@ -61,9 +63,11 @@
             <div id="lquiz" class="tab-panel">
                 <div class="learning-content">
                     <p class="section-desc">先自己答，再看模型评分、纠错和改进版答案。</p>
-                    <div class="action-buttons">
-                        <button class="action-btn btn-primary" onclick="createQuiz('quick3')">⚡ 生成 3 题快速练习</button>
-                        <button class="action-btn" onclick="createQuiz('standard6')">📖 生成 6 题标准练习</button>
+                    <div class="action-buttons" id="quiz-gen-buttons">
+                        <button class="action-btn btn-primary" id="quiz-quick3-btn" onclick="createQuiz('quick3')">⚡ 生成 3 题快速练习</button>
+                        <button class="action-btn" id="quiz-standard6-btn" onclick="createQuiz('standard6')">
+                            📖 生成 6 题标准练习
+                        </button>
                     </div>
                     {% if quiz_sessions %}
                     <div class="learning-session-list">
@@ -86,7 +90,7 @@
                 <div class="learning-content">
                     <p class="section-desc">不预设题目，模型会根据你的回答继续追问，适合重要论文精读。</p>
                     <div class="action-buttons">
-                        <button class="action-btn btn-primary" onclick="startSocratic()">开始追问</button>
+                        <button class="action-btn btn-primary" id="socratic-start-btn" onclick="startSocratic()">开始追问</button>
                     </div>
                     <div id="socratic-status" class="action-status"></div>
                     <div id="socratic-session" class="learning-quiz"></div>
@@ -199,6 +203,56 @@
             return data;
         }
 
+        // ── loading 状态助手 ──
+
+        function setBusy(el, busy) {
+            if (!el) return;
+            el.disabled = busy;
+        }
+
+        function showTypingBubble() {
+            const box = document.getElementById('chat-messages');
+            const existing = box.querySelector('.typing-bubble');
+            if (existing) return;
+            const div = document.createElement('div');
+            div.className = 'learning-message assistant typing typing-bubble';
+            div.innerHTML = '<div class="learning-message-role">AI</div><div class="learning-message-body"><div class="typing-dots"><span></span><span></span><span></span></div></div>';
+            box.appendChild(div);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function removeTypingBubble() {
+            const box = document.getElementById('chat-messages');
+            const el = box.querySelector('.typing-bubble');
+            if (el) el.remove();
+        }
+
+        function statusSpinner(statusEl, text) {
+            statusEl.className = 'action-status info';
+            statusEl.innerHTML = '<span class="inline-spinner"></span>' + escapeHtml(text);
+        }
+
+        function statusSuccess(statusEl, html) {
+            statusEl.className = 'action-status success';
+            statusEl.innerHTML = html;
+        }
+
+        function statusError(statusEl, msg) {
+            statusEl.className = 'action-status error';
+            statusEl.textContent = msg;
+        }
+
+        function disableQuizGenButtons(disabled) {
+            setBusy(document.getElementById('quiz-quick3-btn'), disabled);
+            setBusy(document.getElementById('quiz-standard6-btn'), disabled);
+        }
+
+        function disableSocraticStartButton(disabled) {
+            setBusy(document.getElementById('socratic-start-btn'), disabled);
+        }
+
+        // ── 聊天 ──
+
         function renderChat(messages) {
             const box = document.getElementById('chat-messages');
             if (!messages || !messages.length) {
@@ -230,9 +284,11 @@
             const status = document.getElementById('chat-status');
             const message = input.value.trim();
             if (!message) return;
-            btn.disabled = true;
+            setBusy(btn, true);
+            input.disabled = true;
             status.className = 'action-status info';
-            status.textContent = '正在载入论文上下文并回答...';
+            status.innerHTML = '<span class="inline-spinner"></span>正在载入论文上下文并回答...';
+            showTypingBubble();
             try {
                 const data = await fetchJson(`/api/paper/${ARXIV_ID}/chat/messages`, {
                     method: 'POST',
@@ -241,17 +297,20 @@
                 });
                 input.value = '';
                 renderChat(data.messages || []);
-                status.className = 'action-status success';
-                status.textContent = '已回复' + renderMeta(data.meta);
+                statusSuccess(status, '已回复' + renderMeta(data.meta));
             } catch (e) {
                 if (e.message !== 'auth_required') {
-                    status.className = 'action-status error';
-                    status.textContent = e.message;
+                    statusError(status, e.message);
                 }
             } finally {
-                btn.disabled = false;
+                removeTypingBubble();
+                setBusy(btn, false);
+                input.disabled = false;
+                input.focus();
             }
         }
+
+        // ── quiz & socratic ──
 
         function feedbackHtml(feedback) {
             if (!feedback) return '';
@@ -288,7 +347,7 @@
                         </div>
                         ${q.answer_text ? `<div class="learning-message user"><div class="learning-message-role">你</div><div class="learning-message-body">${escapeHtml(q.answer_text).replace(/\n/g, '<br>')}</div></div>` : ''}
                         ${feedbackHtml(q.feedback)}
-                        ${canAnswer ? `<div class="socratic-input"><textarea id="answer-${q.id}" rows="4" placeholder="先用自己的话回答，AI 会继续追问"></textarea><button class="action-btn btn-primary" onclick="replySocratic(${session.id}, ${q.id})">提交回答</button></div>` : ''}
+                        ${canAnswer ? `<div class="socratic-input"><textarea id="answer-${q.id}" rows="4" placeholder="先用自己的话回答，AI 会继续追问"></textarea><button class="action-btn btn-primary" id="socratic-reply-${q.id}" onclick="replySocratic(${session.id}, ${q.id})">提交回答</button></div>` : ''}
                     `;
                 }).join('') + '</div>';
                 renderMathInContainer(box);
@@ -303,7 +362,7 @@
                     ${q.answer_text ? `<div class="learning-answer"><strong>你的回答：</strong><br>${escapeHtml(q.answer_text).replace(/\n/g, '<br>')}</div>` : ''}
                     ${feedbackHtml(q.feedback)}
                     ${canAnswer ? `<textarea id="answer-${q.id}" rows="4" placeholder="先用自己的话回答，再提交给模型反馈"></textarea>
-                    <button class="action-btn btn-primary" onclick="submitQuizAnswer(${q.id})">提交回答</button>` : ''}
+                    <button class="action-btn btn-primary" id="quiz-answer-${q.id}" onclick="submitQuizAnswer(${q.id})">提交回答</button>` : ''}
                 </div>`;
             }).join('');
             renderMathInContainer(box);
@@ -311,8 +370,10 @@
 
         async function createQuiz(mode) {
             const status = document.getElementById('quiz-status');
-            status.className = 'action-status info';
-            status.textContent = '正在生成练习题...';
+            const box = document.getElementById('quiz-session');
+            disableQuizGenButtons(true);
+            statusSpinner(status, '正在生成练习题...');
+            box.innerHTML = '<div class="action-status info" style="display:block;padding:20px;text-align:center;"><span class="inline-spinner"></span>正在生成练习题...</div>';
             try {
                 const data = await fetchJson(`/api/paper/${ARXIV_ID}/quiz/sessions`, {
                     method: 'POST',
@@ -321,13 +382,14 @@
                 });
                 activeQuizSession = data.session;
                 renderQuizSession(activeQuizSession, 'quiz-session');
-                status.className = 'action-status success';
-                status.textContent = '题目已生成' + renderMeta(data.meta);
+                statusSuccess(status, '题目已生成' + renderMeta(data.meta));
             } catch (e) {
                 if (e.message !== 'auth_required') {
-                    status.className = 'action-status error';
-                    status.textContent = e.message;
+                    statusError(status, e.message);
+                    box.innerHTML = '';
                 }
+            } finally {
+                disableQuizGenButtons(false);
             }
         }
 
@@ -337,12 +399,10 @@
                 const data = await fetchJson(`/api/paper/${ARXIV_ID}/quiz/sessions/${sessionId}`);
                 activeQuizSession = data.session;
                 renderQuizSession(activeQuizSession, 'quiz-session', activeQuizSession.mode === 'socratic');
-                status.className = 'action-status success';
-                status.textContent = '已载入练习记录';
+                statusSuccess(status, '已载入练习记录');
             } catch (e) {
                 if (e.message !== 'auth_required') {
-                    status.className = 'action-status error';
-                    status.textContent = e.message;
+                    statusError(status, e.message);
                 }
             }
         }
@@ -351,8 +411,11 @@
             const answer = document.getElementById(`answer-${questionId}`).value.trim();
             if (!answer) return;
             const status = document.getElementById('quiz-status');
-            status.className = 'action-status info';
-            status.textContent = '正在评分...';
+            const btn = document.getElementById(`quiz-answer-${questionId}`);
+            const textarea = document.getElementById(`answer-${questionId}`);
+            setBusy(btn, true);
+            if (textarea) textarea.disabled = true;
+            statusSpinner(status, '正在评分...');
             try {
                 const data = await fetchJson(`/api/paper/${ARXIV_ID}/quiz/questions/${questionId}/answer`, {
                     method: 'POST',
@@ -361,31 +424,34 @@
                 });
                 activeQuizSession = data.session;
                 renderQuizSession(activeQuizSession, 'quiz-session');
-                status.className = 'action-status success';
-                status.textContent = '已反馈' + renderMeta(data.meta);
+                statusSuccess(status, '已反馈' + renderMeta(data.meta));
             } catch (e) {
                 if (e.message !== 'auth_required') {
-                    status.className = 'action-status error';
-                    status.textContent = e.message;
+                    statusError(status, e.message);
+                    setBusy(btn, false);
+                    if (textarea) textarea.disabled = false;
                 }
             }
         }
 
         async function startSocratic() {
             const status = document.getElementById('socratic-status');
-            status.className = 'action-status info';
-            status.textContent = '正在生成第一问...';
+            const box = document.getElementById('socratic-session');
+            disableSocraticStartButton(true);
+            statusSpinner(status, '正在生成第一问...');
+            box.innerHTML = '<div class="action-status info" style="display:block;padding:20px;text-align:center;"><span class="inline-spinner"></span>正在生成第一问...</div>';
             try {
                 const data = await fetchJson(`/api/paper/${ARXIV_ID}/socratic/sessions`, {method: 'POST'});
                 activeSocraticSession = data.session;
                 renderQuizSession(activeSocraticSession, 'socratic-session', true);
-                status.className = 'action-status success';
-                status.textContent = '追问已开始' + renderMeta(data.meta);
+                statusSuccess(status, '追问已开始' + renderMeta(data.meta));
             } catch (e) {
                 if (e.message !== 'auth_required') {
-                    status.className = 'action-status error';
-                    status.textContent = e.message;
+                    statusError(status, e.message);
+                    box.innerHTML = '';
                 }
+            } finally {
+                disableSocraticStartButton(false);
             }
         }
 
@@ -393,8 +459,11 @@
             const answer = document.getElementById(`answer-${questionId}`).value.trim();
             if (!answer) return;
             const status = document.getElementById('socratic-status');
-            status.className = 'action-status info';
-            status.textContent = '正在追问...';
+            const btn = document.getElementById(`socratic-reply-${questionId}`);
+            const textarea = document.getElementById(`answer-${questionId}`);
+            setBusy(btn, true);
+            if (textarea) textarea.disabled = true;
+            statusSpinner(status, '正在追问...');
             try {
                 const data = await fetchJson(`/api/paper/${ARXIV_ID}/socratic/sessions/${sessionId}/reply`, {
                     method: 'POST',
@@ -403,15 +472,26 @@
                 });
                 activeSocraticSession = data.session;
                 renderQuizSession(activeSocraticSession, 'socratic-session', true);
-                status.className = 'action-status success';
-                status.textContent = '已生成下一问' + renderMeta(data.meta);
+                statusSuccess(status, '已生成下一问' + renderMeta(data.meta));
             } catch (e) {
                 if (e.message !== 'auth_required') {
-                    status.className = 'action-status error';
-                    status.textContent = e.message;
+                    statusError(status, e.message);
+                    setBusy(btn, false);
+                    if (textarea) textarea.disabled = false;
                 }
             }
         }
+
+        // ── Ctrl/Cmd+Enter 发送 ──
+        document.addEventListener('keydown', function(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                const input = document.getElementById('chat-input');
+                if (input && document.activeElement === input && !input.disabled) {
+                    e.preventDefault();
+                    sendChat();
+                }
+            }
+        });
 
         loadChatMessages();
     </script>
