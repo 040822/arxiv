@@ -1,16 +1,16 @@
 # AI 论文数据库
 
-自动从 arXiv 抓取具身智能与人工智能领域最新论文，调用 AI 快速阅读分析（标签、翻译、摘要、AI 评级、简评），生成 Web 报告，并提供 Flask 浏览界面。论文评级由 AI 初评，用户可在详情页手动修正，CLI 仍可按需生成 Markdown 报告。
+自动从 arXiv 抓取具身智能与人工智能领域最新论文，调用 AI 快速阅读分析（标签、翻译、摘要、AI 评级、简评），生成 Web 报告，并提供 Flask 浏览界面。论文评级由 AI 初评，用户可在详情页手动修正。
 
 ## 功能特性
 
 - **每日自动抓取** — 默认从 arXiv 拉取 cs.RO 分类论文，可在 `config.py` 中增减分类
 - **AI 快速阅读** — 自动调用 OpenAI 兼容 API，为每篇论文生成标签（VLA、World Model 等）、中文摘要翻译和精炼总结
 - **论文学习页** — 单篇论文支持基于 PDF 全文的自由讨论、3/6 题主动问答练习和苏格拉底追问
-- **Web 报告** — 自动生成数据库内的每日结构化报告；CLI 可生成 Markdown 总览和日报
+- **Web 报告** — 自动生成数据库内的每日结构化报告，展示近 7 个有数据日的标签与推荐分趋势
 - **Web 浏览** — Flask 本地 Web 服务，支持按标签/评级筛选、关键词搜索
 - **定时任务** — 内置 APScheduler，每天定时自动执行抓取、分析和报告生成
-- **云同步备份** — 可通过 WebDAV 每日备份数据库快照、运行设置和报告文件
+- **云同步备份** — 可通过 WebDAV 每日备份数据库快照、运行设置和 manifest；Web 日报随数据库备份
 - **管理保护** — 可设置管理密码保护设置页、任务执行和写接口
 
 ## 快速开始
@@ -63,7 +63,7 @@ pip install -r requirements.txt
 
 ### 3. 运行
 
-**完整流程**（抓取 → 分析 → 生成报告）：
+**CLI 完整流程**（抓取 → 分析 → 推荐评分）：
 
 ```bash
 python main.py
@@ -74,7 +74,6 @@ python main.py
 ```bash
 python main.py fetch       # 仅抓取新论文
 python main.py analyze     # 仅分析未处理的论文
-python main.py generate    # 仅生成 Markdown 报告
 ```
 
 **启动 Web 服务**（含每日定时任务）：
@@ -89,19 +88,14 @@ python app.py
 
 ```
 ├── config.py           # 硬编码配置（分类、标签候选、路径、默认值）
-├── main.py             # 主入口，支持 fetch/analyze/generate/run
+├── main.py             # CLI 入口，支持 fetch/analyze/run
 ├── app.py              # Flask Web 服务 + APScheduler 定时任务
 ├── database.py         # SQLite 数据库操作
 ├── fetcher.py          # arXiv API 论文抓取
 ├── analyzer.py         # OpenAI API 论文分析（标签/翻译/摘要/简评）
-├── markdown_gen.py     # CLI Markdown 报告生成
 ├── templates/          # Flask HTML 模板
 ├── static/style.css    # Web 样式
 ├── data/papers.db      # SQLite 数据库（自动创建）
-└── output/             # 生成的 Markdown 文件
-    ├── README.md       # 总览报告
-    └── daily/          # 每日报告
-        └── 2026-05-27.md
 ```
 
 ## Web API
@@ -134,7 +128,7 @@ python app.py
 - `arxiv-backup-latest.zip`
 - `arxiv-backup-YYYYMMDD-HHMMSS.zip`
 
-历史备份默认保留 3 天，可在设置页调整。备份包包含 `papers.db` 一致性快照、`data/settings.json` 和 `output/` 报告目录；其中 `settings.json` 含 API Key、管理密码哈希和 session secret，请确保 WebDAV 位置可信。
+历史备份默认保留 3 天，可在设置页调整。备份包包含 `papers.db` 一致性快照、`data/settings.json` 和 manifest；Web 日报存储在数据库中，会随快照备份。`settings.json` 含 API Key、管理密码哈希和 session secret，请确保 WebDAV 位置可信。
 
 ## 监控的 arXiv 分类
 
@@ -174,7 +168,7 @@ python app.py
 
 **Web 报告系统**
 - 新增 `/reports` 报告汇总页和 `/reports/<date>` 单日报告详情页
-- 「生成报告」改为生成 Web 版结构化报告（个性化推荐先展示研究兴趣，再展示中文摘要、推荐语和评价，另含分类分布、热门标签、全部论文列表）
+- 「生成报告」生成 Web 版结构化报告（含近 7 个有数据日的标签走势、新标签、推荐分分布，以及个性化推荐、分类分布、热门标签和全部论文）
 - 单日报告详情页支持一键重新生成并覆盖当前日期报告
 - 定时任务和一键执行自动生成报告
 

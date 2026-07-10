@@ -661,6 +661,28 @@ header h1 {
     margin-bottom: 15px;
 }
 
+.search-highlight {
+    padding: 0 2px;
+    border-radius: 3px;
+    background: #fef08a;
+    color: inherit;
+}
+
+.search-match-fields {
+    margin: 8px 0;
+    color: #64748b;
+    font-size: 0.82em;
+}
+
+.search-paper-tags {
+    margin: 8px 0;
+}
+
+.search-error {
+    margin-bottom: 16px;
+    color: #b91c1c;
+}
+
 .paper-detail {
     background: #fff;
     border-radius: 12px;
@@ -2706,6 +2728,112 @@ details.log-item > summary::-webkit-details-marker {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+}
+
+.report-trend-block {
+    padding: 14px 16px;
+    background: #f8fafc;
+    border-radius: 10px;
+}
+
+.report-trend-block h4 {
+    margin: 0 0 12px;
+    color: #334155;
+    font-size: 0.95em;
+}
+
+.report-trend-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.report-trend-table-wrap {
+    overflow-x: auto;
+}
+
+.report-trend-table {
+    width: 100%;
+    min-width: 560px;
+    border-collapse: collapse;
+    font-size: 0.85em;
+}
+
+.report-trend-table th,
+.report-trend-table td {
+    padding: 7px 9px;
+    border-bottom: 1px solid #e2e8f0;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.report-trend-table th:first-child {
+    text-align: left;
+}
+
+.report-trend-empty,
+.report-score-unscored {
+    color: #64748b;
+    font-size: 0.86em;
+}
+
+.report-score-row {
+    display: grid;
+    grid-template-columns: 58px minmax(80px, 1fr) 30px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 9px;
+    font-size: 0.85em;
+}
+
+.report-score-track {
+    height: 8px;
+    overflow: hidden;
+    background: #e2e8f0;
+    border-radius: 999px;
+}
+
+.report-score-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+}
+
+.report-score-low {
+    background: #94a3b8;
+}
+
+.report-score-recommended {
+    background: #3b82f6;
+}
+
+.report-score-strong {
+    background: #16a34a;
+}
+
+.report-score-unscored {
+    margin-top: 12px;
+}
+
+@media (max-width: 768px) {
+    .report-content {
+        padding: 16px;
+    }
+
+    .report-stats {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .report-stat {
+        flex: 1 1 120px;
+        min-width: 0;
+    }
+
+    .report-trend-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .report-papers {

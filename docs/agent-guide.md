@@ -262,7 +262,5 @@ app.py
 │   └── pdf_reader.py (PDF 下载)
 ├── backup.py (WebDAV 云同步备份)
 │   └── settings.py (WebDAV 配置)
-├── markdown_gen.py (报告生成)
-│   └── database.py
 └── settings.py (配置管理)
 ```

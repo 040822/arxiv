@@ -39,9 +39,8 @@ arxiv/
 ├── backup.py           # WebDAV 云同步备份
 ├── email_report.py     # 每日报告 SMTP 邮件发送
 ├── pdf_reader.py       # PDF 下载与文本提取（令牌桶限速）
-├── markdown_gen.py     # Markdown 报告生成
 ├── app.py              # Flask Web 服务 + APScheduler
-├── main.py             # CLI 入口（fetch/analyze/generate/run）
+├── main.py             # CLI 入口（fetch/analyze/run）
 ├── requirements.txt    # Python 依赖
 ├── templates/          # Jinja2 HTML 模板
 │   ├── index.html      # 首页（每日论文）
@@ -62,7 +61,6 @@ arxiv/
 │   ├── papers.db       # SQLite 数据库
 │   ├── settings.json   # 运行时配置
 │   └── pdf_cache/      # PDF 缓存
-├── output/             # 生成的 Markdown 报告
 ├── docs/               # 文档目录
 ├── README.md           # 项目 README
 └── AGENTS.md           # AI Agent 维护文档
@@ -269,7 +267,7 @@ AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.b
 
 设置管理密码后，写接口和敏感设置读取接口需要登录；管理登录默认通过签名 cookie 持久保存 180 天，修改管理密码后旧登录状态失效。供应商列表接口只能返回脱敏后的 `api_key_masked`。
 
-WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 `output/` 打包上传。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。当前 WebDAV 按内网服务处理，不接入全局代理。
+WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 manifest 打包上传。Web 日报位于数据库的 `reports` 表中，会随快照备份。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。当前 WebDAV 按内网服务处理，不接入全局代理。
 
 报告邮件发送由 `email_report.py` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分 `>80` 的论文进入重点精读区，其余论文最多展示 20 篇速览，并可按 `site_url` 生成论文详情和完整报告链接。每日任务会在生成 AI 导读前检查 `last_sent_report_date`，同一日报成功发送后直接跳过；发送失败不会更新该日期，因此仍可重试。手动测试发送允许重复执行，并且不参与自动任务去重。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。自动日报通过 `task_log_steps` 记录邮件/备份结果，附加步骤失败使父日志变为 `warning`；手动测试仍写独立顶级日志。
 

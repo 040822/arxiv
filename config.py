@@ -43,10 +43,6 @@ MAX_PAPERS_PER_CATEGORY = 50
 DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DB_PATH = os.path.join(DB_DIR, "papers.db")
 
-# ==================== 输出目录配置 ====================
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
-DAILY_DIR = os.path.join(OUTPUT_DIR, "daily")
-
 # ==================== Web 服务配置 ====================
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 5000

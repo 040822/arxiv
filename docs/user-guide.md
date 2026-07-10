@@ -57,10 +57,9 @@ pip install -r requirements.txt
 python app.py
 
 # 或使用 CLI
-python main.py          # 完整流程
+python main.py          # 抓取 → 分析 → 推荐评分
 python main.py fetch    # 仅抓取
 python main.py analyze  # 仅分析
-python main.py generate # 仅生成报告
 ```
 
 浏览器访问 `http://localhost:5000`
@@ -138,7 +137,7 @@ python main.py generate # 仅生成报告
 
 ### 🔍 搜索
 
-- 关键词搜索：标题、摘要、标签、中文摘要、Q&A 内容
+- 多关键词搜索：每个词都必须命中标题、摘要、标签、中文摘要或 Q&A 内容；结果按标题、标签、摘要、Q&A 的匹配权重排序并高亮命中片段
 - arXiv ID 搜索：输入 `2603.18336` 或完整链接
 
 ### 📖 论文详情
@@ -247,7 +246,7 @@ python main.py generate # 仅生成报告
 
 远端会保存 `arxiv-backup-latest.zip` 和按时间命名的 `arxiv-backup-YYYYMMDD-HHMMSS.zip`。历史备份默认保留 3 天，可根据 WebDAV 空间大小调整。
 
-备份包包含 `papers.db` 一致性快照、`data/settings.json` 和 `output/` 报告目录。`settings.json` 内含 API Key、管理密码哈希和 session secret，请只同步到可信 WebDAV 空间。
+备份包包含 `papers.db` 一致性快照、`data/settings.json` 和 manifest。Web 日报存储在数据库中，会随快照备份。`settings.json` 内含 API Key、管理密码哈希和 session secret，请只同步到可信 WebDAV 空间。
 
 每日任务执行内容：
 1. 抓取近 3 日 cs.RO 论文（防止周末无论文）

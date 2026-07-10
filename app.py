@@ -18,6 +18,7 @@ import os
 import json
 import hashlib
 import hmac
+import re
 import threading
 import time
 from datetime import datetime, timedelta
@@ -26,7 +27,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from database import (
     init_db, get_papers_with_analysis, get_all_tags,
     get_paper_count, get_analyzed_count, get_unanalyzed_count,
-    search_papers, get_daily_stats,
+    search_papers, normalize_search_terms, get_daily_stats,
     browse_papers, get_all_categories, get_all_dates,
     get_paper_by_arxiv_id, get_analysis_by_paper_id,
     update_analysis, hide_paper, unhide_paper, delete_paper,
@@ -765,18 +766,101 @@ def paper_chat_page(arxiv_id):
     )
 
 
+def _search_pattern(terms):
+    escaped = [re.escape(term) for term in sorted(terms, key=len, reverse=True) if term]
+    return re.compile("|".join(escaped), re.IGNORECASE) if escaped else None
+
+
+def _highlight_search_text(value, pattern):
+    """将文本拆成普通/命中片段，模板逐段转义后再包裹 mark。"""
+    text = str(value or "")
+    if not pattern:
+        return [{"text": text, "match": False}]
+    parts = []
+    cursor = 0
+    for match in pattern.finditer(text):
+        if match.start() > cursor:
+            parts.append({"text": text[cursor:match.start()], "match": False})
+        parts.append({"text": match.group(0), "match": True})
+        cursor = match.end()
+    if cursor < len(text):
+        parts.append({"text": text[cursor:], "match": False})
+    return parts or [{"text": text, "match": False}]
+
+
+def _search_excerpt(value, pattern, max_chars=220):
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_chars:
+        return text
+    match = pattern.search(text) if pattern else None
+    center = match.start() if match else 0
+    start = max(0, center - max_chars // 3)
+    end = min(len(text), start + max_chars)
+    start = max(0, end - max_chars)
+    return ("…" if start else "") + text[start:end] + ("…" if end < len(text) else "")
+
+
+def _prepare_search_result(paper, terms):
+    prepared = dict(paper)
+    pattern = _search_pattern(terms)
+    prepared["title_highlight"] = _highlight_search_text(prepared.get("title"), pattern)
+    prepared["tag_highlights"] = [
+        _highlight_search_text(tag, pattern) for tag in (prepared.get("tags") or [])
+    ]
+
+    field_labels = (
+        ("title", "标题"),
+        ("tags", "标签"),
+        ("summary_cn", "中文摘要"),
+        ("abstract", "英文摘要"),
+        ("qa_analysis", "深度阅读"),
+    )
+    matched_fields = []
+    for field, label in field_labels:
+        value = prepared.get(field)
+        text = " ".join(str(item) for item in value) if isinstance(value, list) else str(value or "")
+        if pattern and pattern.search(text):
+            matched_fields.append(label)
+    prepared["matched_fields"] = matched_fields
+
+    preview_label = ""
+    preview_text = ""
+    for field, label in (("summary_cn", "中文摘要"), ("abstract", "英文摘要"), ("qa_analysis", "深度阅读")):
+        value = prepared.get(field)
+        if value and pattern and pattern.search(str(value)):
+            preview_label = label
+            preview_text = _search_excerpt(value, pattern)
+            break
+    if not preview_text:
+        for field, label in (("summary_cn", "中文摘要"), ("abstract", "英文摘要")):
+            if prepared.get(field):
+                preview_label = label
+                preview_text = _search_excerpt(prepared[field], pattern)
+                break
+    prepared["search_preview"] = {
+        "label": preview_label,
+        "parts": _highlight_search_text(preview_text, pattern),
+    }
+    return prepared
+
+
 @app.route("/search")
 def search():
     """
     搜索页路由
 
-    支持查询参数 q（关键词），对论文标题和摘要进行全文搜索。
+    支持查询参数 q（最多 10 个关键词），执行跨字段 AND 匹配和相关性排序。
     """
     keyword = request.args.get("q", "").strip()
     papers = []
+    search_error = ""
     if keyword:
-        papers = search_papers(keyword, limit=50)
-    return render_template("search.html", papers=papers, keyword=keyword)
+        try:
+            terms = normalize_search_terms(keyword)
+            papers = [_prepare_search_result(paper, terms) for paper in search_papers(keyword, limit=50)]
+        except ValueError as exc:
+            search_error = str(exc)
+    return render_template("search.html", papers=papers, keyword=keyword, search_error=search_error)
 
 
 @app.route("/browse")
@@ -2381,7 +2465,7 @@ def api_db_info():
     返回：论文总数、已分析数、标签数、分类数、日期范围、数据库文件大小、平均评级等。
     """
     import os
-    from config import DB_PATH, OUTPUT_DIR, DAILY_DIR
+    from config import DB_PATH
     from database import get_all_tags, get_all_categories
 
     total = get_paper_count()
@@ -2430,8 +2514,6 @@ def api_db_info():
         "db_files": db_file_sizes["files"],
         "avg_rating": avg_rating,
         "db_path": DB_PATH,
-        "output_dir": OUTPUT_DIR,
-        "daily_dir": DAILY_DIR,
     })
 
 

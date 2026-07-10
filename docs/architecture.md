@@ -21,19 +21,18 @@
 │  │              SSE 进度推送 (/api/progress)              │   │
 │  └──────────────────────────────────────────────────────┘   │
 └───────────┬──────────────┬──────────────┬───────────────────┘
-            │              │              │
-            ▼              ▼              ▼
-┌───────────────┐ ┌───────────────┐ ┌───────────────┐
-│  fetcher.py   │ │  analyzer.py  │ │markdown_gen.py│
-│  (arXiv API)  │ │ (OpenAI API)  │ │  (报告生成)   │
-└───────┬───────┘ └───────┬───────┘ └───────┬───────┘
-        │                 │                 │
-        │           ┌─────┴─────┐           │
-        │           │pdf_reader │           │
-        │           │(PDF下载)  │           │
-        │           └─────┬─────┘           │
-        │                 │                 │
-        ▼                 ▼                 ▼
+            │              │
+            ▼              ▼
+┌───────────────┐ ┌───────────────┐
+│  fetcher.py   │ │  analyzer.py  │
+│  (arXiv API)  │ │ (OpenAI API)  │
+└───────┬───────┘ └───────┬───────┘
+        │           ┌─────┴─────┐
+        │           │pdf_reader │
+        │           │(PDF下载)  │
+        │           └─────┬─────┘
+        │                 │
+        ▼                 ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              SQLite 数据库 (data/papers.db)                   │
 │  ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌─────────┐ ┌─────┐│
@@ -145,7 +144,7 @@ APScheduler（星期 + 时分）→ daily_pipeline()
 设置页保存 WebDAV 配置 → settings.webdav_backup
 手动备份 / 每日任务结束 → backup.run_webdav_backup()
   → SQLite online backup 生成 papers.db 一致性快照
-  → 打包 papers.db + settings.json + output/ + manifest.json
+  → 打包 papers.db + settings.json + manifest.json（reports 表已包含 Web 日报）
   → WebDAV MKCOL/PUT 上传 latest 和日期历史文件
   → PROPFIND/DELETE 清理超过 history_days 的历史备份
 ```
@@ -174,8 +173,9 @@ APScheduler（星期 + 时分）→ daily_pipeline()
 用户输入关键词 → GET /search?q=xxx → database.py
   → 检查是否为 arXiv ID
   → 如果是 ID：精确匹配 arxiv_id
-  → 如果是关键词：LIKE 匹配 title/abstract/summary_cn/tags/qa_analysis
-  → 返回结果列表
+  → 如果是关键词：拆分并去重，要求每个词命中 title/tags/summary_cn/abstract/qa_analysis 之一
+  → 按字段权重累计相关分，再按评级和发布日期兜底排序
+  → 后端生成安全高亮片段和最佳命中摘要，模板自动转义后展示
 ```
 
 ---
@@ -192,8 +192,6 @@ app.py
 │   ├── database.py
 │   ├── settings.py # API 配置、prompt
 │   └── pdf_reader.py
-├── markdown_gen.py
-│   └── database.py
 └── settings.py     # 配置管理
 ```
 

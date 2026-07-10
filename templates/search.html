@@ -1,3 +1,8 @@
+{% macro render_highlight(parts) -%}
+    {%- for part in parts -%}
+        {%- if part.match -%}<mark class="search-highlight">{{ part.text }}</mark>{%- else -%}{{ part.text }}{%- endif -%}
+    {%- endfor -%}
+{%- endmacro %}
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -27,12 +32,16 @@
 
         <div class="search-section">
             <form action="/search" method="GET" class="search-form">
-                <input type="text" name="q" value="{{ keyword }}" placeholder="搜索论文标题、摘要、标签，或输入 arXiv ID（如 2603.18336）" class="search-input">
+                <input type="text" name="q" value="{{ keyword }}" maxlength="200" placeholder="输入最多 10 个关键词，或 arXiv ID（如 2603.18336）" class="search-input">
                 <button type="submit" class="search-btn">搜索</button>
             </form>
         </div>
 
-        {% if keyword %}
+        {% if search_error %}
+        <div class="empty-state search-error">
+            <p>{{ search_error }}</p>
+        </div>
+        {% elif keyword %}
         <div class="search-results">
             <h3>搜索结果: "{{ keyword }}" ({{ papers|length }} 篇)</h3>
         </div>
@@ -43,7 +52,7 @@
             <div class="paper-card">
                 <div class="paper-header">
                     <h3 class="paper-title">
-                        <a href="/paper/{{ paper.arxiv_id }}">{{ paper.title }}</a>
+                        <a href="/paper/{{ paper.arxiv_id }}">{{ render_highlight(paper.title_highlight) }}</a>
                     </h3>
                     <div class="paper-meta">
                         {% if paper.published_date %}
@@ -59,9 +68,21 @@
                     </div>
                 </div>
 
-                {% if paper.summary_cn %}
+                {% if paper.matched_fields %}
+                <div class="search-match-fields">匹配字段：{{ paper.matched_fields | join('、') }}</div>
+                {% endif %}
+
+                {% if paper.tag_highlights %}
+                <div class="paper-tags search-paper-tags">
+                    {% for tag_parts in paper.tag_highlights %}
+                    <span class="tag-small">{{ render_highlight(tag_parts) }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+                {% if paper.search_preview.label %}
                 <div class="paper-summary">
-                    <strong>中文摘要:</strong> {{ paper.summary_cn }}
+                    <strong>{{ paper.search_preview.label }}:</strong> {{ render_highlight(paper.search_preview.parts) }}
                 </div>
                 {% endif %}
 
@@ -74,7 +95,7 @@
                 </div>
             </div>
             {% else %}
-            {% if keyword %}
+            {% if keyword and not search_error %}
             <div class="empty-state">
                 <p>未找到匹配的论文</p>
             </div>

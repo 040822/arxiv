@@ -678,7 +678,7 @@ POST /api/recommendations/recalculate
 POST /api/backup/webdav/run
 ```
 
-需要登录。立即创建备份包并上传到 WebDAV；即使未启用每日自动备份，也可用于手动测试。备份包包含 `papers.db` 一致性快照、`settings.json` 和 `output/` 报告目录。远端会写入 `arxiv-backup-latest.zip` 和 `arxiv-backup-YYYYMMDD-HHMMSS.zip`，并按 `history_days` 清理过期历史备份。
+需要登录。立即创建备份包并上传到 WebDAV；即使未启用每日自动备份，也可用于手动测试。备份包包含 `papers.db` 一致性快照、`settings.json` 和 manifest；Web 日报位于数据库中，会随快照备份。远端会写入 `arxiv-backup-latest.zip` 和 `arxiv-backup-YYYYMMDD-HHMMSS.zip`，并按 `history_days` 清理过期历史备份。
 
 ### 报告邮件测试发送
 

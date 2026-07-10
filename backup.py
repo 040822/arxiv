@@ -3,7 +3,7 @@ WebDAV 云同步备份。
 
 备份流程：
 1. 使用 SQLite online backup API 生成一致性 papers.db 快照
-2. 将数据库快照、settings.json、output/ 报告目录和 manifest.json 打包成 zip
+2. 将数据库快照、settings.json 和 manifest.json 打包成 zip
 3. 上传 latest 和日期历史文件到 WebDAV
 4. 根据 history_days 清理过期历史备份
 """
@@ -21,7 +21,7 @@ import xml.etree.ElementTree as ET
 
 import requests
 
-from config import DB_DIR, DB_PATH, OUTPUT_DIR
+from config import DB_DIR, DB_PATH
 from settings import SETTINGS_PATH, get_webdav_backup_config, update_webdav_backup_status
 
 
@@ -81,26 +81,13 @@ def _copy_sqlite_snapshot(db_path, snapshot_path):
         source.close()
 
 
-def _iter_output_files(output_dir):
-    """按稳定顺序枚举 output 目录中的普通文件。"""
-    if not os.path.isdir(output_dir):
-        return
-    for root, dirs, files in os.walk(output_dir):
-        dirs[:] = sorted(d for d in dirs if d != "__pycache__")
-        for filename in sorted(files):
-            path = os.path.join(root, filename)
-            if os.path.isfile(path):
-                yield path
-
-
 def create_backup_archive(
     archive_path,
     db_path=DB_PATH,
     settings_path=SETTINGS_PATH,
-    output_dir=OUTPUT_DIR,
     now=None,
 ):
-    """创建包含数据库、设置和报告目录的 zip 备份包。"""
+    """创建包含数据库快照、设置和清单的 zip 备份包。"""
     now = now or datetime.now()
     os.makedirs(os.path.dirname(archive_path), exist_ok=True)
     db_sizes = get_database_file_sizes(db_path)
@@ -115,9 +102,7 @@ def create_backup_archive(
         "included": {
             "database_snapshot": True,
             "settings_json": os.path.exists(settings_path),
-            "output_dir": os.path.isdir(output_dir),
         },
-        "report_files": [],
     }
 
     with tempfile.TemporaryDirectory(prefix="sqlite-snapshot-") as tmp:
@@ -128,10 +113,6 @@ def create_backup_archive(
             zf.write(snapshot_path, "papers.db")
             if os.path.exists(settings_path):
                 zf.write(settings_path, "settings.json")
-            for path in _iter_output_files(output_dir) or []:
-                arcname = os.path.join("output", os.path.relpath(path, output_dir))
-                zf.write(path, arcname)
-                manifest["report_files"].append(arcname)
             zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
 
     manifest["archive"] = {

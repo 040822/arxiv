@@ -453,7 +453,7 @@
                 <div class="settings-group-body">
                     <div class="settings-section">
                         <h3>☁️ WebDAV 云同步备份</h3>
-                        <p class="section-desc">每天定时任务结束后自动备份数据库快照、<code>settings.json</code> 和 <code>output/</code> 报告目录。注意：备份包会包含 API Key、管理密码哈希和 session secret 等敏感配置。</p>
+                        <p class="section-desc">每天定时任务结束后自动备份数据库快照、<code>settings.json</code> 和 manifest。Web 日报存储在数据库中，会随快照备份。注意：备份包会包含 API Key、管理密码哈希和 session secret 等敏感配置。</p>
                         <div class="form-group"><label><input type="checkbox" id="webdav-enabled"> 启用每日自动 WebDAV 备份</label></div>
                         <div class="form-row">
                             <div class="form-group" style="flex:2;">
@@ -1939,8 +1939,6 @@
                     <div class="db-path-item"><strong>数据库文件:</strong> <code>${escapeHtml(data.db_path)}</code></div>
                     <div class="db-path-item"><strong>数据库文件占用:</strong> ${escapeHtml(data.db_size)} (${escapeHtml(data.db_size_bytes)} bytes)</div>
                     ${fileRows}
-                    <div class="db-path-item"><strong>输出目录:</strong> <code>${escapeHtml(data.output_dir)}</code></div>
-                    <div class="db-path-item"><strong>日报目录:</strong> <code>${escapeHtml(data.daily_dir)}</code></div>
                 `;
             } catch (e) { document.getElementById('db-info').innerHTML = '<p>加载失败</p>'; }
         }

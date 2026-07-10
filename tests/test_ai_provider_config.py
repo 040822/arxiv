@@ -2226,84 +2226,6 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         self.assertNotIn("高分论文", content)
         self.assertLess(content.index("Lower Rating High Interest"), content.index("High Rating Low Interest"))
 
-    def test_daily_markdown_recommendation_and_all_papers(self):
-        import database
-        import markdown_gen
-
-        original_db_dir = database.DB_DIR
-        original_db_path = database.DB_PATH
-        original_daily_dir = markdown_gen.DAILY_DIR
-        with tempfile.TemporaryDirectory() as tmp:
-            database.DB_DIR = tmp
-            database.DB_PATH = os.path.join(tmp, "papers.db")
-            markdown_gen.DAILY_DIR = os.path.join(tmp, "daily")
-            database.init_db()
-            high_rating_id = database.insert_paper({
-                "arxiv_id": "2601.00005",
-                "title": "High Rating Low Interest",
-                "authors": ["Alice"],
-                "abstract": "abstract",
-                "categories": ["cs.RO"],
-                "primary_category": "cs.RO",
-                "url": "https://arxiv.org/abs/2601.00005",
-                "pdf_url": "https://arxiv.org/pdf/2601.00005",
-                "published_date": "2026-01-01",
-                "updated_date": "2026-01-01",
-            })
-            high_interest_id = database.insert_paper({
-                "arxiv_id": "2601.00006",
-                "title": "Lower Rating High Interest",
-                "authors": ["Bob"],
-                "abstract": "abstract",
-                "categories": ["cs.RO"],
-                "primary_category": "cs.RO",
-                "url": "https://arxiv.org/abs/2601.00006",
-                "pdf_url": "https://arxiv.org/pdf/2601.00006",
-                "published_date": "2026-01-01",
-                "updated_date": "2026-01-01",
-            })
-            database.insert_analysis(high_rating_id, {
-                "tags": ["Robot"],
-                "summary_cn": "摘要",
-                "summary_en": "",
-                "rating": 5,
-                "value_comment": "高分评价",
-                "qa_analysis": "",
-            })
-            database.insert_analysis(high_interest_id, {
-                "tags": ["VLA"],
-                "summary_cn": "高兴趣中文摘要",
-                "summary_en": "",
-                "rating": 3,
-                "value_comment": "相关评价",
-                "qa_analysis": "",
-            })
-            database.update_recommendation_result(high_rating_id, 20, "弱相关", "hash-v1")
-            database.update_recommendation_result(high_interest_id, 95, "强相关", "hash-v1")
-
-            with patch.object(markdown_gen, "get_personalization_config", return_value={"research_interests": "机器人基础模型\nVLA"}), \
-                 patch.object(markdown_gen, "get_research_interest_hash", return_value="hash-v1"):
-                report_path = markdown_gen.generate_daily_report("2026-01-01")
-            with open(report_path, "r", encoding="utf-8") as f:
-                content = f.read()
-
-        database.DB_DIR = original_db_dir
-        database.DB_PATH = original_db_path
-        markdown_gen.DAILY_DIR = original_daily_dir
-        self.assertIn("## 🎯 个性化推荐", content)
-        self.assertIn("**研究兴趣:**", content)
-        self.assertIn("> 机器人基础模型", content)
-        self.assertIn("> VLA", content)
-        self.assertIn("⭐ ★ ★ ★ ☆ ☆", content)
-        self.assertNotIn("3星", content)
-        self.assertNotIn("5星", content)
-        self.assertIn("**中文摘要:** 高兴趣中文摘要", content)
-        self.assertIn("**推荐语:** 强相关", content)
-        self.assertIn("**评价:** 相关评价", content)
-        self.assertIn("## 📋 全部论文", content)
-        self.assertIn("High Rating Low Interest", content)
-        self.assertNotIn("高价值论文", content)
-
     def test_recommendation_candidates_require_existing_analysis(self):
         import database
 
@@ -2696,7 +2618,7 @@ class BackupServiceTests(unittest.TestCase):
         self.assertEqual(sizes["total_bytes"], 60)
         self.assertEqual([f["name"] for f in sizes["files"]], ["papers.db", "papers.db-wal", "papers.db-shm"])
 
-    def test_backup_archive_contains_database_settings_reports_and_manifest(self):
+    def test_backup_archive_contains_database_settings_and_manifest(self):
         import backup
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -2711,17 +2633,11 @@ class BackupServiceTests(unittest.TestCase):
             with open(settings_path, "w", encoding="utf-8") as f:
                 json.dump({"api_key": "secret"}, f)
 
-            output_dir = os.path.join(tmp, "output")
-            os.makedirs(os.path.join(output_dir, "daily"))
-            with open(os.path.join(output_dir, "daily", "2026-06-15.md"), "w", encoding="utf-8") as f:
-                f.write("# report")
-
             archive_path = os.path.join(tmp, "backup.zip")
             manifest = backup.create_backup_archive(
                 archive_path,
                 db_path=db_path,
                 settings_path=settings_path,
-                output_dir=output_dir,
             )
 
             with zipfile.ZipFile(archive_path, "r") as zf:
@@ -2736,11 +2652,12 @@ class BackupServiceTests(unittest.TestCase):
 
         self.assertIn("papers.db", names)
         self.assertIn("settings.json", names)
-        self.assertIn("output/daily/2026-06-15.md", names)
         self.assertIn("manifest.json", names)
+        self.assertEqual(names, {"papers.db", "settings.json", "manifest.json"})
         self.assertEqual(row[0], "paper")
         self.assertTrue(manifest["included"]["settings_json"])
-        self.assertEqual(manifest_data["report_files"], ["output/daily/2026-06-15.md"])
+        self.assertNotIn("output_dir", manifest_data["included"])
+        self.assertNotIn("report_files", manifest_data)
 
     def test_webdav_backup_uploads_latest_and_cleans_expired_history(self):
         import backup

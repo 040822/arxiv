@@ -26,11 +26,33 @@ import sqlite3
 import json
 import os
 import logging
+import re
 import html as html_module
 from datetime import datetime, timedelta, timezone
 from config import DB_PATH, DB_DIR
 
 logger = logging.getLogger(__name__)
+
+MAX_SEARCH_QUERY_LENGTH = 200
+MAX_SEARCH_TERMS = 10
+
+
+def normalize_search_terms(keyword):
+    """规范化搜索词；过长查询直接拒绝，避免构造过大的 SQL。"""
+    keyword = str(keyword or "").strip()
+    if len(keyword) > MAX_SEARCH_QUERY_LENGTH:
+        raise ValueError(f"搜索内容不能超过 {MAX_SEARCH_QUERY_LENGTH} 个字符")
+
+    terms = []
+    seen_terms = set()
+    for term in keyword.split():
+        normalized = term.casefold()
+        if normalized and normalized not in seen_terms:
+            terms.append(term)
+            seen_terms.add(normalized)
+    if len(terms) > MAX_SEARCH_TERMS:
+        raise ValueError(f"搜索关键词不能超过 {MAX_SEARCH_TERMS} 个")
+    return terms
 
 
 def _basic_analysis_missing_condition(alias="a"):
@@ -865,11 +887,12 @@ def get_unanalyzed_papers(limit=100):
 
 
 def search_papers(keyword, limit=50):
-    """搜索论文，支持关键词和 arXiv ID。
+    """搜索论文，支持多关键词和 arXiv ID。
     
     搜索逻辑：
     1. 如果关键词匹配 arXiv ID 格式（如 2401.12345），则精确查找
-    2. 否则在标题、摘要、中文摘要、标签、Q&A 中进行模糊搜索
+    2. 否则按空白拆分关键词；每个词都必须在任一搜索字段中命中
+    3. 按标题、标签、中文摘要、英文摘要、Q&A 的字段权重计算相关分
     
     参数：
         keyword (str): 搜索关键词或 arXiv ID
@@ -878,13 +901,17 @@ def search_papers(keyword, limit=50):
     返回：
         list: 匹配的论文列表
     """
+    # 检查关键词是否为 arXiv ID 格式
+    terms = normalize_search_terms(keyword)
+    keyword = str(keyword or "").strip()
+    arxiv_match = re.search(r'(\d{4}\.\d{4,5})(v\d+)?', keyword)
+    arxiv_id = arxiv_match.group(1) if arxiv_match else None
+
+    if not arxiv_id and not terms:
+        return []
+
     conn = get_connection()
     cursor = conn.cursor()
-
-    # 检查关键词是否为 arXiv ID 格式
-    import re
-    arxiv_match = re.search(r'(\d{4}\.\d{4,5})(v\d+)?', keyword.strip())
-    arxiv_id = arxiv_match.group(1) if arxiv_match else None
 
     if arxiv_id:
         # 精确匹配 arXiv ID
@@ -895,21 +922,49 @@ def search_papers(keyword, limit=50):
             FROM papers p
             LEFT JOIN analysis a ON p.id = a.paper_id
             WHERE p.arxiv_id = ?
+              AND (p.hidden IS NULL OR p.hidden = 0)
             LIMIT ?
         """, (arxiv_id, limit))
     else:
-        # 多字段模糊搜索：标题、摘要、中文摘要、标签、Q&A
-        cursor.execute("""
+        search_fields = (
+            ("p.title", 5),
+            ("a.tags", 4),
+            ("a.summary_cn", 3),
+            ("p.abstract", 2),
+            ("a.qa_analysis", 1),
+        )
+        score_parts = []
+        score_params = []
+        required_groups = []
+        where_params = []
+
+        for term in terms:
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{escaped}%"
+            matches = []
+            for field, weight in search_fields:
+                condition = f"COALESCE({field}, '') LIKE ? ESCAPE '\\'"
+                matches.append(condition)
+                score_parts.append(f"CASE WHEN {condition} THEN {weight} ELSE 0 END")
+                score_params.append(pattern)
+                where_params.append(pattern)
+            required_groups.append("(" + " OR ".join(matches) + ")")
+
+        relevance_sql = " + ".join(score_parts) if score_parts else "0"
+        required_sql = " AND ".join(required_groups) if required_groups else "0"
+        query = f"""
             SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis,
                    a.recommendation_score, a.recommendation_reason, a.recommendation_interest_hash,
-                   a.recommendation_analyzed_at
+                   a.recommendation_analyzed_at,
+                   ({relevance_sql}) AS search_score
             FROM papers p
             LEFT JOIN analysis a ON p.id = a.paper_id
             WHERE (p.hidden IS NULL OR p.hidden = 0)
-            AND (p.title LIKE ? OR p.abstract LIKE ? OR a.summary_cn LIKE ? OR a.tags LIKE ? OR a.qa_analysis LIKE ?)
-            ORDER BY a.rating DESC, p.published_date DESC
+            AND {required_sql}
+            ORDER BY search_score DESC, a.rating DESC, p.published_date DESC, p.arxiv_id
             LIMIT ?
-        """, (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", limit))
+        """
+        cursor.execute(query, score_params + where_params + [limit])
 
     rows = cursor.fetchall()
     conn.close()
@@ -951,6 +1006,129 @@ def get_daily_stats(date):
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def get_report_trends(report_date, interest_hash="", days=7, top_tags=5):
+    """汇总截至报告日最近若干个有论文日期的标签和推荐分趋势。"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT DISTINCT published_date
+        FROM papers
+        WHERE published_date IS NOT NULL AND published_date <= ?
+        ORDER BY published_date DESC
+        LIMIT ?
+    """, (report_date, max(1, int(days))))
+    dates = [row["published_date"] for row in cursor.fetchall()][::-1]
+
+    if not dates:
+        conn.close()
+        return {
+            "dates": [],
+            "tag_series": [],
+            "new_tags": [],
+            "has_tag_history": False,
+            "recommendation": {
+                "enabled": bool(interest_hash),
+                "buckets": [],
+                "scored": 0,
+                "unscored": 0,
+                "total": 0,
+            },
+        }
+
+    placeholders = ",".join("?" for _ in dates)
+    cursor.execute(f"""
+        SELECT p.published_date, a.tags, a.recommendation_score, a.recommendation_interest_hash
+        FROM papers p
+        LEFT JOIN analysis a ON p.id = a.paper_id
+        WHERE p.published_date IN ({placeholders})
+    """, dates)
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    date_tag_counts = {date: {} for date in dates}
+    for row in rows:
+        try:
+            tags = json.loads(row.get("tags") or "[]")
+        except (TypeError, json.JSONDecodeError):
+            tags = []
+        for tag in tags if isinstance(tags, list) else []:
+            tag = str(tag).strip()
+            if tag:
+                counts = date_tag_counts[row["published_date"]]
+                counts[tag] = counts.get(tag, 0) + 1
+
+    totals = {}
+    for counts in date_tag_counts.values():
+        for tag, count in counts.items():
+            totals[tag] = totals.get(tag, 0) + count
+    ranked_tags = sorted(totals, key=lambda tag: (-totals[tag], tag.casefold()))[:max(1, int(top_tags))]
+    tag_series = [
+        {
+            "tag": tag,
+            "total": totals[tag],
+            "counts": [date_tag_counts[date].get(tag, 0) for date in dates],
+        }
+        for tag in ranked_tags
+    ]
+
+    has_tag_history = len(dates) > 1
+    new_tags = []
+    if has_tag_history:
+        previous_tags = set()
+        for date in dates[:-1]:
+            previous_tags.update(date_tag_counts[date])
+        new_tags = [
+            {"tag": tag, "count": count}
+            for tag, count in sorted(
+                date_tag_counts[dates[-1]].items(),
+                key=lambda item: (-item[1], item[0].casefold()),
+            )
+            if tag not in previous_tags
+        ]
+
+    buckets = [
+        {"key": "low", "label": "0–59", "count": 0},
+        {"key": "recommended", "label": "60–79", "count": 0},
+        {"key": "strong", "label": "80–100", "count": 0},
+    ]
+    scored = 0
+    unscored = 0
+    for row in rows:
+        score = row.get("recommendation_score")
+        if not interest_hash or row.get("recommendation_interest_hash") != interest_hash:
+            unscored += 1
+            continue
+        try:
+            score = int(score)
+        except (TypeError, ValueError):
+            unscored += 1
+            continue
+        if not 0 <= score <= 100:
+            unscored += 1
+            continue
+        scored += 1
+        if score < 60:
+            buckets[0]["count"] += 1
+        elif score < 80:
+            buckets[1]["count"] += 1
+        else:
+            buckets[2]["count"] += 1
+
+    return {
+        "dates": dates,
+        "tag_series": tag_series,
+        "new_tags": new_tags,
+        "has_tag_history": has_tag_history,
+        "recommendation": {
+            "enabled": bool(interest_hash),
+            "buckets": buckets,
+            "scored": scored,
+            "unscored": unscored,
+            "total": len(rows),
+        },
+    }
 
 
 # ==================== 分析结果操作 ====================
@@ -1878,6 +2056,7 @@ def generate_report_content(date, ai_summary=None):
     from settings import get_personalization_config, get_research_interest_hash
     current_research_interests = get_personalization_config().get("research_interests", "")
     current_interest_hash = get_research_interest_hash(current_research_interests)
+    trends = get_report_trends(date, interest_hash=current_interest_hash, days=7, top_tags=5)
 
     def esc(value):
         return html_module.escape(str(value or ""), quote=True)
@@ -1954,6 +2133,53 @@ def generate_report_content(date, ai_summary=None):
     if ai_summary:
         summary_html = esc(ai_summary).replace("\n", "<br>")
         html += f'<div class="report-section"><h3>🤖 AI 导读</h3><div class="report-paper-summary">{summary_html}</div></div>'
+
+    if trends.get("dates"):
+        html += '<div class="report-section report-trends"><h3>📈 近 7 个有数据日趋势</h3>'
+        html += '<div class="report-trend-block"><h4>标签走势</h4>'
+        if trends.get("tag_series"):
+            html += '<div class="report-trend-table-wrap"><table class="report-trend-table"><thead><tr><th>标签</th>'
+            for trend_date in trends["dates"]:
+                html += f'<th title="{esc(trend_date)}">{esc(trend_date[5:])}</th>'
+            html += '<th>合计</th></tr></thead><tbody>'
+            for series in trends["tag_series"]:
+                html += f'<tr><th>{esc(series["tag"])}</th>'
+                for count in series["counts"]:
+                    html += f'<td>{int(count)}</td>'
+                html += f'<td><strong>{int(series["total"])}</strong></td></tr>'
+            html += '</tbody></table></div>'
+        else:
+            html += '<div class="report-trend-empty">窗口内暂无标签数据</div>'
+        html += '</div>'
+
+        html += '<div class="report-trend-grid"><div class="report-trend-block"><h4>新标签</h4>'
+        if not trends.get("has_tag_history"):
+            html += '<div class="report-trend-empty">仅有 1 个数据日，暂无历史可比较</div>'
+        elif trends.get("new_tags"):
+            html += '<div class="report-tags">'
+            for item in trends["new_tags"]:
+                html += f'<span class="tag-badge">{esc(item["tag"])} <span class="tag-count">{int(item["count"])}</span></span>'
+            html += '</div>'
+        else:
+            html += '<div class="report-trend-empty">报告日没有相对前序数据日的新标签</div>'
+        html += '</div>'
+
+        recommendation = trends["recommendation"]
+        html += '<div class="report-trend-block"><h4>推荐分分布</h4>'
+        if not recommendation.get("enabled"):
+            html += '<div class="report-trend-empty">未配置研究兴趣，暂无当前推荐分分布</div>'
+        else:
+            scored = int(recommendation.get("scored") or 0)
+            for bucket in recommendation.get("buckets", []):
+                count = int(bucket.get("count") or 0)
+                percent = round(count * 100 / scored) if scored else 0
+                html += f'''<div class="report-score-row">
+                    <span class="report-score-label">{esc(bucket.get("label"))}</span>
+                    <span class="report-score-track"><span class="report-score-fill report-score-{esc(bucket.get("key"))}" style="width:{percent}%"></span></span>
+                    <strong>{count}</strong>
+                </div>'''
+            html += f'<div class="report-score-unscored">未评分或兴趣已过期：{int(recommendation.get("unscored") or 0)} 篇</div>'
+        html += '</div></div></div>'
 
     if recommended:
         interest_html = ""

@@ -16,8 +16,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 source .venv/bin/activate          # 必须先激活；.envrc 也会做这件事
 
 # CLI 流水线（main.py）
-python main.py                     # 完整流程：fetch → analyze → generate
-python main.py fetch               # 仅抓取   analyze 仅分析   generate 仅生成报告
+python main.py                     # 完整流程：fetch → analyze → recommend
+python main.py fetch               # 仅抓取；analyze 仅分析
 
 python app.py                      # 启动 Flask（0.0.0.0:5000）+ APScheduler 定时任务
 
@@ -34,7 +34,7 @@ python -c "from database import *; init_db(); print(get_paper_count(), 'papers,'
 
 ## 架构要点（需跨文件阅读）
 
-**模块分层与懒加载。** `app.py`（Web+定时）和 `main.py`（CLI）是入口；它们调用 `fetcher` / `analyzer` / `markdown_gen`；后者依赖 `database`（SQLite 全部 CRUD+迁移）、`settings`（运行时配置）、`pdf_reader`（PDF 下载+PyMuPDF 提取）；最底层是 `config`。`main.py` 在函数内部 import 以避免循环依赖——新增入口时保持这个模式。
+**模块分层与懒加载。** `app.py`（Web+定时）和 `main.py`（CLI）是入口；它们调用 `fetcher` / `analyzer` / `database`；后者依赖 `settings`（运行时配置）和 `pdf_reader`（PDF 下载+PyMuPDF 提取），最底层是 `config`。`main.py` 在函数内部 import 以避免循环依赖——新增入口时保持这个模式。
 
 **两层配置系统是核心。** `config.py` 是硬编码默认值/环境变量 fallback，**仅在首次运行或缺省时生效**；真正的运行时配置在 `data/settings.json`（git 忽略，含 API Key），由 Web 设置页读写。所有运行时配置都经 `settings.py` 读取，不要直接读 `config.py` 的 API 变量。
 

@@ -4,14 +4,12 @@ CLI 命令行入口模块
 本模块是论文数据库系统的命令行接口，提供以下子命令：
 - fetch: 仅从 arXiv 抓取新论文
 - analyze: 仅对未分析的论文进行 AI 分析
-- generate: 仅生成 Markdown 报告
-- run: 执行完整流程（抓取 + 分析 + 生成报告）
+- run: 执行完整流程（抓取 + 分析 + 推荐评分）
 
 使用方法：
     python main.py              # 执行完整流程（默认）
     python main.py fetch        # 仅抓取论文
     python main.py analyze      # 仅分析论文
-    python main.py generate     # 仅生成报告
     python main.py run          # 执行完整流程
 
 日志配置：
@@ -22,7 +20,6 @@ CLI 命令行入口模块
 
 import sys
 import logging
-from datetime import datetime
 
 # 配置日志系统
 # 设置日志级别为 INFO，格式包含时间戳、级别、模块名和消息
@@ -43,15 +40,12 @@ def run_full_pipeline():
     2. 从 arXiv 抓取最新论文
     3. 使用 AI 分析未处理的论文
     4. 按研究兴趣补齐个性化推荐分（如已配置）
-    5. 生成 Markdown 报告（README + 每日报告）
-    
     每个步骤都会记录日志，包括开始和完成状态。
     """
     # 延迟导入，避免循环依赖
     from database import init_db
     from fetcher import fetch_latest_papers
     from analyzer import analyze_pending_papers, recommend_pending_papers
-    from markdown_gen import generate_all_markdown
     from settings import get_concurrency
 
     # 流程开始日志
@@ -60,30 +54,24 @@ def run_full_pipeline():
     logger.info("=" * 60)
 
     # 步骤 1: 初始化数据库
-    logger.info("[1/5] Initializing database...")
+    logger.info("[1/4] Initializing database...")
     init_db()
 
     # 步骤 2: 抓取最新论文
-    logger.info("[2/5] Fetching latest papers from arXiv...")
+    logger.info("[2/4] Fetching latest papers from arXiv...")
     new_papers = fetch_latest_papers()
     logger.info(f"Fetched {len(new_papers)} new papers.")
 
     # 步骤 3: AI 分析论文（默认最多 100 篇）
-    logger.info("[3/5] Analyzing papers with AI...")
+    logger.info("[3/4] Analyzing papers with AI...")
     concurrency = get_concurrency()
     analyzed_count = analyze_pending_papers(limit=100, concurrency=concurrency)
     logger.info(f"Analyzed {analyzed_count} papers.")
 
     # 步骤 4: 个性化推荐评分（如已设置研究兴趣）
-    logger.info("[4/5] Scoring personalized recommendations...")
+    logger.info("[4/4] Scoring personalized recommendations...")
     recommended_count = recommend_pending_papers(limit=1000, concurrency=concurrency)
     logger.info(f"Recommended {recommended_count} papers.")
-
-    # 步骤 5: 生成 Markdown 报告
-    logger.info("[5/5] Generating Markdown reports...")
-    readme_path, daily_path = generate_all_markdown()
-    logger.info(f"README: {readme_path}")
-    logger.info(f"Daily report: {daily_path}")
 
     # 流程完成日志
     logger.info("=" * 60)
@@ -125,23 +113,6 @@ def run_analyze_only():
     logger.info(f"Analyzed {analyzed_count} papers.")
 
 
-def run_generate_only():
-    """
-    仅执行报告生成操作
-    
-    基于现有数据库数据生成 Markdown 报告，不抓取新论文和进行分析。
-    适用于数据已更新需要重新生成报告的场景。
-    """
-    from database import init_db
-    from markdown_gen import generate_all_markdown
-
-    logger.info("Generating Markdown only...")
-    init_db()
-    readme_path, daily_path = generate_all_markdown()
-    logger.info(f"README: {readme_path}")
-    logger.info(f"Daily report: {daily_path}")
-
-
 def main():
     """
     主函数：解析命令行参数并执行相应操作
@@ -149,7 +120,6 @@ def main():
     支持的子命令：
     - fetch: 仅抓取新论文
     - analyze: 仅分析论文
-    - generate: 仅生成报告
     - run: 执行完整流程
     
     如果没有提供参数，默认执行完整流程。
@@ -164,17 +134,14 @@ def main():
             run_fetch_only()
         elif cmd == "analyze":
             run_analyze_only()
-        elif cmd == "generate":
-            run_generate_only()
         elif cmd == "run":
             run_full_pipeline()
         else:
             # 无效命令，显示帮助信息
-            print("Usage: python main.py [fetch|analyze|generate|run]")
+            print("Usage: python main.py [fetch|analyze|run]")
             print("  fetch    - Only fetch new papers from arXiv")
             print("  analyze  - Only analyze unanalyzed papers")
-            print("  generate - Only generate Markdown reports")
-            print("  run      - Full pipeline (fetch + analyze + generate)")
+            print("  run      - Full pipeline (fetch + analyze + recommend)")
     else:
         # 无参数时执行完整流程
         run_full_pipeline()

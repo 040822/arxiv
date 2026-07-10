@@ -34,9 +34,8 @@ arxiv/
 ├── backup.py           # WebDAV 云同步备份（SQLite 快照、zip 打包、上传/清理）
 ├── email_report.py     # 每日报告邮件发送（SMTP、邮件HTML包装、站内链接重写）
 ├── pdf_reader.py       # PDF 下载与文本提取（PyMuPDF，缓存到 data/pdf_cache/）
-├── markdown_gen.py     # Markdown 报告生成（README + 每日报告）
 ├── app.py              # Flask Web 服务（路由、API、APScheduler定时任务）
-├── main.py             # CLI 入口（fetch/analyze/generate/run）
+├── main.py             # CLI 入口（fetch/analyze/run）
 ├── requirements.txt    # Python 依赖
 ├── README.md           # 用户文档
 ├── AGENTS.md           # 本文件（AI维护文档）
@@ -56,9 +55,6 @@ arxiv/
 │   ├── papers.db       # SQLite 数据库
 │   ├── settings.json   # 运行时配置
 │   └── pdf_cache/      # PDF 缓存
-└── output/             # 生成的 Markdown 报告
-    ├── README.md       # 总览报告
-    └── daily/          # 每日报告
 ```
 
 ---
@@ -253,6 +249,7 @@ APScheduler cron(day_of_week, hour, minute)
     → analyze_pending_papers(limit=schedule.analyze_limit)
     → 按研究兴趣补齐推荐评分（未设置时 skipped）
     → generate_report_content(latest_date) + save_report()
+      # Web 日报包含截至报告日最近 7 个有论文日期的标签走势、新标签和推荐分分布
     → send_report_email()  # 未启用/已发送时 skipped；失败记 warning
     → run_webdav_backup()  # 未启用时 skipped；失败记 warning
     → finish_task_log(success/warning/error)
@@ -531,7 +528,7 @@ if "new_column" not in columns:
 # 启动服务
 python app.py
 
-# 手动执行完整流程
+# CLI 执行抓取、分析和推荐评分
 python main.py
 
 # 仅抓取
@@ -539,9 +536,6 @@ python main.py fetch
 
 # 仅分析
 python main.py analyze
-
-# 仅生成报告
-python main.py generate
 
 # 查看数据库状态
 python -c "from database import *; init_db(); print(get_paper_count(), 'papers,', get_analyzed_count(), 'analyzed')"
@@ -551,7 +545,8 @@ cp data/papers.db data/papers.db.bak
 
 # WebDAV 云备份
 # 设置页「数据库 → WebDAV 云同步备份」可启用每日自动同步。
-# 备份包包含 papers.db 一致性快照、data/settings.json 和 output/，
+# 备份包包含 papers.db 一致性快照、data/settings.json 和 manifest；
+# Web 日报位于 reports 表中，会随数据库快照备份。
 # 会包含 API Key、管理密码哈希和 session secret 等敏感配置。
 # 远端文件：arxiv-backup-latest.zip + arxiv-backup-YYYYMMDD-HHMMSS.zip，
 # 历史备份默认保留 3 天，可在设置页修改。

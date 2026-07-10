@@ -39,7 +39,6 @@ arxiv/
 ├── analyzer.py         # AI 分析（基础/完整）
 ├── backup.py           # WebDAV 云同步备份
 ├── pdf_reader.py       # PDF 下载与文本提取
-├── markdown_gen.py     # Markdown 报告生成
 ├── app.py              # Flask Web 服务 + 定时任务
 ├── main.py             # CLI 入口
 ├── templates/          # Jinja2 HTML 模板
@@ -48,6 +47,5 @@ arxiv/
 │   ├── papers.db       # SQLite 数据库
 │   ├── settings.json   # 运行时配置
 │   └── pdf_cache/      # PDF 缓存
-├── output/             # 生成的 Markdown 报告
 └── docs/               # 本目录
 ```
