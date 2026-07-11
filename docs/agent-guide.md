@@ -65,7 +65,8 @@ analyzer.analyze_paper_full(paper_data)
   → get_paper_full_text() 下载 PDF 提取全文
   → 调用 OpenAI API（只生成 Q&A）
   → 解析 JSON：{qa_analysis}
-  → update_analysis() 仅更新 qa_analysis
+  → 校验 Prompt 声明的 Q 编号，截断或缺题时最多补全一次
+  → 仅在完整时 update_analysis()；否则保留旧 qa_analysis 并返回 warning
 ```
 
 ### 4. 论文学习流程（单篇）

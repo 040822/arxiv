@@ -786,6 +786,10 @@ header h1 {
     white-space: pre-wrap;
 }
 
+.qa-question p {
+    margin: 0;
+}
+
 .qa-answer strong {
     font-weight: 600;
     color: #1e293b;
@@ -1368,6 +1372,13 @@ footer {
     background: #d4edda;
     color: #155724;
     border-left: 3px solid #10b981;
+}
+
+.action-status.warning {
+    display: block;
+    background: #fffbeb;
+    color: #92400e;
+    border-left: 3px solid #f59e0b;
 }
 
 .action-status.error {

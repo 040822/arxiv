@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ paper.title }} - AI 论文数据库</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/vendor/katex.min.css">
 </head>
 <body>
     <div class="container">
@@ -138,38 +139,6 @@
                 <div id="qa-view">
                     {% if analysis and analysis.qa_analysis %}
                     <div class="qa-content" id="qa-content"></div>
-                    <script>
-                        (function() {
-                            let raw = {{ analysis.qa_analysis | tojson }};
-                            raw = raw.replace(/\\n/g, '\n');
-
-                            function escapeHtml(value) {
-                                return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-                            }
-
-                            function renderMd(text) {
-                                text = escapeHtml(text);
-                                text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-                                text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-                                text = text.replace(/`(.+?)`/g, '<code>$1</code>');
-                                text = text.replace(/\n/g, '<br>');
-                                return text;
-                            }
-
-                            const el = document.getElementById('qa-content');
-                            const parts = raw.split(/(?=### Q\d+:)/).filter(s => s.trim());
-                            let html = '';
-                            for (const part of parts) {
-                                const m = part.match(/^### Q(\d+):\s*([\s\S]*)/);
-                                if (m) {
-                                    const title = m[2].split('\n')[0].trim();
-                                    const body = m[2].split('\n').slice(1).join('\n').trim();
-                                    html += '<div class="qa-item"><div class="qa-question">Q' + m[1] + ': ' + renderMd(title) + '</div><div class="qa-answer">' + renderMd(body) + '</div></div>';
-                                }
-                            }
-                            el.innerHTML = html;
-                        })();
-                    </script>
                     {% else %}
                     <p class="no-data">暂无 AI 深度阅读内容</p>
                     {% endif %}
@@ -225,8 +194,44 @@
         </footer>
     </div>
 
+    <script src="/static/vendor/marked.min.js"></script>
+    <script src="/static/vendor/katex.min.js"></script>
+    <script src="/static/vendor/auto-render.min.js"></script>
+    <script src="/static/rich_text.js"></script>
     <script>
         const ARXIV_ID = {{ paper.arxiv_id | tojson }};
+        const QA_ANALYSIS = {{ (analysis.qa_analysis if analysis and analysis.qa_analysis else '') | tojson }};
+
+        function renderQaAnalysis() {
+            const container = document.getElementById('qa-content');
+            if (!container) return;
+            const raw = QA_ANALYSIS.replace(/\\n/g, '\n');
+            const parts = raw.split(/(?=^###\s*Q\d+\s*:)/gim).filter(part => part.trim());
+            let renderedCards = 0;
+            parts.forEach(part => {
+                const match = part.match(/^###\s*Q(\d+)\s*:\s*([\s\S]*)/i);
+                if (!match) return;
+                const lines = match[2].split('\n');
+                const item = document.createElement('div');
+                item.className = 'qa-item';
+                const question = document.createElement('div');
+                question.className = 'qa-question';
+                question.innerHTML = RichText.render(`Q${match[1]}: ${lines[0].trim()}`);
+                const answer = document.createElement('div');
+                answer.className = 'qa-answer learning-message-body';
+                answer.innerHTML = RichText.render(lines.slice(1).join('\n').trim());
+                item.append(question, answer);
+                container.appendChild(item);
+                RichText.renderMath(item);
+                renderedCards += 1;
+            });
+            if (!renderedCards) {
+                container.innerHTML = RichText.render(raw);
+                RichText.renderMath(container);
+            }
+        }
+
+        renderQaAnalysis();
 
         function escapeHtml(value) {
             return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -309,6 +314,9 @@
                     statusEl.className = 'action-status success';
                     statusEl.textContent = '✅ ' + result.message;
                     setTimeout(() => location.reload(), 1500);
+                } else if (result.status === 'warning') {
+                    statusEl.className = 'action-status warning';
+                    statusEl.textContent = '⚠️ ' + result.message;
                 } else {
                     statusEl.className = 'action-status error';
                     statusEl.textContent = '❌ ' + result.message;

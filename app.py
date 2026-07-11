@@ -1398,8 +1398,26 @@ def api_reanalyze_paper(arxiv_id):
 
         result_data, result, error = analyze_paper_full(paper_data)
         if result:
+            if not result.get("complete", True):
+                missing = result.get("missing_questions") or []
+                missing_text = "、".join(missing) if missing else "未知部分"
+                return jsonify({
+                    "status": "warning",
+                    "message": f"深度阅读输出仍不完整（缺少 {missing_text}），已保留原有内容",
+                    "missing_questions": missing,
+                    "continuation_used": bool(result.get("continuation_used")),
+                    "finish_reason": result.get("finish_reason", ""),
+                })
             update_analysis(paper["id"], {"qa_analysis": result.get("qa_analysis", "")})
-            return jsonify({"status": "ok", "message": "深度阅读生成完成"})
+            message = "深度阅读生成完成"
+            if result.get("continuation_used"):
+                message += "（已自动续写补全）"
+            return jsonify({
+                "status": "ok",
+                "message": message,
+                "continuation_used": bool(result.get("continuation_used")),
+                "finish_reason": result.get("finish_reason", ""),
+            })
         return jsonify({"status": "error", "message": f"分析失败: {error}"}), 500
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -1474,6 +1492,27 @@ def api_add_paper():
 
         result_data, deep_result, deep_error = analyze_paper_full(paper_data)
         if deep_result:
+            if not deep_result.get("complete", True):
+                missing = deep_result.get("missing_questions") or []
+                missing_text = "、".join(missing) if missing else "未知部分"
+                message = f"基础分析完成；深度阅读仍不完整（缺少 {missing_text}），未保存不完整内容"
+                update_progress(task_id, {
+                    "current": 3,
+                    "total": 3,
+                    "status": "completed",
+                    "message": message,
+                })
+                return jsonify({
+                    "status": "ok",
+                    "message": message,
+                    "arxiv_id": paper_data.get("arxiv_id"),
+                    "rating": basic_result.get("rating", 0),
+                    "tags": basic_result.get("tags", []),
+                    "deep_reading_incomplete": True,
+                    "missing_questions": missing,
+                    "continuation_used": bool(deep_result.get("continuation_used")),
+                    "finish_reason": deep_result.get("finish_reason", ""),
+                })
             update_analysis(paper_data["id"], {"qa_analysis": deep_result.get("qa_analysis", "")})
             update_progress(task_id, {"current": 3, "total": 3, "status": "completed", "message": "添加、基础分析和深度阅读完成"})
             return jsonify({

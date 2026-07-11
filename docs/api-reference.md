@@ -278,7 +278,7 @@ DELETE /api/paper/<arxiv_id>
 POST /api/paper/<arxiv_id>/reanalyze
 ```
 
-下载 PDF，生成/刷新 Q&A 深度阅读；不会覆盖已有标签、AI 评级/人工修正、中文摘要和简评。
+下载 PDF，生成/刷新 Q&A 深度阅读；不会覆盖已有标签、AI 评级/人工修正、中文摘要和简评。后端会检查当前深度阅读 Prompt 声明的全部 Q 编号；遇到截断或缺题时最多自动补全一次。补全后仍不完整时返回 `status: "warning"`、`missing_questions`、`continuation_used` 和 `finish_reason`，并保留原有 `qa_analysis`。
 
 ### 添加指定论文
 
@@ -294,7 +294,7 @@ Body (JSON)：
 }
 ```
 
-支持 arXiv ID、PDF 链接、摘要页面链接。自动获取论文信息，先做基础分析，再补充 Q&A 深度阅读。
+支持 arXiv ID、PDF 链接、摘要页面链接。自动获取论文信息，先做基础分析，再补充 Q&A 深度阅读。若深度阅读补全后仍不完整，基础分析仍会保存，响应包含 `deep_reading_incomplete: true`，不完整 Q&A 不入库。
 
 ### 批量操作
 

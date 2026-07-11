@@ -1595,6 +1595,32 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         update_analysis.assert_called_once_with(9, {"qa_analysis": "### Q1: deep"})
 
+    def test_reanalyze_warns_and_preserves_old_qa_when_repair_is_incomplete(self):
+        app_module = self.app_module
+        paper = {
+            "id": 9,
+            "arxiv_id": "2601.00009",
+            "authors": "[]",
+            "categories": "[]",
+        }
+        deep_result = {
+            "qa_analysis": "### Q1: partial",
+            "complete": False,
+            "continuation_used": True,
+            "missing_questions": ["Q2"],
+            "finish_reason": "length",
+        }
+
+        with patch.object(app_module, "get_paper_by_arxiv_id", return_value=paper), \
+             patch.object(app_module, "analyze_paper_full", return_value=(paper, deep_result, None)), \
+             patch.object(app_module, "update_analysis") as update_analysis:
+            result = app_module.api_reanalyze_paper("2601.00009")
+
+        self.assertEqual(result["status"], "warning")
+        self.assertEqual(result["missing_questions"], ["Q2"])
+        self.assertTrue(result["continuation_used"])
+        update_analysis.assert_not_called()
+
     def test_add_paper_runs_basic_then_deep_reading(self):
         app_module = self.app_module
         app_module.request = FakeRequest({"input": "2601.00010", "task_id": "t1"})
@@ -1644,6 +1670,41 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(result["rating"], 4)
         self.assertEqual(result["tags"], ["VLA"])
         self.assertEqual(events, ["basic", "insert", "deep", "update"])
+
+    def test_add_paper_preserves_basic_analysis_when_deep_reading_is_incomplete(self):
+        app_module = self.app_module
+        app_module.request = FakeRequest({"input": "2601.00012", "task_id": "t1"})
+        paper = {
+            "id": 12,
+            "arxiv_id": "2601.00012",
+            "title": "Incomplete Deep Reading",
+            "authors": '["Alice"]',
+            "categories": '["cs.RO"]',
+            "abstract": "Abstract",
+            "pdf_url": "https://arxiv.org/pdf/2601.00012",
+        }
+        basic_result = {"tags": ["VLA"], "summary_cn": "摘要", "rating": 4, "value_comment": "有价值"}
+        deep_result = {
+            "qa_analysis": "### Q1: partial",
+            "complete": False,
+            "continuation_used": True,
+            "missing_questions": ["Q6"],
+            "finish_reason": "length",
+        }
+
+        with patch.object(app_module, "parse_arxiv_id", return_value="2601.00012"), \
+             patch.object(app_module, "fetch_paper_by_id", return_value=paper), \
+             patch.object(app_module, "get_analysis_by_paper_id", return_value=None), \
+             patch.object(app_module, "analyze_paper_basic", return_value=(paper, basic_result, None)), \
+             patch.object(app_module, "insert_analysis", return_value=1), \
+             patch.object(app_module, "analyze_paper_full", return_value=(paper, deep_result, None)), \
+             patch.object(app_module, "update_analysis") as update_analysis:
+            result = app_module.api_add_paper()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["deep_reading_incomplete"])
+        self.assertEqual(result["missing_questions"], ["Q6"])
+        update_analysis.assert_not_called()
 
     def test_add_paper_with_manual_rating_only_still_runs_basic_analysis(self):
         app_module = self.app_module
@@ -1745,21 +1806,18 @@ class AiCallRoutingTests(unittest.TestCase):
             "abstract": "Abstract",
             "pdf_url": "https://arxiv.org/pdf/2601.00001",
         }
-        fake_result = {
-            "qa_analysis": "### Q1: ...",
-            "tags": ["Robot"],
-            "rating": 5,
-            "summary_cn": "摘要",
-            "value_comment": "很强",
-        }
+        qa_analysis = "\n\n".join(f"### Q{i}: question {i}\n\nanswer {i}" for i in range(1, 7))
+        fake_raw = json.dumps({"qa_analysis": qa_analysis})
 
         with patch.object(self.analyzer, "get_paper_full_text", return_value="FULL PDF TEXT") as full_text, \
-             patch.object(self.analyzer, "_call_ai", return_value=(fake_result, None)) as call:
+             patch.object(self.analyzer, "_call_ai_raw", return_value=(fake_raw, {"finish_reason": "stop"})) as call:
             _, result, error = self.analyzer.analyze_paper_full(paper)
 
         self.assertIsNone(error)
         self.assertIn("qa_analysis", result)
-        self.assertEqual(set(result.keys()), {"qa_analysis"})
+        self.assertTrue(result["complete"])
+        self.assertFalse(result["continuation_used"])
+        self.assertEqual(result["missing_questions"], [])
         full_text.assert_called_once_with("https://arxiv.org/pdf/2601.00001", "2601.00001", max_chars=None)
         messages, _, task_key = call.call_args.args
         self.assertEqual(task_key, "deep_reading")
@@ -3246,6 +3304,38 @@ class EmailReportTests(unittest.TestCase):
 
 
 class TemplateSafetyTests(unittest.TestCase):
+    def test_paper_pages_share_sanitized_markdown_and_math_renderer(self):
+        with open("templates/paper.html", "r", encoding="utf-8") as f:
+            paper = f.read()
+        with open("templates/paper_chat.html", "r", encoding="utf-8") as f:
+            chat = f.read()
+        with open("static/rich_text.js", "r", encoding="utf-8") as f:
+            renderer = f.read()
+
+        for template in (paper, chat):
+            self.assertIn('/static/vendor/marked.min.js', template)
+            self.assertIn('/static/vendor/katex.min.js', template)
+            self.assertIn('/static/vendor/auto-render.min.js', template)
+            self.assertIn('/static/rich_text.js', template)
+        self.assertIn('/static/vendor/katex.min.css', paper)
+        self.assertNotIn('function renderMd(', paper)
+        self.assertNotIn('function renderRich(', chat)
+        self.assertIn('global.RichText =', renderer)
+        self.assertIn("script,style,iframe,object,embed,link,meta", renderer)
+        self.assertIn("startsWith('on')", renderer)
+        self.assertIn('javascript:', renderer)
+
+    def test_paper_detail_handles_flexible_qa_headings_and_visible_warnings(self):
+        with open("templates/paper.html", "r", encoding="utf-8") as f:
+            paper = f.read()
+        with open("static/style.css", "r", encoding="utf-8") as f:
+            style = f.read()
+
+        self.assertIn("/^###\\s*Q(\\d+)\\s*:\\s*([\\s\\S]*)/i", paper)
+        self.assertIn("container.innerHTML = RichText.render(raw)", paper)
+        self.assertIn("RichText.renderMath(container)", paper)
+        self.assertIn(".action-status.warning", style)
+
     def test_paper_processing_page_excludes_schedule_stats_and_logs(self):
         with open("templates/tasks.html", "r", encoding="utf-8") as f:
             template = f.read()

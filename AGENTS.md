@@ -205,6 +205,8 @@ analyzer.analyze_paper_full(paper_data)
   → 稳定 Prompt 前缀 + 动态论文全文 JSON message
   → OpenAI chat.completions.create()
   → 解析 JSON 响应：{qa_analysis}
+  → 按当前 Prompt 中的 Q 编号校验完整性；截断或缺题时最多自动续写一次
+  → 补全后仍不完整则返回 warning，保留数据库中已有 qa_analysis
   → update_analysis() 仅写入 qa_analysis，不覆盖基础分析字段
 ```
 
@@ -500,6 +502,8 @@ if "new_column" not in columns:
 - 基础分析 Prompt Profile 可使用 `{tag_candidates}`、`{rating_criteria}`，并返回 `tags`、`rating`、`summary_cn`、`value_comment`；深度阅读只描述 Q&A 输出；论文标题、作者、摘要、PDF 全文由后端作为独立 JSON message 传入
 - 修改 AI 调用逻辑时不要重新把动态论文内容拼回稳定 instruction，否则会降低 prompt cache 命中率
 - 深度阅读按质量优先调用 `get_paper_full_text(max_chars=None)`，不截断 PDF 全文；基础分析只使用摘要以降低成本
+- 深度阅读必须校验当前 Prompt 声明的所有 `### Qn:`；自动补全最多调用一次，补全后仍不完整时禁止覆盖已有 `qa_analysis`
+- 论文详情页和学习页的模型富文本统一通过 `static/rich_text.js` 的 `RichText.render()` / `RichText.renderMath()` 渲染，不要在模板中复制 Markdown 或清洗逻辑
 - 论文学习功能必须通过 `build_paper_learning_messages()` 构造消息，保持 `system → 稳定任务说明 → 稳定论文上下文 → 动态历史/用户输入` 的顺序；不要把时间戳、session id、当前问题等易变内容放进稳定论文上下文
 - 论文学习 PDF 文本必须通过 `get_learning_paper_text()` 获取，优先复用 `data/pdf_cache/<arxiv_id>.pdf`，未命中才下载，失败时回退摘要
 

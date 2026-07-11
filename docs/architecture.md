@@ -85,7 +85,8 @@
   → analyze_paper_full(paper_data)
   → pdf_reader.download_pdf() + extract_text()
   → OpenAI API 调用（只生成 Q&A）
-  → update_analysis() 仅更新 qa_analysis
+  → 校验当前 Prompt 中所有 Q 编号，截断/缺题时最多自动续写一次
+  → 完整才 update_analysis()；仍不完整则返回 warning 并保留旧 qa_analysis
 ```
 
 #### 个性化推荐

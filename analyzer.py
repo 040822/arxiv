@@ -16,6 +16,7 @@ AI 论文分析模块
 
 import json
 import logging
+import re
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import DefaultHttpxClient, OpenAI
@@ -429,6 +430,8 @@ def _call_ai_raw(messages, paper_data, task_key, cfg=None, client=None):
 
     choices = _value(response, "choices", []) or []
     first_choice = choices[0] if choices else {}
+    usage = dict(usage or {})
+    usage["finish_reason"] = str(_value(first_choice, "finish_reason", "") or "")
     message = _value(first_choice, "message", {}) or {}
     content = (_value(message, "content", "") or "").strip()
     return content, usage
@@ -502,10 +505,106 @@ def analyze_paper_full(paper_data):
         "used_pdf_full_text": bool(full_text),
     }
     messages = _build_task_messages("deep_reading", payload)
-    result, error = _call_ai(messages, paper_data, "deep_reading")
-    if result:
-        result = _normalise_deep_reading_result(result)
-    return paper_data, result, error
+    profile = get_prompt_profile("deep_reading")
+    expected_questions = sorted({
+        int(match.group(1))
+        for match in re.finditer(r"###\s*Q(\d+)\s*:", profile.get("instruction", ""), re.IGNORECASE)
+    })
+
+    def parse_result(raw_content):
+        parsed = json.loads(_clean_json_content(raw_content))
+        return _normalise_deep_reading_result(parsed)
+
+    def question_sections(qa_text):
+        sections = {}
+        matches = list(re.finditer(r"(?m)^###\s*Q(\d+)\s*:", qa_text or "", re.IGNORECASE))
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(qa_text)
+            sections[int(match.group(1))] = qa_text[match.start():end].strip()
+        return sections
+
+    try:
+        raw_content, usage = _call_ai_raw(messages, paper_data, "deep_reading")
+    except Exception as e:
+        logger.error(f"Deep reading error for paper {paper_data.get('arxiv_id', 'unknown')}: {e}")
+        return paper_data, None, str(e)
+
+    finish_reason = str((usage or {}).get("finish_reason") or "")
+    continuation_used = False
+    try:
+        result = parse_result(raw_content)
+    except json.JSONDecodeError:
+        continuation_used = True
+        continuation_instruction = (
+            "上一个 JSON 输出因长度中断。请只从中断字符之后继续输出，不要重复已有内容，"
+            "不要添加 Markdown 代码围栏或解释。"
+        )
+        try:
+            suffix, continuation_usage = _call_ai_raw(
+                messages + [
+                    {"role": "assistant", "content": raw_content},
+                    {"role": "user", "content": continuation_instruction},
+                ],
+                paper_data,
+                "deep_reading",
+            )
+            finish_reason = str((continuation_usage or {}).get("finish_reason") or finish_reason)
+            result = parse_result(raw_content + suffix)
+        except Exception as repair_error:
+            logger.warning(
+                f"Deep reading continuation failed for paper {paper_data.get('arxiv_id', 'unknown')}: "
+                f"{repair_error}"
+            )
+            return paper_data, {
+                "qa_analysis": "",
+                "complete": False,
+                "continuation_used": True,
+                "missing_questions": [f"Q{number}" for number in expected_questions],
+                "finish_reason": finish_reason,
+            }, None
+
+    sections = question_sections(result.get("qa_analysis", ""))
+    missing = [number for number in expected_questions if number not in sections]
+    if finish_reason in {"length", "max_tokens"} and expected_questions and not missing:
+        missing = [expected_questions[-1]]
+
+    if missing and not continuation_used:
+        continuation_used = True
+        repair_instruction = (
+            "深度阅读输出缺少或未完整回答以下问题："
+            + ", ".join(f"Q{number}" for number in missing)
+            + "。请只返回这些问题的完整 Q&A，严格使用合法 JSON："
+            + '{"qa_analysis":"### Qn: 问题\\n\\n完整回答"}'
+        )
+        try:
+            repair_raw, repair_usage = _call_ai_raw(
+                messages + [{"role": "user", "content": repair_instruction}],
+                paper_data,
+                "deep_reading",
+            )
+            repair_result = parse_result(repair_raw)
+            repair_sections = question_sections(repair_result.get("qa_analysis", ""))
+            sections.update({number: text for number, text in repair_sections.items() if number in missing})
+            missing = [number for number in expected_questions if number not in sections]
+            repaired_questions = [number for number in expected_questions if number in repair_sections]
+            finish_reason = str((repair_usage or {}).get("finish_reason") or finish_reason)
+            if finish_reason in {"length", "max_tokens"} and repaired_questions:
+                last_repaired = repaired_questions[-1]
+                if last_repaired not in missing:
+                    missing.append(last_repaired)
+            result["qa_analysis"] = "\n\n".join(
+                sections[number] for number in expected_questions if number in sections
+            )
+        except Exception as e:
+            logger.warning(f"Deep reading repair failed for {paper_data.get('arxiv_id', 'unknown')}: {e}")
+
+    result.update({
+        "complete": not missing,
+        "continuation_used": continuation_used,
+        "missing_questions": [f"Q{number}" for number in missing],
+        "finish_reason": finish_reason,
+    })
+    return paper_data, result, None
 
 
 def analyze_paper_recommendation(paper_data, research_interests=None, interest_hash=None):

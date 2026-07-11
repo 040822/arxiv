@@ -106,6 +106,7 @@
     <script src="/static/vendor/marked.min.js"></script>
     <script src="/static/vendor/katex.min.js"></script>
     <script src="/static/vendor/auto-render.min.js"></script>
+    <script src="/static/rich_text.js"></script>
 
     <script>
         const ARXIV_ID = {{ paper.arxiv_id | tojson }};
@@ -124,57 +125,8 @@
             if (btn) btn.classList.add('active');
         }
 
-        const MATH_DELIMITERS = [
-            {left: '$$', right: '$$', display: true},
-            {left: '\\[', right: '\\]', display: true},
-            {left: '\\(', right: '\\)', display: false},
-            {left: '$', right: '$', display: false}
-        ];
-        const MATH_PROTECT_RE = /\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$[^\$\n]+?\$/g;
-
-        // 轻量 XSS 过滤：marked 默认会透传原始 HTML，这里移除危险标签与事件属性
-        function sanitizeDom(root) {
-            root.querySelectorAll('script,style,iframe,object,embed,link,meta').forEach(el => el.remove());
-            root.querySelectorAll('*').forEach(el => {
-                [...el.attributes].forEach(attr => {
-                    const n = attr.name.toLowerCase();
-                    if (n.startsWith('on')) { el.removeAttribute(attr.name); return; }
-                    if ((n === 'href' || n === 'src') && /^\s*javascript:/i.test(attr.value)) el.removeAttribute(attr.name);
-                });
-            });
-        }
-
-        // 渲染 Markdown（marked）+ LaTeX（KaTeX）。
-        // 流程：先把数学片段替换成占位符避免被 marked 误解析（如 $a*b*$ 中的 *），
-        // marked 解析剩余文本，还原占位符，做 XSS 过滤，最后由 renderMathInContainer 在 DOM 上渲染公式。
-        function renderRich(text) {
-            let raw = String(text ?? '');
-            const segs = [];
-            raw = raw.replace(MATH_PROTECT_RE, m => { segs.push(m); return `@@KX${segs.length - 1}@@`; });
-            let html;
-            try {
-                html = marked.parse(raw, {breaks: true, gfm: true});
-            } catch (e) {
-                html = '<p>' + escapeHtml(raw).replace(/\n/g, '<br>') + '</p>';
-            }
-            html = html.replace(/@@KX(\d+)@@/g, (_, i) => escapeHtml(segs[Number(i)]));
-            const tpl = document.createElement('template');
-            tpl.innerHTML = html;
-            sanitizeDom(tpl.content);
-            return tpl.innerHTML;
-        }
-
-        function renderMathInContainer(el) {
-            if (window.renderMathInElement) {
-                try {
-                    renderMathInElement(el, {
-                        delimiters: MATH_DELIMITERS,
-                        ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option'],
-                        throwOnError: false
-                    });
-                } catch (e) {}
-            }
-        }
+        const renderRich = RichText.render;
+        const renderMathInContainer = RichText.renderMath;
 
         function handleAuthRequired(resp, data) {
             if (resp.status === 401 || data.auth_required) {
