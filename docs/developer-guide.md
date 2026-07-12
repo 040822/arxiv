@@ -269,7 +269,7 @@ AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.b
 
 WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 manifest 打包上传。Web 日报位于数据库的 `reports` 表中，会随快照备份。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。当前 WebDAV 按内网服务处理，不接入全局代理。
 
-报告邮件发送由 `email_report.py` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分 `>80` 的论文进入重点精读区，其余论文最多展示 20 篇速览，并可按 `site_url` 生成论文详情和完整报告链接。每日任务会在生成 AI 导读前检查 `last_sent_report_date`，同一日报成功发送后直接跳过；发送失败不会更新该日期，因此仍可重试。手动测试发送允许重复执行，并且不参与自动任务去重。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。自动日报通过 `task_log_steps` 记录邮件/备份结果，附加步骤失败使父日志变为 `warning`；手动测试仍写独立顶级日志。
+报告邮件发送由 `email_report.py` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分高于 `important_score_threshold`（默认 80，0-100）的论文进入重点精读区，其余论文最多展示 `overview_limit`（默认 20，0-50）篇速览，并可按 `site_url` 生成论文详情和完整报告链接。两个阈值均可在设置页「定时任务 → 报告邮件」调整。每日任务会在生成 AI 导读前检查 `last_sent_report_date`，同一日报成功发送后直接跳过；发送失败不会更新该日期，因此仍可重试。手动测试发送允许重复执行，并且不参与自动任务去重。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。自动日报通过 `task_log_steps` 记录邮件/备份结果，附加步骤失败使父日志变为 `warning`；手动测试仍写独立顶级日志。
 
 定时日报固定为六步流程，`task_logs` 保存父任务，`task_log_steps` 保存步骤状态和耗时。抓取阶段异常时按 `settings.schedule.fetch_retry_interval_minutes` 等待重试，最多 `settings.schedule.fetch_max_retries` 次，默认 10 分钟/20 次且仅影响定时日报。核心步骤异常时后续步骤标记 `skipped`；服务启动时遗留 `running` 记录会被收口为 `interrupted`。`daily_pipeline` 与 `/api/run` 共用进程内非阻塞互斥锁。
 

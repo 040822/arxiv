@@ -2801,6 +2801,8 @@ class EmailReportTests(unittest.TestCase):
             "ai_summary_error": "",
             "full_report_url": "",
             "config": config or {"site_url": ""},
+            "important_score_threshold": 80,
+            "overview_limit": 20,
         }
 
     def test_email_report_settings_preserve_password_and_mask_get(self):
@@ -2966,6 +2968,132 @@ class EmailReportTests(unittest.TestCase):
         self.assertIn("AI 导读暂不可用", html)
         self.assertIn("今天没有推荐分高于 80", html)
         self.assertIn("High rating without recommendation", html)
+
+    def test_email_thresholds_from_config_override_defaults(self):
+        import email_report
+
+        def paper(arxiv_id, score, rating=3):
+            return {
+                "arxiv_id": arxiv_id,
+                "title": f"Paper {arxiv_id}",
+                "authors": ["Alice"],
+                "abstract": f"abstract {arxiv_id}",
+                "categories": ["cs.RO"],
+                "tags": ["VLA"],
+                "rating": rating,
+                "summary_cn": f"summary {arxiv_id}",
+                "value_comment": f"comment {arxiv_id}",
+                "recommendation_reason": f"reason {arxiv_id}",
+                "current_recommendation_score": score,
+                "analysis_id": 1,
+                "url": f"https://arxiv.org/abs/{arxiv_id}",
+                "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}",
+            }
+
+        papers = [paper("2606.00001", 70, 5)]
+        papers.extend(paper(f"2606.{i:05d}", 60) for i in range(10))
+        report = {"report_date": "2026-07-12", "paper_count": len(papers), "analyzed_count": len(papers), "avg_rating": 3.5}
+
+        with patch.object(email_report, "_load_report_papers", return_value=papers):
+            data = email_report.build_report_email_data(
+                report,
+                {"site_url": "", "important_score_threshold": 60, "overview_limit": 5},
+                ai_summary=None,
+            )
+            html = email_report.build_report_email_html(report, email_data=data)
+
+        self.assertEqual(data["important_score_threshold"], 60)
+        self.assertEqual(data["overview_limit"], 5)
+        # 严格大于阈值：70 入重点，60 不入
+        self.assertEqual([p["arxiv_id"] for p in data["important"]], ["2606.00001"])
+        self.assertEqual(len(data["overview"]), 5)
+        self.assertIn("推荐分 &gt; 60", html)
+        self.assertIn("最多 5 篇", html)
+
+    def test_email_threshold_zero_is_not_swallowed_by_falsy_short_circuit(self):
+        import email_report
+
+        def paper(arxiv_id, score):
+            return {
+                "arxiv_id": arxiv_id,
+                "title": f"Paper {arxiv_id}",
+                "authors": [],
+                "abstract": "",
+                "categories": [],
+                "tags": [],
+                "rating": 0,
+                "summary_cn": "",
+                "value_comment": "",
+                "recommendation_reason": "",
+                "current_recommendation_score": score,
+                "analysis_id": 1,
+                "url": "",
+                "pdf_url": "",
+            }
+
+        papers = [paper("2606.00001", 5), paper("2606.00002", 0), paper("2606.00003", None)]
+        report = {"report_date": "2026-07-12", "paper_count": 3, "analyzed_count": 3, "avg_rating": 0}
+
+        with patch.object(email_report, "_load_report_papers", return_value=papers):
+            data = email_report.build_report_email_data(
+                report,
+                {"site_url": "", "important_score_threshold": 0, "overview_limit": 0},
+                ai_summary=None,
+            )
+            html = email_report.build_report_email_html(report, email_data=data)
+            email_report.build_report_email_text(report, email_data=data)
+
+        # 阈值 0 不能被 `or DEFAULT` 短路成默认 80
+        self.assertEqual(data["important_score_threshold"], 0)
+        self.assertEqual(data["overview_limit"], 0)
+        # 严格大于 0：score=5 入重点，score=0 不入，None 不入
+        self.assertEqual([p["arxiv_id"] for p in data["important"]], ["2606.00001"])
+        # overview_limit=0：没有速览
+        self.assertEqual(data["overview"], [])
+        self.assertIn("推荐分 &gt; 0", html)
+        self.assertIn("最多 0 篇", html)
+
+        # 全部论文 score<=0：重点为空时 text 文案也用阈值 0
+        no_important_papers = [paper("2606.00010", 0), paper("2606.00011", None)]
+        with patch.object(email_report, "_load_report_papers", return_value=no_important_papers):
+            empty_text = email_report.build_report_email_text(
+                report,
+                {"site_url": "", "important_score_threshold": 0, "overview_limit": 0},
+            )
+        self.assertIn("今天没有推荐分高于 0 的重点精读论文。", empty_text)
+
+    def test_email_report_config_clamps_threshold_and_limit(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                settings.load_settings()
+
+                settings.save_email_report_config({
+                    "enabled": False,
+                    "important_score_threshold": 200,
+                    "overview_limit": 9999,
+                })
+                clamped = settings.get_email_report_config(mask_password=False)
+
+                settings.save_email_report_config({
+                    "enabled": False,
+                    "important_score_threshold": -1,
+                    "overview_limit": -5,
+                })
+                below = settings.get_email_report_config(mask_password=False)
+        finally:
+            settings.DB_DIR = original_dir
+            settings.SETTINGS_PATH = original_path
+
+        self.assertEqual(clamped["important_score_threshold"], 100)
+        self.assertEqual(clamped["overview_limit"], 50)
+        self.assertEqual(below["important_score_threshold"], 0)
+        self.assertEqual(below["overview_limit"], 0)
 
     def test_send_report_email_supports_starttls_ssl_and_plain_smtp(self):
         import email_report

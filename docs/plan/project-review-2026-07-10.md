@@ -176,7 +176,7 @@
 |---|--------|----------|------|------|------|
 | C1 | **高** | **列表接入推荐分排序与展示** | 首页/浏览页排序固定为 `published_date DESC, rating DESC`，不显示推荐分 | 增加"按推荐分排序"选项，卡片展示 `🎯 推荐 X/100` 徽章 | `database.py:527,656-657`, `index.html:60-78` |
 | C3 | **高** | **阅读笔记 / 进度 / 学习状态展示** | `reading_list` 仅 `status(unread/read)`，无笔记表；详情/学习页不显示"已讨论 N 条 / 已做 M 轮"（数据已存在但未展示） | 新增 notes 表；详情/学习页头部加"学习进度卡" | `database.py:224-232`, `paper.html`, `paper_chat.html` |
-| C5 | 低 | 邮件阈值固定 | 推荐>80 重点，最多 20 篇速览 | 阈值放入 email_report 配置 | `analyzer.py:795` |
+| C5 | 低 | 邮件阈值固定 | 推荐>80 重点，最多 20 篇速览 | 阈值放入 email_report 配置 | `analyzer.py:795` | ✅ 已完成 2026-07-12：`important_score_threshold`/`overview_limit` 移入 `settings.email_report`，UI 可调，默认 80/20 |
 
 ### 3.2 阅读质量
 
@@ -185,10 +185,10 @@
 | C6 | **高** | **基础分析结构化** | `value_comment` 仅"2-3 句话"，`rating` 仅基于摘要 | 增加字段：`strengths`/`limitations`/`method_type`/`novelty`，列表卡片展示方法类型图标 + 一句亮点 | `settings.py:238-239`, `analyzer.py:441-466` |
 | C7 | **高** | **对话历史窗口 + PDF 文本缓存 + RAG** | `chat_about_paper` 取最近 12 条且每次重新 `extract_text_from_pdf` 整篇 PDF 全文重发 LLM | 缓存提取后纯文本写 `.txt` 旁缓存；长对话滚动摘要；超长 PDF 引入段落检索 | `analyzer.py:621,317,291-296` |
 | C8 | 中 | **Q&A 按论文类型适配** | 6 个通用问题对所有论文一致 | 按标签/方法类型路由不同问题模板；支持用户 per-paper 追问 | `settings.py:258-265` |
-| C9 | 中 | **深度阅读截断检测** | `max_tokens: 6000` 可能截断 6 个详尽回答，截断后不校验完整性 | 检测 Q1..Q6 缺失时自动重试或分段续写；截断时前端提示 | `settings.py:154-155`, `analyzer.py:350-357` |
+| C9 | 中 | **深度阅读截断检测** | `max_tokens: 6000` 可能截断 6 个详尽回答，截断后不校验完整性 | 检测 Q1..Q6 缺失时自动重试或分段续写；截断时前端提示 | `settings.py:154-155`, `analyzer.py:350-357` | ✅ 已修复 2026-07-12：`analyzer.analyze_paper_full` 检 `finish_reason in {length,max_tokens}` + 缺 Q 自动续写/补题一次，返回 `complete/continuation_used/missing_questions/finish_reason`；前端 `deep_reading_incomplete` 提示；测试 `tests/test_deep_reading_completion.py` |
 | C10 | 中 | **主动回忆练习难度自适应 + 薄弱点闭环** | quiz 固定 3/6 题，不参考历史答题表现，评分后无"针对薄弱点再练" | 生成题目时传入历史错题；score<3 自动建议再练；会话级给薄弱点概览 | `analyzer.py:558-559,685-723` |
 | C11 | 中 | **苏格拉底追问终止条件 + 会话评价** | 每轮生 next_question 无明确终止判定，无整体掌握度输出 | 模型返回 `is_complete` + `session_summary`；前端给结业卡 | `analyzer.py:726-769` |
-| C12 | 中 | **paper.html Q&A 渲染统一** | 详情页用残缺 renderMd，学习页用 marked+KaTeX | 统一复用 renderRich | `paper.html:150-157` |
+| C12 | 中 | **paper.html Q&A 渲染统一** | 详情页用残缺 renderMd，学习页用 marked+KaTeX | 统一复用 renderRich | `paper.html:150-157` | ✅ 已修复 2026-07-12：`paper.html` 改用 `/static/rich_text.js` 的 `RichText.render`/`RichText.renderMath`，与 `paper_chat.html` 同源 |
 
 ### 3.3 AI 辅助个性化
 

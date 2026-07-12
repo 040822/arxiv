@@ -686,7 +686,7 @@ POST /api/backup/webdav/run
 POST /api/email-report/test
 ```
 
-需要登录。使用最近一份已生成的日报告测试 SMTP 发送；即使未启用日报邮件步骤，也可用于手动验证配置。若暂无报告，返回 400。邮件正文是摘要版：先尝试调用 `report_summary` 生成 AI 导读，再展示推荐分 `>80` 的重点论文和最多 20 篇速览；导读失败不阻断发送。测试发送和每日自动发送都会复用现有 `/api/settings/proxy` 网络代理配置。自动发送失败写入日报 email 步骤并使父任务标记为 `warning`，随后仍执行备份；手动测试发送写独立 `email_report` 日志。
+需要登录。使用最近一份已生成的日报告测试 SMTP 发送；即使未启用日报邮件步骤，也可用于手动验证配置。若暂无报告，返回 400。邮件正文是摘要版：先尝试调用 `report_summary` 生成 AI 导读，再展示推荐分高于 `important_score_threshold`（默认 80）的重点论文和最多 `overview_limit`（默认 20）篇速览；导读失败不阻断发送。两个阈值可在 `/api/settings/email-report` 配置。测试发送和每日自动发送都会复用现有 `/api/settings/proxy` 网络代理配置。自动发送失败写入日报 email 步骤并使父任务标记为 `warning`，随后仍执行备份；手动测试发送写独立 `email_report` 日志。
 
 ### 数据库信息
 

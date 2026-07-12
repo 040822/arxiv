@@ -2047,6 +2047,8 @@ def api_save_email_report():
             "recipients": data.get("recipients", []),
             "subject_template": data.get("subject_template", ""),
             "site_url": data.get("site_url", ""),
+            "important_score_threshold": _request_int(data, "important_score_threshold", 80),
+            "overview_limit": _request_int(data, "overview_limit", 20),
         }
         if save_email_report_config(config):
             return jsonify({

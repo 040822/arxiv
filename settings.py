@@ -428,6 +428,8 @@ DEFAULT_SETTINGS = {
         "recipients": [],
         "subject_template": "AI 论文日报 {date} - {paper_count} 篇论文",
         "site_url": "",
+        "important_score_threshold": 80,
+        "overview_limit": 20,
         "last_status": "",
         "last_success_at": "",
         "last_error": "",
@@ -621,6 +623,10 @@ def _normalize_email_report_config(config, existing_password=None):
     if not subject_template:
         subject_template = DEFAULT_SETTINGS["email_report"]["subject_template"]
     site_url = str(config.get("site_url") or "").strip().rstrip("/")
+    important_score_threshold = max(
+        0, min(100, _as_int(config.get("important_score_threshold"), 80))
+    )
+    overview_limit = max(0, min(50, _as_int(config.get("overview_limit"), 20)))
     return {
         "enabled": _as_bool(config.get("enabled"), False),
         "smtp_host": str(config.get("smtp_host") or "").strip(),
@@ -632,6 +638,8 @@ def _normalize_email_report_config(config, existing_password=None):
         "recipients": _normalize_email_recipients(config.get("recipients")),
         "subject_template": subject_template[:300],
         "site_url": site_url,
+        "important_score_threshold": important_score_threshold,
+        "overview_limit": overview_limit,
         "last_status": str(config.get("last_status") or "").strip(),
         "last_success_at": str(config.get("last_success_at") or "").strip(),
         "last_error": str(config.get("last_error") or "").strip(),

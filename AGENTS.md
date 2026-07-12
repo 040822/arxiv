@@ -297,7 +297,9 @@ APScheduler cron(day_of_week, hour, minute)
     "sender": "user@example.com",
     "recipients": ["reader@example.com"],
     "subject_template": "AI 论文日报 {date} - {paper_count} 篇论文",
-    "site_url": "https://your-domain.example"
+    "site_url": "https://your-domain.example",
+    "important_score_threshold": 80,
+    "overview_limit": 20
   },
   "schedule": {
     "enabled": true,
@@ -363,7 +365,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `get_proxy_config()` / `save_proxy_config()` — 代理配置
 - `get_personalization_config()` / `save_personalization_config()` — 个性化推荐研究兴趣
 - `get_webdav_backup_config()` / `save_webdav_backup_config()` — WebDAV 云备份配置；GET 给前端时必须脱敏密码
-- `get_email_report_config()` / `save_email_report_config()` / `update_email_report_status()` — 每日报告邮件配置；GET 给前端时必须脱敏 SMTP 密码；`last_sent_report_date` 只记录自动任务成功发送的日报日期
+- `get_email_report_config()` / `save_email_report_config()` / `update_email_report_status()` — 每日报告邮件配置，含 `important_score_threshold`（重点精读推荐分阈值，默认 80，0-100）与 `overview_limit`（速览上限，默认 20，0-50）；GET 给前端时必须脱敏 SMTP 密码；`last_sent_report_date` 只记录自动任务成功发送的日报日期
 - `add/remove/switch/update_provider()` — 供应商 CRUD
 - `get/set/verify/has_admin_password()` — 管理密码
 - `get_session_secret()` — 获取/生成持久 Flask session 签名密钥
@@ -558,7 +560,7 @@ cp data/papers.db data/papers.db.bak
 # 报告邮件发送
 # 设置页「定时任务 → 报告邮件」可配置 SMTP、收件人、主题模板和站点地址。
 # 启用后每日定时任务会在报告生成并保存后发送邮件专用摘要版 HTML：
-# report_summary 导读、推荐分 >80 重点精读、最多 20 篇快速速览。
+# report_summary 导读、推荐分 > important_score_threshold（默认 80）重点精读、最多 overview_limit（默认 20）篇快速速览。
 # 自动发送前会检查 last_sent_report_date，同一日报成功发送后不再重复发送；
 # 手动测试发送可重复执行，但不会更新自动任务的去重日期。
 # 自动流程中的发送失败写入日报步骤并使父任务标记 warning，不中断后续备份；

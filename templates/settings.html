@@ -390,6 +390,10 @@
                             <div class="form-group" style="flex:2;"><label>主题模板</label><input type="text" id="email-subject-template" placeholder="AI 论文日报 {date} - {paper_count} 篇论文"></div>
                             <div class="form-group"><label>站点地址</label><input type="text" id="email-site-url" placeholder="https://your-domain.example"></div>
                         </div>
+                        <div class="form-row">
+                            <div class="form-group" style="max-width:160px;"><label>重点精读阈值</label><input type="number" id="email-important-score-threshold" min="0" max="100" step="1" value="80"><small class="field-hint">推荐分高于此值进入重点精读（0-100，默认 80）</small></div>
+                            <div class="form-group" style="max-width:160px;"><label>速览上限</label><input type="number" id="email-overview-limit" min="0" max="50" step="1" value="20"><small class="field-hint">重点之外最多展示的速览条数（0-50，默认 20）</small></div>
+                        </div>
                         <div class="settings-actions">
                             <button class="action-btn btn-primary" onclick="saveEmailReport()">💾 保存邮件配置</button>
                             <button class="action-btn" onclick="testEmailReport(this)">✉️ 测试发送</button>
@@ -1842,6 +1846,8 @@
             document.getElementById('email-recipients').value = (data.recipients || []).join('\n');
             document.getElementById('email-subject-template').value = data.subject_template || 'AI 论文日报 {date} - {paper_count} 篇论文';
             document.getElementById('email-site-url').value = data.site_url || '';
+            document.getElementById('email-important-score-threshold').value = (data.important_score_threshold != null ? data.important_score_threshold : 80);
+            document.getElementById('email-overview-limit').value = (data.overview_limit != null ? data.overview_limit : 20);
             renderEmailReportStatus(data);
             const emailDesc = document.getElementById('pipeline-email-desc');
             if (emailDesc) emailDesc.textContent = data.enabled ? '已启用，报告生成后发送邮件。' : '未启用，执行时将跳过。';
@@ -1878,6 +1884,8 @@
                 recipients: document.getElementById('email-recipients').value,
                 subject_template: document.getElementById('email-subject-template').value.trim(),
                 site_url: document.getElementById('email-site-url').value.trim(),
+                important_score_threshold: parseInt(document.getElementById('email-important-score-threshold').value || '80', 10),
+                overview_limit: parseInt(document.getElementById('email-overview-limit').value || '20', 10),
             };
             try {
                 const resp = await fetch('/api/settings/email-report', {

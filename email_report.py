@@ -25,8 +25,8 @@ from settings import (
 
 
 EMAIL_TIMEOUT_SECONDS = 30
-IMPORTANT_SCORE_THRESHOLD = 80
-OVERVIEW_LIMIT = 20
+DEFAULT_IMPORTANT_SCORE_THRESHOLD = 80
+DEFAULT_OVERVIEW_LIMIT = 20
 
 EMAIL_CSS = """
 * { box-sizing: border-box; }
@@ -441,6 +441,14 @@ def _normalize_runtime_config(config):
     config["security"] = security
     config["recipients"] = _normalize_recipients(config.get("recipients"))
     config["site_url"] = str(config.get("site_url") or "").strip().rstrip("/")
+    config["important_score_threshold"] = max(
+        0,
+        min(100, _safe_int(config.get("important_score_threshold"), DEFAULT_IMPORTANT_SCORE_THRESHOLD)),
+    )
+    config["overview_limit"] = max(
+        0,
+        min(50, _safe_int(config.get("overview_limit"), DEFAULT_OVERVIEW_LIMIT)),
+    )
     return config
 
 
@@ -665,13 +673,15 @@ def build_report_email_data(report, config=None, ai_summary=None, ai_summary_err
     config = _normalize_runtime_config(config or get_email_report_config(mask_password=False))
     report_date = str(report.get("report_date") or "")
     papers = _load_report_papers(report_date)
+    important_threshold = int(config.get("important_score_threshold", DEFAULT_IMPORTANT_SCORE_THRESHOLD))
+    overview_limit = int(config.get("overview_limit", DEFAULT_OVERVIEW_LIMIT))
     important = [
         paper for paper in papers
         if paper.get("current_recommendation_score") is not None
-        and paper["current_recommendation_score"] > IMPORTANT_SCORE_THRESHOLD
+        and paper["current_recommendation_score"] > important_threshold
     ]
     important_object_ids = {id(paper) for paper in important}
-    overview = [paper for paper in papers if id(paper) not in important_object_ids][:OVERVIEW_LIMIT]
+    overview = [paper for paper in papers if id(paper) not in important_object_ids][:overview_limit]
     ratings = [_safe_int(paper.get("rating")) for paper in papers if paper.get("analysis_id") is not None]
     avg_rating = round(sum(ratings) / len(ratings), 1) if ratings else _safe_float(report.get("avg_rating"))
     total = len(papers) if papers else _safe_int(report.get("paper_count"))
@@ -691,6 +701,8 @@ def build_report_email_data(report, config=None, ai_summary=None, ai_summary_err
         "ai_summary_error": str(ai_summary_error or "").strip(),
         "full_report_url": _report_detail_url(report_date, config),
         "config": config,
+        "important_score_threshold": important_threshold,
+        "overview_limit": overview_limit,
     }
 
 
@@ -737,6 +749,8 @@ def build_report_email_html(report, config=None, ai_summary=None, ai_summary_err
     important = data["important"]
     overview = data["overview"]
     full_report_url = data["full_report_url"]
+    important_threshold = data.get("important_score_threshold", DEFAULT_IMPORTANT_SCORE_THRESHOLD)
+    overview_limit = data.get("overview_limit", DEFAULT_OVERVIEW_LIMIT)
     keyword_chips = _render_keyword_chips(data["papers"])
     chips_html = f'<div class="summary-chips"><span class="summary-chips-label">热门方向</span>{keyword_chips}</div>' if keyword_chips else ""
 
@@ -777,7 +791,7 @@ def build_report_email_html(report, config=None, ai_summary=None, ai_summary_err
             """)
         important_html = "".join(cards)
     else:
-        important_html = '<div class="empty-state">今天没有推荐分高于 80 的重点精读论文。</div>'
+        important_html = f'<div class="empty-state">今天没有推荐分高于 {important_threshold} 的重点精读论文。</div>'
 
     overview_html = ""
     if overview:
@@ -841,12 +855,12 @@ def build_report_email_html(report, config=None, ai_summary=None, ai_summary_err
         </div>
 
         <div class="section">
-            <h2 class="section-title">⭐ 重点精读（推荐分 &gt; {IMPORTANT_SCORE_THRESHOLD}）</h2>
+            <h2 class="section-title">⭐ 重点精读（推荐分 &gt; {important_threshold}）</h2>
             {important_html}
         </div>
 
         <div class="section">
-            <h2 class="section-title">📋 快速速览（最多 {OVERVIEW_LIMIT} 篇）</h2>
+            <h2 class="section-title">📋 快速速览（最多 {overview_limit} 篇）</h2>
             <div class="overview-card">{overview_html}</div>
         </div>
 
@@ -860,6 +874,7 @@ def build_report_email_html(report, config=None, ai_summary=None, ai_summary_err
 def build_report_email_text(report, config=None, ai_summary=None, ai_summary_error="", email_data=None):
     """构建纯文本备用邮件。"""
     data = email_data or build_report_email_data(report, config, ai_summary, ai_summary_error)
+    important_threshold = data.get("important_score_threshold", DEFAULT_IMPORTANT_SCORE_THRESHOLD)
     lines = [
         f"{data['report_date']} AI 论文日报",
         f"论文总数：{data['total']}｜重点精读：{len(data['important'])}｜速览展示：{len(data['overview'])}｜平均评级：{data['avg_rating']}",
@@ -877,7 +892,7 @@ def build_report_email_text(report, config=None, ai_summary=None, ai_summary_err
             if note:
                 lines.append(f"   {_truncate(note, 160)}")
     else:
-        lines.append("今天没有推荐分高于 80 的重点精读论文。")
+        lines.append(f"今天没有推荐分高于 {important_threshold} 的重点精读论文。")
     lines.extend(["", "快速速览"])
     if data["overview"]:
         for paper in data["overview"]:

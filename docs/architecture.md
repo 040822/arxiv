@@ -160,7 +160,7 @@ APScheduler（星期 + 时分）→ daily_pipeline()
   → 检查 last_sent_report_date；已发送的同日报直接记录 skipped
   → 按 report_date 从数据库读取论文轻量分析数据
   → 使用 report_summary 任务模型生成邮件导读（失败时降级）
-  → 生成邮件专用摘要 HTML：推荐分 >80 重点精读 + 最多 20 篇快速速览
+  → 生成邮件专用摘要 HTML：推荐分 > important_score_threshold（默认 80）重点精读 + 最多 overview_limit（默认 20）篇快速速览
   → 按 site_url 生成 /paper/... 和 /reports/... 绝对链接
   → 如网络代理已启用，通过 HTTP CONNECT 建立 SMTP 隧道
   → SMTP/STARTTLS 或 SSL 发送给收件人
