@@ -1,7 +1,6 @@
 """HTML report rendering."""
 
 import html as html_module
-import json
 import logging
 import os
 import re
@@ -13,6 +12,7 @@ logger = logging.getLogger(__name__)
 from source.settings import get_personalization_config, get_research_interest_hash
 from source.storage.connection import get_connection
 from source.storage.reports import get_report_trends
+from source.storage.row_mapping import parse_paper_row
 
 
 def generate_report_content(date, ai_summary=None):
@@ -78,15 +78,9 @@ def generate_report_content(date, ai_summary=None):
     # 解析 JSON 字段
     papers = []
     for row in rows:
-        r = dict(row)
-        if r.get("authors") and isinstance(r["authors"], str):
-            r["authors"] = json.loads(r["authors"])
-        if r.get("categories") and isinstance(r["categories"], str):
-            r["categories"] = json.loads(r["categories"])
-        if r.get("tags") and isinstance(r["tags"], str):
-            r["tags"] = json.loads(r["tags"])
-        r["current_recommendation_score"] = current_recommendation_score(r)
-        papers.append(r)
+        paper = parse_paper_row(row)
+        paper["current_recommendation_score"] = current_recommendation_score(paper)
+        papers.append(paper)
 
     if current_interest_hash:
         papers.sort(key=lambda p: (

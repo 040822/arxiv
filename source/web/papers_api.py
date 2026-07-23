@@ -2,7 +2,6 @@
 
 import hashlib
 import hmac
-import json
 import logging
 import os
 import re
@@ -58,6 +57,7 @@ from source.storage import (
     unhide_paper,
     update_analysis,
 )
+from source.storage.row_mapping import parse_paper_row
 from .progress import get_progress, update_progress
 
 logger = logging.getLogger(__name__)
@@ -217,13 +217,7 @@ def api_reanalyze_paper(arxiv_id):
         if not paper:
             return jsonify({"status": "error", "message": "论文不存在"}), 404
 
-        # 将 paper 转为可修改的字典，并解析 JSON 字段
-        paper_data = dict(paper)
-        import json
-        if paper_data.get("authors") and isinstance(paper_data["authors"], str):
-            paper_data["authors"] = json.loads(paper_data["authors"])
-        if paper_data.get("categories") and isinstance(paper_data["categories"], str):
-            paper_data["categories"] = json.loads(paper_data["categories"])
+        paper_data = parse_paper_row(paper)
 
         result_data, result, error = analyze_paper_full(paper_data)
         if result:
@@ -294,13 +288,7 @@ def api_add_paper():
 
         update_progress(task_id, {"current": 1, "total": 3, "status": "running", "message": f"正在基础分析论文 {arxiv_id}..."})
 
-        # 解析 JSON 字段
-        if isinstance(paper_data.get("authors"), str):
-            import json as _json
-            paper_data["authors"] = _json.loads(paper_data["authors"])
-        if isinstance(paper_data.get("categories"), str):
-            import json as _json
-            paper_data["categories"] = _json.loads(paper_data["categories"])
+        paper_data = parse_paper_row(paper_data)
 
         # 先用廉价基础分析补齐标签、摘要、价值评价和 AI 初评，再用深度阅读补充 Q&A。
         result_data, basic_result, basic_error = analyze_paper_basic(paper_data)

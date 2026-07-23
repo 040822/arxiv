@@ -2,7 +2,6 @@
 
 import hashlib
 import hmac
-import json
 import logging
 import os
 import re
@@ -51,6 +50,7 @@ from source.storage import (
     normalize_search_terms,
     search_papers,
 )
+from source.storage.row_mapping import parse_paper_row
 from .progress import get_progress, update_progress
 
 logger = logging.getLogger(__name__)
@@ -143,12 +143,7 @@ def paper_detail(arxiv_id):
     if not paper:
         return "Paper not found", 404
 
-    # 将 authors 和 categories 从 JSON 字符串解析为 Python 对象
-    import json
-    if paper.get("authors") and isinstance(paper["authors"], str):
-        paper["authors"] = json.loads(paper["authors"])
-    if paper.get("categories") and isinstance(paper["categories"], str):
-        paper["categories"] = json.loads(paper["categories"])
+    paper = parse_paper_row(paper)
 
     # 获取该论文的 AI 分析结果
     analysis = get_analysis_by_paper_id(paper["id"])
@@ -158,12 +153,7 @@ def paper_detail(arxiv_id):
 
 def _prepare_paper_for_view(paper):
     """解析论文 JSON 字段，返回可直接传给模板/AI 的 dict。"""
-    paper_data = dict(paper)
-    if paper_data.get("authors") and isinstance(paper_data["authors"], str):
-        paper_data["authors"] = json.loads(paper_data["authors"])
-    if paper_data.get("categories") and isinstance(paper_data["categories"], str):
-        paper_data["categories"] = json.loads(paper_data["categories"])
-    return paper_data
+    return parse_paper_row(paper)
 
 
 @bp.route("/paper/<arxiv_id>/chat")
