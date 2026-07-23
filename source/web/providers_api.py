@@ -30,6 +30,7 @@ from source.pipeline import (
     pipeline_lock, scheduler,
 )
 from source.reports import generate_report_content
+from source.value_coercion import as_float, as_int
 from source.settings import (
     add_provider,
     build_chat_completion_kwargs,
@@ -108,26 +109,6 @@ def _request_bool(data, key, default=False):
     return bool(value)
 
 
-def _request_float(data, key, default):
-    try:
-        value = data.get(key, default)
-        if value == "" or value is None:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _request_int(data, key, default):
-    try:
-        value = data.get(key, default)
-        if value == "" or value is None:
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def _provider_config_from_request(data, key="", partial=False):
     """从请求 JSON 中提取供应商配置字段。"""
     data = data or {}
@@ -152,10 +133,10 @@ def _provider_config_from_request(data, key="", partial=False):
     }
     for field, default in float_fields.items():
         if field in data or not partial:
-            config[field] = _request_float(data, field, default)
+            config[field] = as_float(data.get(field, default), default)
 
     if "max_tokens" in data or not partial:
-        config["max_tokens"] = _request_int(data, "max_tokens", 8192)
+        config["max_tokens"] = as_int(data.get("max_tokens", 8192), 8192)
 
     bool_fields = (
         "temperature_enabled",

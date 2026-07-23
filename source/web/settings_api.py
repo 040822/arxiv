@@ -65,7 +65,8 @@ from source.storage import (
 from .progress import get_progress, update_progress
 
 logger = logging.getLogger(__name__)
-from .providers_api import _request_bool, _request_int
+from source.value_coercion import as_int
+from .providers_api import _request_bool
 
 
 bp = Blueprint("settings_api", __name__)
@@ -222,7 +223,7 @@ def api_save_webdav_backup():
             "username": data.get("username", ""),
             "password": data.get("password", ""),
             "remote_dir": data.get("remote_dir", "arxiv-backups"),
-            "history_days": _request_int(data, "history_days", 3),
+            "history_days": as_int(data.get("history_days", 3), 3),
         }
         if save_webdav_backup_config(config):
             return jsonify({
@@ -249,7 +250,7 @@ def api_save_email_report():
         config = {
             "enabled": _request_bool(data, "enabled", False),
             "smtp_host": data.get("smtp_host", ""),
-            "smtp_port": _request_int(data, "smtp_port", 587),
+            "smtp_port": as_int(data.get("smtp_port", 587), 587),
             "security": data.get("security", "starttls"),
             "username": data.get("username", ""),
             "password": data.get("password", ""),
@@ -257,8 +258,8 @@ def api_save_email_report():
             "recipients": data.get("recipients", []),
             "subject_template": data.get("subject_template", ""),
             "site_url": data.get("site_url", ""),
-            "important_score_threshold": _request_int(data, "important_score_threshold", 80),
-            "overview_limit": _request_int(data, "overview_limit", 20),
+            "important_score_threshold": as_int(data.get("important_score_threshold", 80), 80),
+            "overview_limit": as_int(data.get("overview_limit", 20), 20),
         }
         if save_email_report_config(config):
             return jsonify({
@@ -317,7 +318,7 @@ def api_save_schedule_config():
             "fetch_max_retries",
         ):
             if key in data:
-                schedule_config[key] = _request_int(data, key, schedule_config[key])
+                schedule_config[key] = as_int(data.get(key, schedule_config[key]), schedule_config[key])
         if "days_of_week" in data:
             schedule_config["days_of_week"] = data.get("days_of_week")
         if not save_schedule_config(schedule_config):

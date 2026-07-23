@@ -15,6 +15,7 @@ from email.message import EmailMessage
 from urllib.parse import unquote, urlparse
 
 from database import get_connection
+from source.value_coercion import as_float, as_int
 from settings import (
     get_email_report_config,
     get_personalization_config,
@@ -443,11 +444,11 @@ def _normalize_runtime_config(config):
     config["site_url"] = str(config.get("site_url") or "").strip().rstrip("/")
     config["important_score_threshold"] = max(
         0,
-        min(100, _safe_int(config.get("important_score_threshold"), DEFAULT_IMPORTANT_SCORE_THRESHOLD)),
+        min(100, as_int(config.get("important_score_threshold"), DEFAULT_IMPORTANT_SCORE_THRESHOLD)),
     )
     config["overview_limit"] = max(
         0,
-        min(50, _safe_int(config.get("overview_limit"), DEFAULT_OVERVIEW_LIMIT)),
+        min(50, as_int(config.get("overview_limit"), DEFAULT_OVERVIEW_LIMIT)),
     )
     return config
 
@@ -576,24 +577,6 @@ def _json_list(value):
     return []
 
 
-def _safe_int(value, default=0):
-    try:
-        if value is None or value == "":
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_float(value, default=0):
-    try:
-        if value is None or value == "":
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def _truncate(value, limit=150):
     text = " ".join(str(value or "").split())
     if len(text) <= limit:
@@ -609,7 +592,7 @@ def _format_authors(authors, limit=3):
 
 
 def _format_stars(value):
-    rating = max(0, min(5, _safe_int(value)))
+    rating = max(0, min(5, as_int(value)))
     return " ".join("★" if i < rating else "☆" for i in range(5))
 
 
@@ -651,18 +634,18 @@ def _load_report_papers(report_date):
         item["authors"] = _json_list(item.get("authors"))
         item["categories"] = _json_list(item.get("categories"))
         item["tags"] = _json_list(item.get("tags"))
-        item["rating"] = _safe_int(item.get("rating"))
+        item["rating"] = as_int(item.get("rating"))
         score = None
         if current_interest_hash and item.get("recommendation_interest_hash") == current_interest_hash:
             raw_score = item.get("recommendation_score")
             if raw_score is not None:
-                score = max(0, min(100, _safe_int(raw_score)))
+                score = max(0, min(100, as_int(raw_score)))
         item["current_recommendation_score"] = score
         papers.append(item)
 
     papers.sort(key=lambda paper: (
         -(paper.get("current_recommendation_score") if paper.get("current_recommendation_score") is not None else -1),
-        -_safe_int(paper.get("rating")),
+        -as_int(paper.get("rating")),
         str(paper.get("arxiv_id") or ""),
     ))
     return papers
@@ -682,10 +665,10 @@ def build_report_email_data(report, config=None, ai_summary=None, ai_summary_err
     ]
     important_object_ids = {id(paper) for paper in important}
     overview = [paper for paper in papers if id(paper) not in important_object_ids][:overview_limit]
-    ratings = [_safe_int(paper.get("rating")) for paper in papers if paper.get("analysis_id") is not None]
-    avg_rating = round(sum(ratings) / len(ratings), 1) if ratings else _safe_float(report.get("avg_rating"))
-    total = len(papers) if papers else _safe_int(report.get("paper_count"))
-    analyzed = sum(1 for paper in papers if paper.get("analysis_id") is not None) if papers else _safe_int(report.get("analyzed_count"))
+    ratings = [as_int(paper.get("rating")) for paper in papers if paper.get("analysis_id") is not None]
+    avg_rating = round(sum(ratings) / len(ratings), 1) if ratings else as_float(report.get("avg_rating"))
+    total = len(papers) if papers else as_int(report.get("paper_count"))
+    analyzed = sum(1 for paper in papers if paper.get("analysis_id") is not None) if papers else as_int(report.get("analyzed_count"))
     summary = str(ai_summary or "").strip()
     if not summary:
         summary = "AI 导读暂不可用。本邮件仍按推荐分、评级和已有分析结果整理重点论文与快速速览。"
