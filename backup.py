@@ -12,7 +12,6 @@ import json
 import os
 import posixpath
 import re
-import sqlite3
 import tempfile
 import zipfile
 from datetime import datetime, timedelta
@@ -22,6 +21,7 @@ import xml.etree.ElementTree as ET
 import requests
 
 from config import DB_DIR, DB_PATH
+from source.storage.snapshot import copy_sqlite_snapshot
 from settings import SETTINGS_PATH, get_webdav_backup_config, update_webdav_backup_status
 
 
@@ -68,18 +68,6 @@ def _timestamp(now=None):
     return now.strftime("%Y%m%d-%H%M%S")
 
 
-def _copy_sqlite_snapshot(db_path, snapshot_path):
-    """使用 SQLite backup API 复制一致性数据库快照。"""
-    if not os.path.exists(db_path):
-        raise FileNotFoundError(f"数据库文件不存在: {db_path}")
-    source = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    dest = sqlite3.connect(snapshot_path)
-    try:
-        source.backup(dest)
-    finally:
-        dest.close()
-        source.close()
-
 
 def create_backup_archive(
     archive_path,
@@ -107,7 +95,7 @@ def create_backup_archive(
 
     with tempfile.TemporaryDirectory(prefix="sqlite-snapshot-") as tmp:
         snapshot_path = os.path.join(tmp, "papers.db")
-        _copy_sqlite_snapshot(db_path, snapshot_path)
+        copy_sqlite_snapshot(db_path, snapshot_path)
 
         with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.write(snapshot_path, "papers.db")
