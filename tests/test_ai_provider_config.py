@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 from settings import build_chat_completion_kwargs, validate_prompt_template
+from source.settings import store as settings_store
 
 
 class FakeArgs(dict):
@@ -112,11 +113,11 @@ class AiTaskSettingsTests(unittest.TestCase):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         with tempfile.TemporaryDirectory() as tmp:
             settings.DB_DIR = tmp
-            settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
-            with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+            settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+            with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                 json.dump({
                     "active_provider": "cheap",
                     "providers": {
@@ -136,7 +137,7 @@ class AiTaskSettingsTests(unittest.TestCase):
             loaded = settings.load_settings()
 
         settings.DB_DIR = original_dir
-        settings.SETTINGS_PATH = original_path
+        settings_store.SETTINGS_PATH = original_path
 
         self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["provider_key"], "cheap")
         self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["max_tokens"], 1200)
@@ -161,12 +162,12 @@ class AiTaskSettingsTests(unittest.TestCase):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 settings.DB_DIR = tmp
-                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
-                with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({"session_secret": "stable-secret"}, f)
 
                 loaded = settings.load_settings()
@@ -174,18 +175,18 @@ class AiTaskSettingsTests(unittest.TestCase):
             self.assertEqual(loaded["session_secret"], "stable-secret")
         finally:
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
     def test_legacy_schedule_is_upgraded_to_full_daily_pipeline_defaults(self):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 settings.DB_DIR = tmp
-                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
-                with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({
                         "schedule": {"enabled": True, "hour": 8, "minute": 30},
                     }, f)
@@ -200,38 +201,38 @@ class AiTaskSettingsTests(unittest.TestCase):
             self.assertEqual((loaded["hour"], loaded["minute"]), (8, 30))
         finally:
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
     def test_get_session_secret_generates_and_persists_secret(self):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 settings.DB_DIR = tmp
-                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
 
                 secret = settings.get_session_secret()
-                with open(settings.SETTINGS_PATH, "r", encoding="utf-8") as f:
+                with open(settings_store.SETTINGS_PATH, "r", encoding="utf-8") as f:
                     saved = json.load(f)
 
             self.assertGreaterEqual(len(secret), 32)
             self.assertEqual(saved["session_secret"], secret)
         finally:
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
     def test_personalization_config_is_trimmed_and_preserved(self):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 settings.DB_DIR = tmp
-                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
-                with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({
                         "personalization": {"research_interests": "  robot learning  "},
                     }, f)
@@ -243,18 +244,18 @@ class AiTaskSettingsTests(unittest.TestCase):
             self.assertEqual(len(interest_hash), 64)
         finally:
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
     def test_webdav_backup_config_is_preserved_and_masked(self):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 settings.DB_DIR = tmp
-                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
-                with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({
                         "webdav_backup": {
                             "enabled": True,
@@ -278,18 +279,18 @@ class AiTaskSettingsTests(unittest.TestCase):
             self.assertEqual(masked["password_masked"], "******")
         finally:
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
     def test_save_webdav_backup_config_preserves_existing_password_when_blank(self):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 settings.DB_DIR = tmp
-                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
-                with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({
                         "webdav_backup": {
                             "enabled": True,
@@ -325,17 +326,17 @@ class AiTaskSettingsTests(unittest.TestCase):
             self.assertEqual(saved["last_uploaded_file"], "arxiv-backup-old.zip")
         finally:
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
     def test_task_config_merges_provider_credentials_and_task_overrides(self):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         with tempfile.TemporaryDirectory() as tmp:
             settings.DB_DIR = tmp
-            settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
-            with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+            settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+            with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                 json.dump({
                     "active_provider": "cheap",
                     "providers": {
@@ -368,7 +369,7 @@ class AiTaskSettingsTests(unittest.TestCase):
             cfg = settings.get_ai_task_config("deep_reading")
 
         settings.DB_DIR = original_dir
-        settings.SETTINGS_PATH = original_path
+        settings_store.SETTINGS_PATH = original_path
 
         self.assertEqual(cfg["api_key"], "sk-smart")
         self.assertEqual(cfg["provider_key"], "smart")
@@ -382,11 +383,11 @@ class AiTaskSettingsTests(unittest.TestCase):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         with tempfile.TemporaryDirectory() as tmp:
             settings.DB_DIR = tmp
-            settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
-            with open(settings.SETTINGS_PATH, "w", encoding="utf-8") as f:
+            settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+            with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                 json.dump({
                     "active_provider": "cheap",
                     "providers": {
@@ -416,7 +417,7 @@ class AiTaskSettingsTests(unittest.TestCase):
             cfg = settings.get_ai_task_config("recommendation")
 
         settings.DB_DIR = original_dir
-        settings.SETTINGS_PATH = original_path
+        settings_store.SETTINGS_PATH = original_path
 
         self.assertEqual(cfg["task_key"], "recommendation")
         self.assertEqual(cfg["provider_key"], "rec")
@@ -2809,11 +2810,11 @@ class EmailReportTests(unittest.TestCase):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 settings.DB_DIR = tmp
-                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
 
                 loaded = settings.load_settings()
                 self.assertIn("email_report", loaded)
@@ -2854,17 +2855,17 @@ class EmailReportTests(unittest.TestCase):
             self.assertEqual(masked["password_masked"], "******")
         finally:
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
     def test_email_report_status_only_success_updates_sent_date(self):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 settings.DB_DIR = tmp
-                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
                 settings.load_settings()
 
                 settings.update_email_report_status("success", report_date="2026-06-16")
@@ -2886,7 +2887,7 @@ class EmailReportTests(unittest.TestCase):
             self.assertEqual(manual["last_sent_report_date"], "2026-06-16")
         finally:
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
     def test_report_email_html_uses_digest_layout_and_site_links(self):
         import email_report
@@ -3066,11 +3067,11 @@ class EmailReportTests(unittest.TestCase):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 settings.DB_DIR = tmp
-                settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
                 settings.load_settings()
 
                 settings.save_email_report_config({
@@ -3088,7 +3089,7 @@ class EmailReportTests(unittest.TestCase):
                 below = settings.get_email_report_config(mask_password=False)
         finally:
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
         self.assertEqual(clamped["important_score_threshold"], 100)
         self.assertEqual(clamped["overview_limit"], 50)
@@ -3590,7 +3591,7 @@ class ScheduleRetryTests(unittest.TestCase):
         import settings
 
         settings.DB_DIR = tmp
-        settings.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+        settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
         sys.modules.pop("app", None)
         return importlib.import_module("app")
 
@@ -3598,7 +3599,7 @@ class ScheduleRetryTests(unittest.TestCase):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 app_module = self.import_app_with_temp_settings(tmp)
@@ -3625,13 +3626,13 @@ class ScheduleRetryTests(unittest.TestCase):
         finally:
             sys.modules.pop("app", None)
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
     def test_daily_fetch_retries_then_succeeds(self):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 app_module = self.import_app_with_temp_settings(tmp)
@@ -3658,13 +3659,13 @@ class ScheduleRetryTests(unittest.TestCase):
         finally:
             sys.modules.pop("app", None)
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
     def test_daily_fetch_raises_after_max_retries(self):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 app_module = self.import_app_with_temp_settings(tmp)
@@ -3684,13 +3685,13 @@ class ScheduleRetryTests(unittest.TestCase):
         finally:
             sys.modules.pop("app", None)
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
     def test_daily_fetch_can_disable_retries(self):
         import settings
 
         original_dir = settings.DB_DIR
-        original_path = settings.SETTINGS_PATH
+        original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 app_module = self.import_app_with_temp_settings(tmp)
@@ -3710,7 +3711,7 @@ class ScheduleRetryTests(unittest.TestCase):
         finally:
             sys.modules.pop("app", None)
             settings.DB_DIR = original_dir
-            settings.SETTINGS_PATH = original_path
+            settings_store.SETTINGS_PATH = original_path
 
 
 if __name__ == "__main__":
