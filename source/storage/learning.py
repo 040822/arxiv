@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 from .connection import get_connection
 from .row_mapping import parse_paper_row
-from .operations import _safe_int
+from source.value_coercion import as_int
 
 
 def add_to_reading_list(paper_id):
@@ -190,7 +190,7 @@ def add_paper_chat_message(paper_id, role, content):
 
 def get_paper_chat_messages(paper_id, limit=200):
     """按时间顺序读取论文自由讨论历史。"""
-    limit = max(1, min(1000, _safe_int(limit) or 200))
+    limit = max(1, min(1000, as_int(limit) or 200))
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -281,7 +281,7 @@ def add_paper_quiz_attempt(question_id, answer_text, score, feedback):
         cursor.execute("""
             INSERT INTO paper_quiz_attempts (question_id, answer_text, score, feedback_json)
             VALUES (?, ?, ?, ?)
-        """, (question_id, str(answer_text or ""), max(0, min(5, _safe_int(score))), feedback_json))
+        """, (question_id, str(answer_text or ""), max(0, min(5, as_int(score))), feedback_json))
         cursor.execute("""
             UPDATE paper_quiz_sessions
             SET updated_at = CURRENT_TIMESTAMP
@@ -361,7 +361,7 @@ def get_paper_quiz_session_detail(session_id, paper_id=None):
 
 def get_latest_paper_quiz_sessions(paper_id, limit=20):
     """读取某篇论文最近的学习会话列表。"""
-    limit = max(1, min(100, _safe_int(limit) or 20))
+    limit = max(1, min(100, as_int(limit) or 20))
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""

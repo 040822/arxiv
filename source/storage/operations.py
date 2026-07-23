@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
+from source.value_coercion import as_int
 from .connection import get_connection
 
 
@@ -304,13 +305,6 @@ def clear_task_logs(keep_days=30):
     return deleted
 
 
-def _safe_int(value):
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
 def record_ai_usage(usage):
     """记录一次 LLM API 调用的 token 用量。"""
     with get_connection() as conn:
@@ -328,11 +322,11 @@ def record_ai_usage(usage):
             usage.get("model", ""),
             usage.get("paper_id"),
             usage.get("arxiv_id", ""),
-            _safe_int(usage.get("prompt_tokens")),
-            _safe_int(usage.get("completion_tokens")),
-            _safe_int(usage.get("total_tokens")),
-            _safe_int(usage.get("cached_tokens")),
-            _safe_int(usage.get("cache_miss_tokens")),
+            as_int(usage.get("prompt_tokens")),
+            as_int(usage.get("completion_tokens")),
+            as_int(usage.get("total_tokens")),
+            as_int(usage.get("cached_tokens")),
+            as_int(usage.get("cache_miss_tokens")),
         ))
 
 
@@ -357,7 +351,7 @@ def _empty_usage_point(day):
 
 def get_ai_usage_summary(days=7, group_by="task"):
     """按任务/模型汇总最近 N 天 token 用量，并返回按天分桶的时间序列。"""
-    days = max(1, min(365, _safe_int(days) or 7))
+    days = max(1, min(365, as_int(days) or 7))
     group_by = group_by if group_by in {"task", "model"} else "task"
     dates = _usage_dates(days)
     with get_connection() as conn:
@@ -436,7 +430,7 @@ def get_ai_usage_summary(days=7, group_by="task"):
             }
         point = groups[key]["points"].setdefault(item["usage_date"], _empty_usage_point(item["usage_date"]))
         for field in ("call_count", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "cache_miss_tokens"):
-            value = _safe_int(item.get(field))
+            value = as_int(item.get(field))
             point[field] = value
             groups[key][field] += value
 
@@ -447,12 +441,12 @@ def get_ai_usage_summary(days=7, group_by="task"):
     group_items.sort(key=lambda item: (item["total_tokens"], item["call_count"]), reverse=True)
 
     totals = {
-        "call_count": sum(_safe_int(row["call_count"]) for row in rows),
-        "prompt_tokens": sum(_safe_int(row["prompt_tokens"]) for row in rows),
-        "completion_tokens": sum(_safe_int(row["completion_tokens"]) for row in rows),
-        "total_tokens": sum(_safe_int(row["total_tokens"]) for row in rows),
-        "cached_tokens": sum(_safe_int(row["cached_tokens"]) for row in rows),
-        "cache_miss_tokens": sum(_safe_int(row["cache_miss_tokens"]) for row in rows),
+        "call_count": sum(as_int(row["call_count"]) for row in rows),
+        "prompt_tokens": sum(as_int(row["prompt_tokens"]) for row in rows),
+        "completion_tokens": sum(as_int(row["completion_tokens"]) for row in rows),
+        "total_tokens": sum(as_int(row["total_tokens"]) for row in rows),
+        "cached_tokens": sum(as_int(row["cached_tokens"]) for row in rows),
+        "cache_miss_tokens": sum(as_int(row["cache_miss_tokens"]) for row in rows),
     }
     return {
         "days": days,

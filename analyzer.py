@@ -30,6 +30,7 @@ from database import (
     get_papers_for_recommendation, update_recommendation_result
 )
 from pdf_reader import get_paper_full_text, get_cached_pdf_path, download_pdf, extract_text_from_pdf
+from source.value_coercion import as_int
 
 # 模块级日志记录器
 logger = logging.getLogger(__name__)
@@ -179,26 +180,19 @@ def _value(obj, key, default=None):
     return getattr(obj, key, default)
 
 
-def _int_value(obj, key):
-    try:
-        return int(_value(obj, key, 0) or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
 def _extract_usage(response):
     """从 OpenAI SDK 响应中提取 token 用量，兼容 dict 和对象响应。"""
     usage = _value(response, "usage", {}) or {}
-    prompt_tokens = _int_value(usage, "prompt_tokens")
-    completion_tokens = _int_value(usage, "completion_tokens")
-    total_tokens = _int_value(usage, "total_tokens")
+    prompt_tokens = as_int(_value(usage, "prompt_tokens", 0))
+    completion_tokens = as_int(_value(usage, "completion_tokens", 0))
+    total_tokens = as_int(_value(usage, "total_tokens", 0))
     details = _value(usage, "prompt_tokens_details", None) or _value(usage, "input_tokens_details", None) or {}
     cached_tokens = (
-        _int_value(usage, "prompt_cache_hit_tokens")
-        or _int_value(details, "cached_tokens")
-        or _int_value(details, "cache_read_input_tokens")
+        as_int(_value(usage, "prompt_cache_hit_tokens", 0))
+        or as_int(_value(details, "cached_tokens", 0))
+        or as_int(_value(details, "cache_read_input_tokens", 0))
     )
-    cache_miss_tokens = _int_value(usage, "prompt_cache_miss_tokens")
+    cache_miss_tokens = as_int(_value(usage, "prompt_cache_miss_tokens", 0))
     if not cache_miss_tokens and prompt_tokens:
         cache_miss_tokens = max(prompt_tokens - cached_tokens, 0)
     return {
