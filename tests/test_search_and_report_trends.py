@@ -58,6 +58,19 @@ class SearchPapersTests(DatabaseTestCase):
 
         self.assertEqual([paper["arxiv_id"] for paper in results], ["2607.00001"])
 
+    def test_malformed_paper_json_does_not_break_search_results(self):
+        paper_id = self.add_paper("2607.00014", "Corrupt Metadata Paper")
+        with db_connection.get_connection() as conn:
+            conn.execute("UPDATE papers SET authors = ? WHERE id = ?", ("[broken", paper_id))
+            conn.execute("UPDATE analysis SET tags = ? WHERE paper_id = ?", ("{}", paper_id))
+
+        with self.assertLogs("source.storage.row_mapping", level="WARNING"):
+            results = database.search_papers("corrupt", limit=50)
+
+        self.assertEqual(results[0]["authors"], [])
+        self.assertEqual(results[0]["tags"], [])
+        self.assertEqual(results[0]["categories"], ["cs.RO"])
+
     def test_results_are_ranked_by_weighted_matching_field_before_rating(self):
         title_id = self.add_paper("2607.00003", "World Model for Robots", tags=["Planning"])
         abstract_id = self.add_paper(

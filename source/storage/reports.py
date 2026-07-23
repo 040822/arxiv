@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 logger = logging.getLogger(__name__)
 
 from .connection import get_connection
+from .row_mapping import parse_paper_row
 
 
 def get_daily_stats(date):
@@ -79,11 +80,8 @@ def get_report_trends(report_date, interest_hash="", days=7, top_tags=5):
 
     date_tag_counts = {date: {} for date in dates}
     for row in rows:
-        try:
-            tags = json.loads(row.get("tags") or "[]")
-        except (TypeError, json.JSONDecodeError):
-            tags = []
-        for tag in tags if isinstance(tags, list) else []:
+        tags = parse_paper_row(row).get("tags", [])
+        for tag in tags:
             tag = str(tag).strip()
             if tag:
                 counts = date_tag_counts[row["published_date"]]

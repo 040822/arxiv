@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 logger = logging.getLogger(__name__)
 
 from .connection import get_connection
+from .row_mapping import parse_paper_row
 
 from .papers import _basic_analysis_missing_condition
 
@@ -81,12 +82,7 @@ def get_analysis_by_paper_id(paper_id):
         cursor.execute("SELECT * FROM analysis WHERE paper_id = ?", (paper_id,))
         row = cursor.fetchone()
 
-    if row:
-        r = dict(row)
-        if r.get("tags") and isinstance(r["tags"], str):
-            r["tags"] = json.loads(r["tags"])
-        return r
-    return None
+    return parse_paper_row(row) if row else None
 
 
 def get_average_rating():
@@ -165,18 +161,6 @@ def update_analysis(paper_id, data):
     return True
 
 
-def _parse_paper_analysis_row(row):
-    """解析 papers + analysis 查询结果中的 JSON 字段。"""
-    r = dict(row)
-    for field in ("authors", "categories", "tags"):
-        if r.get(field) and isinstance(r[field], str):
-            try:
-                r[field] = json.loads(r[field])
-            except json.JSONDecodeError:
-                r[field] = []
-    return r
-
-
 def get_papers_for_recommendation(limit=200, date=None, interest_hash=""):
     """
     获取需要计算个性化推荐分的论文。
@@ -215,7 +199,7 @@ def get_papers_for_recommendation(limit=200, date=None, interest_hash=""):
         """, params)
         rows = cursor.fetchall()
 
-    return [_parse_paper_analysis_row(row) for row in rows]
+    return [parse_paper_row(row) for row in rows]
 
 
 def update_recommendation_result(paper_id, score, reason, interest_hash):

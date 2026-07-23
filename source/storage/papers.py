@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 logger = logging.getLogger(__name__)
 
 from .connection import get_connection
+from .row_mapping import parse_paper_row
 
 
 logger = logging.getLogger(__name__)
@@ -200,17 +201,7 @@ def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, of
         rows = cursor.fetchall()
 
 
-    # 解析 JSON 字段：将数据库中的 JSON 字符串转为 Python 对象
-    results = []
-    for row in rows:
-        r = dict(row)
-        if r.get("authors") and isinstance(r["authors"], str):
-            r["authors"] = json.loads(r["authors"])
-        if r.get("categories") and isinstance(r["categories"], str):
-            r["categories"] = json.loads(r["categories"])
-        if r.get("tags") and isinstance(r["tags"], str):
-            r["tags"] = json.loads(r["tags"])
-        results.append(r)
+    results = [parse_paper_row(row) for row in rows]
 
     if count_total:
         return results, total
@@ -313,17 +304,7 @@ def browse_papers(date=None, tag=None, min_rating=None, max_rating=None,
         rows = cursor.fetchall()
 
 
-    # 解析 JSON 字段
-    results = []
-    for row in rows:
-        r = dict(row)
-        if r.get("authors") and isinstance(r["authors"], str):
-            r["authors"] = json.loads(r["authors"])
-        if r.get("categories") and isinstance(r["categories"], str):
-            r["categories"] = json.loads(r["categories"])
-        if r.get("tags") and isinstance(r["tags"], str):
-            r["tags"] = json.loads(r["tags"])
-        results.append(r)
+    results = [parse_paper_row(row) for row in rows]
 
     return results, total
 
@@ -438,8 +419,7 @@ def get_all_tags():
     # 遍历所有标签 JSON，统计每个标签的出现次数
     tag_counts = {}
     for row in rows:
-        tags = json.loads(row["tags"])
-        for tag in tags:
+        for tag in parse_paper_row(row)["tags"]:
             tag_counts[tag] = tag_counts.get(tag, 0) + 1
     return sorted(tag_counts.items(), key=lambda x: -x[1])
 
@@ -520,16 +500,7 @@ def get_unanalyzed_papers(limit=100):
         rows = cursor.fetchall()
 
 
-    # 解析 JSON 字段
-    results = []
-    for row in rows:
-        r = dict(row)
-        if r.get("authors") and isinstance(r["authors"], str):
-            r["authors"] = json.loads(r["authors"])
-        if r.get("categories") and isinstance(r["categories"], str):
-            r["categories"] = json.loads(r["categories"])
-        results.append(r)
-    return results
+    return [parse_paper_row(row) for row in rows]
 
 
 def search_papers(keyword, limit=50):
@@ -615,18 +586,7 @@ def search_papers(keyword, limit=50):
         rows = cursor.fetchall()
 
 
-    # 解析 JSON 字段
-    results = []
-    for row in rows:
-        r = dict(row)
-        if r.get("authors") and isinstance(r["authors"], str):
-            r["authors"] = json.loads(r["authors"])
-        if r.get("categories") and isinstance(r["categories"], str):
-            r["categories"] = json.loads(r["categories"])
-        if r.get("tags") and isinstance(r["tags"], str):
-            r["tags"] = json.loads(r["tags"])
-        results.append(r)
-    return results
+    return [parse_paper_row(row) for row in rows]
 
 
 def hide_paper(arxiv_id):
@@ -748,13 +708,4 @@ def get_unanalyzed_papers_by_ids(arxiv_ids):
         """, arxiv_ids)
         rows = cursor.fetchall()
 
-    # 解析 JSON 字段
-    results = []
-    for row in rows:
-        r = dict(row)
-        if r.get("authors") and isinstance(r["authors"], str):
-            r["authors"] = json.loads(r["authors"])
-        if r.get("categories") and isinstance(r["categories"], str):
-            r["categories"] = json.loads(r["categories"])
-        results.append(r)
-    return results
+    return [parse_paper_row(row) for row in rows]

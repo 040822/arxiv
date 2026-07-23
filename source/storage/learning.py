@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 logger = logging.getLogger(__name__)
 
 from .connection import get_connection
+from .row_mapping import parse_paper_row
 from .operations import _safe_int
 
 
@@ -152,18 +153,7 @@ def get_reading_list(status=None):
         rows = cursor.fetchall()
 
 
-    # 解析 JSON 字段
-    results = []
-    for row in rows:
-        r = dict(row)
-        if r.get("authors") and isinstance(r["authors"], str):
-            r["authors"] = json.loads(r["authors"])
-        if r.get("categories") and isinstance(r["categories"], str):
-            r["categories"] = json.loads(r["categories"])
-        if r.get("tags") and isinstance(r["tags"], str):
-            r["tags"] = json.loads(r["tags"])
-        results.append(r)
-    return results
+    return [parse_paper_row(row) for row in rows]
 
 
 def get_reading_list_count():
