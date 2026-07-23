@@ -92,58 +92,47 @@ def _ensure_dir():
     os.makedirs(DB_DIR, exist_ok=True)
 
 
+def _deep_merge(defaults, overrides):
+    """Return a deep copy of defaults recursively overlaid by user values."""
+    if not isinstance(defaults, dict) or not isinstance(overrides, dict):
+        return json.loads(json.dumps(overrides))
+
+    merged = json.loads(json.dumps(defaults))
+    for key, value in overrides.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = json.loads(json.dumps(value))
+    return merged
+
+
 def _migrate_old_settings(data):
-    """
-    迁移旧版配置格式到新版多供应商格式。
-
-    旧版配置将 api_key/base_url/model 等字段平铺在顶层，
-    新版将其收纳到 providers 字典中，支持多供应商切换。
-
-    如果数据已是新版格式（包含 "providers" 字段），直接返回。
-    否则将旧版平铺字段重组为 providers[active_provider] 结构。
-
-    参数:
-        data: 从 settings.json 读取的原始字典
-
-    返回:
-        迁移后的配置字典（新版格式）
-    """
+    """Migrate legacy flat provider fields while preserving unrelated fields."""
     if "providers" in data:
         return data
-    migrated = {
-        "active_provider": data.get("provider", "deepseek"),
-        "providers": {}
-    }
-    prov_key = data.get("provider", "deepseek")
-    preset = PROVIDER_PRESETS.get(prov_key, {})
-    migrated["providers"][prov_key] = {
-        "name": preset.get("name", prov_key),
-        "api_key": data.get("api_key", ""),
-        "base_url": data.get("base_url", preset.get("base_url", "")),
-        "model": data.get("model", ""),
-        "temperature": data.get("temperature", 0.3),
-        "max_tokens": data.get("max_tokens", 1000),
-        "max_tokens_enabled": data.get("max_tokens_enabled", False),
-        "is_thinking": data.get("is_thinking", False),
-        "thinking_effort": data.get("thinking_effort", "medium"),
+
+    migrated = dict(data)
+    provider_key = data.get("provider", "deepseek")
+    preset = PROVIDER_PRESETS.get(provider_key, {})
+    migrated["active_provider"] = provider_key
+    migrated["providers"] = {
+        provider_key: {
+            "name": preset.get("name", provider_key),
+            "api_key": data.get("api_key", ""),
+            "base_url": data.get("base_url", preset.get("base_url", "")),
+            "model": data.get("model", ""),
+            "temperature": data.get("temperature", 0.3),
+            "max_tokens": data.get("max_tokens", 1000),
+            "max_tokens_enabled": data.get("max_tokens_enabled", False),
+            "is_thinking": data.get("is_thinking", False),
+            "thinking_effort": data.get("thinking_effort", "medium"),
+        }
     }
     for key in (
-        "concurrency",
-        "per_page",
-        "schedule",
-        "proxy",
-        "fetch",
-        "admin_password",
-        "session_secret",
-        "personalization",
-        "webdav_backup",
-        "email_report",
-        "prompts",
-        "prompt_profiles",
-        "ai_tasks",
+        "provider", "api_key", "base_url", "model", "temperature",
+        "max_tokens", "max_tokens_enabled", "is_thinking", "thinking_effort",
     ):
-        if key in data:
-            migrated[key] = data[key]
+        migrated.pop(key, None)
     return migrated
 
 
@@ -181,35 +170,16 @@ def load_settings():
             saved = json.load(f)
         # 执行旧版格式迁移
         migrated = _migrate_old_settings(saved)
-        # 深拷贝默认配置作为合并基础
-        merged = json.loads(json.dumps(DEFAULT_SETTINGS))
-        # 逐字段合并：文件中有的字段覆盖默认值
-        merged["active_provider"] = migrated.get("active_provider", "deepseek")
-        if "concurrency" in migrated:
-            merged["concurrency"] = migrated["concurrency"]
-        if "per_page" in migrated:
-            merged["per_page"] = migrated["per_page"]
-        if "session_secret" in migrated:
-            merged["session_secret"] = migrated["session_secret"]
-        if "personalization" in migrated:
-            merged["personalization"] = _normalize_personalization_config(migrated["personalization"])
-        if "webdav_backup" in migrated:
-            merged["webdav_backup"] = _normalize_webdav_backup_config(migrated["webdav_backup"])
-        if "email_report" in migrated:
-            merged["email_report"] = _normalize_email_report_config(migrated["email_report"])
-        if "schedule" in migrated:
-            merged["schedule"] = _normalize_schedule(migrated["schedule"])
-        if "proxy" in migrated:
-            merged["proxy"] = migrated["proxy"]
-        if "fetch" in migrated:
-            merged["fetch"] = _normalize_fetch_config(migrated["fetch"])
-        if "admin_password" in migrated:
-            merged["admin_password"] = migrated["admin_password"]
-        if "prompts" in migrated:
-            merged["prompts"] = migrated["prompts"]
-        # 合并供应商配置，同时补齐新增参数开关
-        for k, v in migrated.get("providers", {}).items():
-            merged["providers"][k] = normalize_provider_config(v, k)
+        merged = _deep_merge(DEFAULT_SETTINGS, migrated)
+        merged["personalization"] = _normalize_personalization_config(merged.get("personalization", {}))
+        merged["webdav_backup"] = _normalize_webdav_backup_config(merged.get("webdav_backup", {}))
+        merged["email_report"] = _normalize_email_report_config(merged.get("email_report", {}))
+        merged["schedule"] = _normalize_schedule(merged.get("schedule", {}))
+        merged["fetch"] = _normalize_fetch_config(merged.get("fetch", {}))
+        merged["providers"] = {
+            key: normalize_provider_config(config, key)
+            for key, config in merged.get("providers", {}).items()
+        }
         merged["ai_tasks"] = _normalize_ai_tasks(
             migrated.get("ai_tasks", {}),
             merged.get("active_provider", ""),
