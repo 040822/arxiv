@@ -27,14 +27,20 @@
 ```
 arxiv/
 ├── config.py           # 硬编码配置（分类、标签候选、路径）
-├── settings.py         # 运行时配置（JSON文件：供应商、prompt、AI任务路由、并发数、定时任务、邮件、密码）
-├── database.py         # SQLite 数据库全部操作（CRUD、迁移、任务日志、学习记录）
+├── settings.py         # 运行时配置兼容 shim（实现位于 source/settings/）
+├── database.py         # SQLite 操作兼容 shim（实现位于 source/storage/）
 ├── fetcher.py          # arXiv API 论文抓取（去重、按分类拉取）
 ├── analyzer.py         # AI 分析与论文学习逻辑（PDF全文、Q&A、对话、问答反馈）
 ├── backup.py           # WebDAV 云同步备份（SQLite 快照、zip 打包、上传/清理）
 ├── email_report.py     # 每日报告邮件发送（SMTP、邮件HTML包装、站内链接重写）
 ├── pdf_reader.py       # PDF 下载与文本提取（PyMuPDF，缓存到 data/pdf_cache/）
-├── app.py              # Flask Web 服务（路由、API、APScheduler定时任务）
+├── app.py              # Flask 启动兼容 shim（实现位于 source/web/）
+├── source/
+│   ├── settings/       # 默认值、归一化、JSON store、供应商、Prompt、运行时配置
+│   ├── storage/        # 连接/schema、论文、分析、日志、报告、学习记录
+│   ├── reports/        # Web 日报 HTML 渲染
+│   ├── pipeline/       # 定时/手动组合流水线与 APScheduler
+│   └── web/            # Flask application assembly、Blueprint 路由、鉴权与进度
 ├── main.py             # CLI 入口（fetch/analyze/run）
 ├── requirements.txt    # Python 依赖
 ├── README.md           # 用户文档
@@ -349,7 +355,7 @@ APScheduler cron(day_of_week, hour, minute)
 }
 ```
 
-**settings.py 函数:**
+**source/settings 公共函数（根 settings.py 兼容导出）:**
 - `load_settings()` / `save_settings()` — 读写JSON（含自动迁移）
 - `get_ai_config()` — 获取当前激活供应商的 API 配置
 - `get_ai_task_config(task_key)` — 获取某个 AI 功能的实际供应商、模型和参数配置
@@ -370,7 +376,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `get/set/verify/has_admin_password()` — 管理密码
 - `get_session_secret()` — 获取/生成持久 Flask session 签名密钥
 
-> **⚠️ 重要：** 在 `load_settings()` 中添加新字段时，必须在合并逻辑中显式添加对应的 `if "key" in migrated: merged["key"] = migrated["key"]`，否则新字段在读取时会丢失！这是已踩过的坑。
+> **配置合并：** `source/settings/store.py` 使用递归 deep merge；新增普通字段无需维护顶层白名单。需要归一化、迁移或秘密保留语义的字段，仍应在 normalize/store 中显式处理并补回归测试。
 
 ---
 
@@ -463,9 +469,9 @@ APScheduler cron(day_of_week, hour, minute)
 ## 7. 开发规范
 
 ### 7.1 添加新功能的步骤
-1. 如果涉及新数据库表/字段 → 修改 `database.py` 的 `init_db()` 并添加迁移逻辑
-2. 如果涉及新 API → 在 `app.py` 添加路由函数
-3. 如果涉及新页面 → 创建 `templates/xxx.html`，在 `app.py` 添加页面路由
+1. 如果涉及新数据库表/字段 → 修改 `source/storage/schema.py` 的 `init_db()` 并添加迁移逻辑
+2. 如果涉及新 API → 在对应的 `source/web/*_api.py` Blueprint 添加路由函数
+3. 如果涉及新页面 → 创建 `templates/xxx.html`，在 `source/web/pages.py` 添加页面路由
 4. 如果涉及新样式 → 通用业务页面在 `static/style.css` 添加；独立宣传页使用 `static/promo.css` 和 `.promo-*` 命名空间
 5. 更新 `AGENTS.md` 记录变更
 
@@ -479,7 +485,7 @@ if "new_column" not in columns:
 ```
 
 ### 7.3 添加新供应商
-在 `settings.py` 的 `PROVIDER_PRESETS` 字典中添加：
+在 `source/settings/defaults.py` 的 `PROVIDER_PRESETS` 字典中添加：
 ```python
 "new_provider": {
     "name": "显示名称",

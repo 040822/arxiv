@@ -10,7 +10,7 @@
                           │ HTTP
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    Flask Web 服务 (app.py)                    │
+│          Flask Web 服务 (source/web；app.py 为兼容 shim)       │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
 │  │ 页面路由  │  │ 任务 API │  │ 论文 API │  │ 设置 API │    │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘    │
@@ -57,7 +57,7 @@
 ### 1. 论文抓取流
 
 ```
-用户点击"抓取" → app.py /api/fetch → fetcher.py
+用户点击"抓取" → source/web/tasks_api.py /api/fetch → fetcher.py
   → arxiv.Client 查询 arXiv API
   → 去重（内存 + 数据库）
   → insert_paper() 写入 papers 表
@@ -69,7 +69,7 @@
 #### 基础分析（批量）
 
 ```
-用户点击"分析" → app.py /api/analyze → analyzer.py
+用户点击"分析" → source/web/tasks_api.py /api/analyze → analyzer.py
   → get_unanalyzed_papers()
   → ThreadPoolExecutor 并发：
     → analyze_paper_basic(abstract)
@@ -81,7 +81,7 @@
 #### 深度阅读（单篇）
 
 ```
-用户点击"生成报告" → app.py /api/paper/<id>/reanalyze → analyzer.py
+用户点击"生成报告" → source/web/papers_api.py /api/paper/<id>/reanalyze → analyzer.py
   → analyze_paper_full(paper_data)
   → pdf_reader.download_pdf() + extract_text()
   → OpenAI API 调用（只生成 Q&A）
@@ -117,7 +117,7 @@
 ### 3. 报告生成流
 
 ```
-用户点击"生成报告" → app.py /api/generate → database.py
+用户点击"生成报告" → source/web/tasks_api.py /api/generate → source/reports
   → 若研究兴趣非空且未传 recommend=0，先补齐目标日期缺失/过期推荐分
   → generate_report_content(date)
   → 查询指定日期的论文
@@ -171,7 +171,7 @@ APScheduler（星期 + 时分）→ daily_pipeline()
 ### 7. 搜索流
 
 ```
-用户输入关键词 → GET /search?q=xxx → database.py
+用户输入关键词 → GET /search?q=xxx → source/web/pages.py → source/storage/papers.py
   → 检查是否为 arXiv ID
   → 如果是 ID：精确匹配 arxiv_id
   → 如果是关键词：拆分并去重，要求每个词命中 title/tags/summary_cn/abstract/qa_analysis 之一
@@ -184,16 +184,13 @@ APScheduler（星期 + 时分）→ daily_pipeline()
 ## 组件依赖关系
 
 ```
-app.py
-├── database.py     # 所有 DB 操作
-├── fetcher.py      # 论文抓取
-│   ├── database.py
-│   └── settings.py # 代理配置
-├── analyzer.py     # AI 分析
-│   ├── database.py
-│   ├── settings.py # API 配置、prompt
-│   └── pdf_reader.py
-└── settings.py     # 配置管理
+app.py -> source/web/application.py + Blueprints
+|-- source/pipeline/   # manual/daily orchestration and scheduler
+|-- source/storage/    # SQLite access
+|-- source/settings/   # runtime settings
+|-- fetcher.py         # arXiv fetch
+`-- analyzer.py        # AI analysis and learning
+    `-- pdf_reader.py
 ```
 
 ---

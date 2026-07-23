@@ -58,7 +58,6 @@ __all__ = [
     "is_known_thinking_model",
     "is_openai_reasoning_model",
     "load_settings",
-    "logger",
     "normalize_provider_config",
     "remove_provider",
     "save_ai_tasks",

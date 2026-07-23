@@ -2,6 +2,14 @@
 
 ## 未发布
 
+### 4.1 超大文件拆分（目标 v0.6.0）
+- `app.py`、`database.py`、`settings.py` 收缩为 14/8/9 行兼容 shim，实际实现迁入 `source/`
+- Flask 路由按 auth/pages/papers/learning/tasks/settings/providers 拆成 7 个 Blueprint，保留全部 86 条 URL + method 契约
+- SQLite 按 connection/schema/papers/analysis/operations/reports/learning 拆分，日报 HTML 渲染移入独立 reports 模块
+- settings 按 defaults/normalize/store/providers/prompts/runtime 拆分；Q9 改为递归 deep merge，新字段无需维护两处顶层白名单
+- 定时与手动组合流水线下沉到 pipeline 模块，共享互斥锁；`import app` 不启动 scheduler
+- 根模块公开导入、CLI、数据库 schema、设置格式和 HTTP 行为保持兼容；新增真实 Flask 路由与鉴权契约测试
+
 ### 深度阅读完整性与统一富文本渲染
 - 深度阅读记录模型 `finish_reason`，按当前 Prompt 中的 `### Qn:` 校验 Q&A 完整性；JSON 截断时从原始 assistant 输出末尾续写，缺题时只请求缺失问题，最多额外调用一次
 - 自动补全后仍不完整时不覆盖已有 `qa_analysis`；重新生成接口返回 warning，添加指定论文则保留已完成的基础分析并报告缺失问题

@@ -20,7 +20,6 @@ from config import (
 logger = logging.getLogger(__name__)
 
 from .defaults import (
-    logger,
     PROVIDER_PRESETS,
     THINKING_EFFORTS,
     THINKING_BUDGETS,
@@ -144,12 +143,11 @@ def load_settings():
     1. 确保数据目录存在
     2. 如果配置文件不存在，写入默认配置并返回
     3. 读取配置文件，执行旧版格式迁移
-    4. 以 DEFAULT_SETTINGS 为基础，用文件中的值覆盖（合并逻辑）
+    4. 以 DEFAULT_SETTINGS 为基础，递归合并文件中的值
     5. 补齐新增的供应商参数开关，兼容旧配置
 
-    注意：添加新配置字段时，必须在此函数的合并逻辑中显式添加对应的
-    if "key" in migrated 判断，否则新字段在读取时会被 DEFAULT_SETTINGS
-    的默认值覆盖而丢失！这是已踩过的坑。
+    普通配置字段由递归合并自动保留；需要迁移、归一化或密码保留语义的
+    字段仍应在对应逻辑中显式处理。
 
     返回:
         合并后的完整配置字典

@@ -32,14 +32,15 @@
 ```
 arxiv/
 ├── config.py           # 硬编码配置（分类、标签、路径、延迟参数）
-├── settings.py         # 运行时配置（JSON：供应商、prompt、代理、AI任务路由、邮件/备份）
-├── database.py         # SQLite 数据库全部操作（论文/分析/报告/学习记录）
+├── settings.py         # source/settings 的兼容 shim
+├── database.py         # source/storage + source/reports 的兼容 shim
 ├── fetcher.py          # arXiv API 论文抓取（支持分批）
 ├── analyzer.py         # AI 分析与论文学习对话/问答
 ├── backup.py           # WebDAV 云同步备份
 ├── email_report.py     # 每日报告 SMTP 邮件发送
 ├── pdf_reader.py       # PDF 下载与文本提取（令牌桶限速）
-├── app.py              # Flask Web 服务 + APScheduler
+├── app.py              # source/web 的启动兼容 shim
+├── source/             # settings/storage/reports/pipeline/web 业务包
 ├── main.py             # CLI 入口（fetch/analyze/run）
 ├── requirements.txt    # Python 依赖
 ├── templates/          # Jinja2 HTML 模板
@@ -238,7 +239,7 @@ CREATE TABLE paper_quiz_attempts (
 | `FETCH_BATCH_DELAY` | 批次间隔 |
 | `PDF_DOWNLOAD_RATE/CAPACITY` | PDF 下载限速 |
 
-### settings.py — 运行时配置
+### source/settings — 运行时配置（根 `settings.py` 兼容导出）
 
 通过 Web 设置页可修改，存储在 `data/settings.json`：
 
@@ -261,7 +262,7 @@ CREATE TABLE paper_quiz_attempts (
 | `admin_password` | 管理密码（SHA-256） |
 | `session_secret` | 内部 Flask session 签名密钥，用于服务重启后保持登录 |
 
-> **⚠️ 重要：** 在 `load_settings()` 中添加新字段时，必须在合并逻辑中显式添加 `if "key" in migrated: merged["key"] = migrated["key"]`，否则新字段在读取时会丢失！
+> `source/settings/store.py` 通过递归 deep merge 保留新增字段，不再需要顶层白名单；需要归一化、迁移或密码保留语义的字段仍须显式处理并补测试。
 
 AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成，OpenAI 兼容客户端统一通过 `analyzer.get_openai_client()` 创建以复用全局代理并禁用环境变量代理。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要绕过任务级模型路由。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
 
@@ -279,7 +280,7 @@ WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生�
 
 ### 1. 添加新数据库字段
 
-在 `database.py` 的 `init_db()` 中添加迁移逻辑：
+在 `source/storage/schema.py` 的 `init_db()` 中添加迁移逻辑：
 
 ```python
 cursor.execute("PRAGMA table_info(table_name)")
@@ -290,7 +291,7 @@ if "new_column" not in columns:
 
 ### 2. 添加新 API 端点
 
-在 `app.py` 中添加路由函数：
+在对应的 `source/web/*_api.py` Blueprint 中添加路由函数：
 
 ```python
 @app.route("/api/new-endpoint", methods=["POST"])
@@ -305,7 +306,7 @@ def api_new_endpoint():
 ### 3. 添加新页面
 
 1. 创建 `templates/new_page.html`
-2. 在 `app.py` 添加页面路由
+2. 在 `source/web/pages.py` 添加页面路由
 3. 在其他页面的导航栏添加链接
 
 ### 4. 添加新样式

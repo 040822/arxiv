@@ -22,12 +22,16 @@
 | 文件 | 行数 | 职责 | 修改频率 |
 |------|------|------|----------|
 | `config.py` | ~96 | 硬编码配置（分类、标签、路径、延迟） | 低 |
-| `settings.py` | ~283 | 运行时配置（供应商、prompt、代理、学习任务路由） | 中 |
-| `database.py` | ~1010 | 所有数据库操作（论文、分析、报告、学习记录等表） | 高 |
+| `settings.py` | 9 | `source.settings` 兼容 shim | 低 |
+| `source/settings/*` | 6 个模块 | 配置默认值、归一化、store、供应商、Prompt、运行时配置 | 中 |
+| `database.py` | 8 | `source.storage` / `source.reports` 兼容 shim | 低 |
+| `source/storage/*` | 7 个模块 | SQLite schema、论文、分析、日志、报告与学习记录 | 中 |
 | `fetcher.py` | ~343 | arXiv 论文抓取 | 中 |
 | `analyzer.py` | ~204 | AI 分析（基础/完整） | 中 |
 | `pdf_reader.py` | ~107 | PDF 下载与文本提取 | 低 |
-| `app.py` | ~1058 | Flask 路由 + 定时任务 + SSE | 高 |
+| `app.py` | 14 | `source.web` 启动兼容 shim | 低 |
+| `source/web/*` | 9 个模块 | Blueprint、鉴权、页面/API 与进度 | 高 |
+| `source/pipeline/*` | 3 个模块 | 定时/手动组合流水线与 scheduler | 中 |
 | `main.py` | ~97 | CLI 入口 | 低 |
 | `templates/*.html` | ~10+ 文件 | 前端页面 | 高 |
 | `static/style.css` | ~1860 | 全局样式 | 中 |
@@ -104,16 +108,11 @@ APScheduler cron(day_of_week, hour, minute)
 
 ## 关键约定
 
-### 1. settings.py 的 load_settings()
+### 1. source/settings 的 load_settings()
 
-`load_settings()` 合并配置时，必须显式添加新字段：
-
-```python
-if "new_field" in migrated:
-    merged["new_field"] = migrated["new_field"]
-```
-
-**否则新字段在读取时会丢失！** 这是已踩过的坑。
+`load_settings()` 会递归合并默认配置和 `settings.json`，普通新增字段无需维护
+顶层白名单。需要迁移、归一化或密码保留语义的字段，仍应在
+`source/settings/store.py` 或 `normalize.py` 中显式处理并添加回归测试。
 
 ### 2. 认证与敏感字段
 
@@ -123,6 +122,7 @@ if "new_field" in migrated:
 - 个性化推荐的研究兴趣保存在 `settings.personalization.research_interests`；推荐评分必须使用独立 `recommendation` 任务路由，并且只有 `recommendation_interest_hash` 匹配当前兴趣时才能用于报告排序
 - WebDAV 云备份配置保存在 `settings.webdav_backup`；GET 接口只返回 `password_masked`，自动备份失败写入 backup 步骤并使父任务变为 `warning`
 - 用户/AI/数据库内容进入 HTML 前必须转义，报告页的 `|safe` 只用于后端生成且已转义的 HTML
+
 ### 3. arXiv API 注意事项
 
 - `submittedDate:[... TO ...]` 过滤器**不工作**，不要使用
@@ -166,22 +166,22 @@ Prompt 已拆为 `prompt_profiles`。学习功能必须通过 `build_paper_learn
 
 ### 场景 1：添加新的数据库字段
 
-1. 在 `database.py` 的 `init_db()` 中添加迁移逻辑
+1. 在 `source/storage/schema.py` 的 `init_db()` 中添加迁移逻辑
 2. 在相关的 CRUD 函数中添加新字段的处理
-3. 在 `app.py` 的 API 中返回新字段
+3. 在对应的 `source/web/*_api.py` 中返回新字段
 4. 在模板中显示新字段
 
 ### 场景 2：添加新的 API 端点
 
-1. 在 `app.py` 中添加路由函数
+1. 在对应的 `source/web/*_api.py` Blueprint 中添加路由函数
 2. 遵循统一的返回格式
 3. 使用 try/except 处理错误
-4. 如需数据库操作，在 `database.py` 中添加函数
+4. 如需数据库操作，在对应的 `source/storage/*.py` 中添加函数
 
 ### 场景 3：添加新的页面
 
 1. 创建 `templates/new_page.html`
-2. 在 `app.py` 添加页面路由
+2. 在 `source/web/pages.py` 添加页面路由
 3. 在所有模板的 `.nav-bar` 中添加导航链接
 4. 在 `static/style.css` 中添加样式
 
@@ -189,12 +189,12 @@ Prompt 已拆为 `prompt_profiles`。学习功能必须通过 `build_paper_learn
 
 1. 基础分析：修改 `analyzer.py` 的 `analyze_paper_basic()`
 2. 深度阅读：修改 `analyze_paper_full()`
-3. Prompt：在 `settings.py` 的 `DEFAULT_SETTINGS` 中修改默认值，或通过 Web 设置页修改
+3. Prompt：在 `source/settings/defaults.py` 的 `DEFAULT_SETTINGS` 中修改默认值，或通过 Web 设置页修改
 
 ### 场景 5：添加新的筛选条件
 
-1. 在 `database.py` 的查询函数中添加 WHERE 条件
-2. 在 `app.py` 的路由中读取参数
+1. 在对应的 `source/storage/*.py` 查询函数中添加 WHERE 条件
+2. 在对应的 `source/web/*_api.py` 路由中读取参数
 3. 在模板中添加筛选 UI
 4. 传递参数到模板渲染
 
@@ -242,26 +242,22 @@ if r.get("authors") and isinstance(r["authors"], str):
 | AI 分析失败 | `analyzer.py` + API 配置 + 模型可用性 + 网络与代理页的 LLM 测试 |
 | PDF 下载失败 | `pdf_reader.py` + 代理配置 + 令牌桶限速 |
 | 页面显示异常 | `templates/*.html` + `static/style.css` |
-| 数据库问题 | `database.py` + `data/papers.db` |
+| 数据库问题 | `source/storage/*.py` + `data/papers.db` |
 | WebDAV 备份失败 | `backup.py` + `settings.webdav_backup` + 日报 backup 步骤/手动日志 |
-| 定时任务不执行 | `app.py` 的 `daily_pipeline()` + APScheduler + `task_logs/task_log_steps` |
-| 配置不生效 | `settings.py` 的 `load_settings()` 合并逻辑 |
+| 定时任务不执行 | `source/pipeline/orchestrator.py` + `scheduler.py` + `task_logs/task_log_steps` |
+| 配置不生效 | `source/settings/store.py` 的 `load_settings()` 与 normalize 逻辑 |
 
 ---
 
 ## 依赖关系图
 
 ```
-app.py
-├── database.py (所有 DB 操作)
-├── fetcher.py (论文抓取)
-│   ├── database.py
-│   └── settings.py (代理配置)
-├── analyzer.py (AI 分析)
-│   ├── database.py
-│   ├── settings.py (API 配置、prompt)
-│   └── pdf_reader.py (PDF 下载)
-├── backup.py (WebDAV 云同步备份)
-│   └── settings.py (WebDAV 配置)
-└── settings.py (配置管理)
+app.py -> source/web/application.py + Blueprints
+|-- source/pipeline/   # manual/daily orchestration and scheduler
+|-- source/storage/    # SQLite access
+|-- source/settings/   # runtime settings
+|-- fetcher.py         # arXiv fetch
+|-- analyzer.py        # AI analysis and learning
+|   `-- pdf_reader.py  # PDF download
+`-- backup.py / email_report.py
 ```

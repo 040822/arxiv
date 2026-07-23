@@ -20,7 +20,6 @@ from config import (
 logger = logging.getLogger(__name__)
 
 from .defaults import (
-    logger,
     PROVIDER_PRESETS,
     THINKING_EFFORTS,
     THINKING_BUDGETS,
