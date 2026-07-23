@@ -22,7 +22,7 @@
 
 ```text
 source/
-├── settings/   # defaults / normalize / store / providers / prompts / runtime
+├── settings/   # coercion / defaults / normalize / thinking / store / providers / prompts / runtime
 ├── storage/    # connection / schema / papers / analysis / operations / reports / learning
 ├── reports/    # HTML report renderer
 ├── pipeline/   # daily/manual orchestrator + scheduler
@@ -61,7 +61,7 @@ python3 -c "import app, settings, database, analyzer, email_report, backup, fetc
 - `source/` 不反向导入根 `app/database/settings`；
 - 86 条 URL + method 契约保持一致；
 - 真实 Flask 下公开页、登录重定向和受保护 API 行为保持一致；
-- 旧版与新版设置格式均保留未知字段，Q9 不再依赖两处顶层白名单。
+- 旧版与新版设置格式均保留未知顶层字段，Q9 不再依赖两处顶层白名单。
 
 ## 不在本次范围
 

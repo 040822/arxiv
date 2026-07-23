@@ -262,7 +262,7 @@ CREATE TABLE paper_quiz_attempts (
 | `admin_password` | 管理密码（SHA-256） |
 | `session_secret` | 内部 Flask session 签名密钥，用于服务重启后保持登录 |
 
-> `source/settings/store.py` 通过递归 deep merge 保留新增字段，不再需要顶层白名单；需要归一化、迁移或密码保留语义的字段仍须显式处理并补测试。
+> `source/settings/store.py` 通过递归 deep merge 保留新增顶层字段，不再需要顶层白名单；需要归一化、迁移或密码保留语义的字段仍须显式处理并补测试。
 
 AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成，OpenAI 兼容客户端统一通过 `analyzer.get_openai_client()` 创建以复用全局代理并禁用环境变量代理。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要绕过任务级模型路由。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
 
@@ -294,7 +294,7 @@ if "new_column" not in columns:
 在对应的 `source/web/*_api.py` Blueprint 中添加路由函数：
 
 ```python
-@app.route("/api/new-endpoint", methods=["POST"])
+@bp.route("/api/new-endpoint", methods=["POST"])
 def api_new_endpoint():
     try:
         # 业务逻辑

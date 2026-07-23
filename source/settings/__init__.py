@@ -2,6 +2,7 @@
 
 from .defaults import *
 from .normalize import *
+from .thinking import *
 from .store import *
 from .providers import *
 from .prompts import *

@@ -23,7 +23,7 @@
 |------|------|------|----------|
 | `config.py` | ~96 | 硬编码配置（分类、标签、路径、延迟） | 低 |
 | `settings.py` | 9 | `source.settings` 兼容 shim | 低 |
-| `source/settings/*` | 6 个模块 | 配置默认值、归一化、store、供应商、Prompt、运行时配置 | 中 |
+| `source/settings/*` | 8 个模块 | 值转换、默认值、归一化、思考协议、store、供应商、Prompt、运行时配置 | 中 |
 | `database.py` | 8 | `source.storage` / `source.reports` 兼容 shim | 低 |
 | `source/storage/*` | 7 个模块 | SQLite schema、论文、分析、日志、报告与学习记录 | 中 |
 | `fetcher.py` | ~343 | arXiv 论文抓取 | 中 |
@@ -110,8 +110,8 @@ APScheduler cron(day_of_week, hour, minute)
 
 ### 1. source/settings 的 load_settings()
 
-`load_settings()` 会递归合并默认配置和 `settings.json`，普通新增字段无需维护
-顶层白名单。需要迁移、归一化或密码保留语义的字段，仍应在
+`load_settings()` 会递归合并默认配置和 `settings.json`，普通新增顶层字段无需维护
+白名单。需要迁移、归一化或密码保留语义的字段，仍应在
 `source/settings/store.py` 或 `normalize.py` 中显式处理并添加回归测试。
 
 ### 2. 认证与敏感字段

@@ -36,7 +36,7 @@ arxiv/
 ├── pdf_reader.py       # PDF 下载与文本提取（PyMuPDF，缓存到 data/pdf_cache/）
 ├── app.py              # Flask 启动兼容 shim（实现位于 source/web/）
 ├── source/
-│   ├── settings/       # 默认值、归一化、JSON store、供应商、Prompt、运行时配置
+│   ├── settings/       # 值转换、默认值、归一化、思考协议、store、供应商、Prompt、运行时配置
 │   ├── storage/        # 连接/schema、论文、分析、日志、报告、学习记录
 │   ├── reports/        # Web 日报 HTML 渲染
 │   ├── pipeline/       # 定时/手动组合流水线与 APScheduler
@@ -376,7 +376,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `get/set/verify/has_admin_password()` — 管理密码
 - `get_session_secret()` — 获取/生成持久 Flask session 签名密钥
 
-> **配置合并：** `source/settings/store.py` 使用递归 deep merge；新增普通字段无需维护顶层白名单。需要归一化、迁移或秘密保留语义的字段，仍应在 normalize/store 中显式处理并补回归测试。
+> **配置合并：** `source/settings/store.py` 使用递归 deep merge；新增普通顶层字段无需维护白名单。需要归一化、迁移或秘密保留语义的字段，仍应在 normalize/store 中显式处理并补回归测试。
 
 ---
 

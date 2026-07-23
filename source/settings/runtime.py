@@ -63,6 +63,8 @@ from .normalize import (
     _is_legacy_basic_analysis_instruction,
     _migrate_basic_analysis_instruction,
     _normalize_prompt_profiles,
+)
+from .thinking import (
     _model_leaf,
     is_openai_reasoning_model,
     _is_deepseek_v4_model,

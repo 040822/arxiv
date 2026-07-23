@@ -6,7 +6,7 @@
 - `app.py`、`database.py`、`settings.py` 收缩为 14/8/9 行兼容 shim，实际实现迁入 `source/`
 - Flask 路由按 auth/pages/papers/learning/tasks/settings/providers 拆成 7 个 Blueprint，保留全部 86 条 URL + method 契约
 - SQLite 按 connection/schema/papers/analysis/operations/reports/learning 拆分，日报 HTML 渲染移入独立 reports 模块
-- settings 按 defaults/normalize/store/providers/prompts/runtime 拆分；Q9 改为递归 deep merge，新字段无需维护两处顶层白名单
+- settings 按 coercion/defaults/normalize/thinking/store/providers/prompts/runtime 拆分；Q9 改为递归 deep merge，新增顶层字段无需维护两处白名单
 - 定时与手动组合流水线下沉到 pipeline 模块，共享互斥锁；`import app` 不启动 scheduler
 - 根模块公开导入、CLI、数据库 schema、设置格式和 HTTP 行为保持兼容；新增真实 Flask 路由与鉴权契约测试
 
