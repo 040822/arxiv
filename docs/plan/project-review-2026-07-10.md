@@ -220,33 +220,36 @@
 ---
 
 ## 四、代码质量与架构
+> **修复状态更新（2026-07-24）：** Q1、Q2、Q3、Q9 已完成并通过
+> 157 项测试；对应实施记录见
+> [`refactor-4.1-splitplan.md`](refactor-4.1-splitplan.md)。
 
 ### 4.1 超大文件
 
 | # | 严重度 | 问题 | 位置 | 建议 |
 |---|--------|------|------|------|
-| Q1 | **高** | `app.py`(2572行) 承担 85 路由 + 认证 + 全局状态 + 调度 + 流水线编排 + 请求助手 | `app.py` | 拆分 `app_routes/` 包 + `pipeline.py` + `auth.py` |
-| Q2 | 中 | `database.py`(2415行) 覆盖 11 个业务域，62 函数混合 CRUD + 迁移 + 报告渲染 | `database.py` | 按表族拆 `db/papers.py`/`db/analysis.py`/...；`generate_report_content` 移到 `report_renderer.py` |
-| Q3 | 中 | `settings.py`(1901行) 配置 + Prompt + 供应商 + 迁移混在一起 | `settings.py` | 拆 `prompts.py`/`providers.py`/`thinking.py` |
+| Q1 ✅ | ~~高~~ **已完成** | `app.py` 已收缩为 14 行兼容入口，路由、认证、流水线和调度均已拆分 | `source/web/`, `source/pipeline/` | 7 个 Blueprint；保留 86 条非静态路由契约 |
+| Q2 ✅ | ~~中~~ **已完成** | `database.py` 已收缩为 8 行兼容入口，SQLite 操作和报告渲染已分离 | `source/storage/`, `source/reports/` | 按表族拆分 storage；renderer 独立 |
+| Q3 ✅ | ~~中~~ **已完成** | `settings.py` 已收缩为 9 行兼容入口，配置职责已拆分 | `source/settings/` | 拆分 defaults/normalize/thinking/providers/prompts/store/runtime 等模块 |
 
 ### 4.2 数据库层
 
 | # | 严重度 | 问题 | 位置 | 建议 |
 |---|--------|------|------|------|
-| Q4 | **高** | `get_connection()` 几乎无 `with` / try-finally，异常路径大量泄漏连接。全库 62 处仅 1 处 finally | `database.py:46-62`, `database.py:344-390` 等 | 改 `with get_connection() as conn:` + try/except |
-| Q5 | **中** | `analysis` 表无 `UNIQUE(paper_id)`，`insert_analysis` 先 SELECT 再 INSERT（非原子），并发可产生重复 analysis 行 | `database.py:391-447`, `database.py:102-120` | 加 UNIQUE 索引 + `INSERT OR IGNORE` / `ON CONFLICT` |
-| Q6 | **中** | 未设 `PRAGMA busy_timeout`，写锁竞争时立即抛 `database is locked` | `database.py:46-62` | 加 `PRAGMA busy_timeout=5000` |
-| Q7 | 中 | `init_db`(256行) 无 try/finally，中途异常泄漏连接且不提交 | `database.py:65-321` | 改 with + 异常处理 |
-| Q8 | 中 | 迁移依赖 `PRAGMA table_info` 逐列判断，无 schema 版本表 | `database.py:130-166` | 引入 `schema_version` 表 + 顺序迁移函数 |
+| Q4 | **高** | `get_connection()` 的调用点仍主要靠手动 `close()`；异常路径可泄漏连接。当前 storage 有 62 处连接调用，仅 1 处 finally | `source/storage/connection.py`, `source/storage/*.py` | 引入真正负责 close 的连接 context manager，并逐调用点迁移 |
+| Q5 | **中** | `analysis` 表仍无 `UNIQUE(paper_id)`；`insert_analysis` 仍为先 SELECT 再 INSERT，并发可产生重复行 | `source/storage/schema.py`, `source/storage/analysis.py` | 先清理历史重复数据，再加唯一索引与原子 upsert |
+| Q6 | **中** | 数据库连接仍未设置 `PRAGMA busy_timeout`，写锁竞争时可能立即抛 `database is locked` | `source/storage/connection.py` | 设置 `PRAGMA busy_timeout=5000` 并补锁竞争测试 |
+| Q7 | 中 | `init_db()` 仍在正常路径末尾手动 commit/close，中途异常会泄漏连接且不提交 | `source/storage/schema.py` | 纳入 Q4 的连接 context manager 改造 |
+| Q8 | 中 | 迁移仍依赖 `PRAGMA table_info` 逐列判断，无 schema 版本表 | `source/storage/schema.py` | 引入 `schema_version` 表 + 顺序迁移函数 |
 
 ### 4.3 配置管理
 
 | # | 严重度 | 问题 | 位置 | 建议 |
 |---|--------|------|------|------|
-| Q9 | **高** | `load_settings` 手工逐字段合并：每新增一个顶层配置字段，必须在 `_migrate_old_settings` key 白名单 **和** `load_settings` 合并分支**两处**手工添加，漏即丢失（已踩坑） | `settings.py:1077-1091`, `settings.py:1101-1176` | 改通用深合并 `deep_merge(DEFAULTS, migrated)` |
-| Q10 | **中** | `load_settings` 整体 `except Exception` 回退到 DEFAULT_SETTINGS，用户 API key/密码/研究兴趣全部丢失；若后触发 `save_settings` 则覆盖磁盘 | `settings.py:1174-1176` | 保留已解析部分 + 记录详细错误 |
-| Q11 | 中 | `get_session_secret()` 在读路径上触发 `save_settings` 写盘 | `settings.py:1201-1214` | 延迟到显式写入 |
-| Q12 | 低 | 供应商思考模型探测逻辑硬编码大量供应商分支 | `settings.py:811-884` | 改用供应商 metadata 自描述 |
+| Q9 ✅ | ~~高~~ **已完成** | `load_settings` 已使用递归 deep merge，未知顶层字段不再因双重白名单遗漏而丢失 | `source/settings/store.py` | 已增加新旧格式与未知顶层字段回归测试 |
+| Q10 | **中** | `load_settings` 整体 `except Exception` 仍直接回退到 DEFAULT_SETTINGS；后续写入可能覆盖用户 API key/密码/研究兴趣 | `source/settings/store.py` | 区分读取、解析和归一化错误，保留可恢复数据且禁止隐式覆盖原文件 |
+| Q11 | 中 | `get_session_secret()` 仍会在读路径触发 `save_settings` 写盘 | `source/settings/store.py` | 延迟到显式初始化或写入阶段 |
+| Q12 | 低 | 供应商思考模型探测逻辑仍硬编码多个供应商分支 | `source/settings/thinking.py` | 改用供应商 metadata 自描述 |
 
 ### 4.4 重复代码
 
@@ -302,7 +305,7 @@
 2. **S14：CSRF 防护** — 全站无 CSRF token
 3. **S27：错误响应脱敏** — `str(e)` 直传客户端贯穿全站
 4. **Q4 + Q5 + Q6：数据库连接泄漏 + analysis 唯一约束 + busy_timeout** — 并发稳定性根基
-5. **Q9 + Q10：settings 深合并 + 异常不覆盖用户数据** — 配置丢失风险最高
+5. **✅ Q9 / 待修 Q10：settings 深合并已完成；异常回退保护仍待修复** — 配置丢失风险仍需继续收口
 
 #### P1 — 核心功能价值提升（直接服务"AI 辅助论文阅读"目标）
 
@@ -327,7 +330,7 @@
 
 #### P3 — 质量与可维护性（中期持续改进）
 
-21. **Q1 + Q2 + Q3：拆分超大文件** — 架构可维护性
+21. **✅ Q1 + Q2 + Q3：拆分超大文件（已完成）** — 根兼容入口与新模块边界已落地
 22. **Q14：路由装饰器消除重复模板** — 40+ 处重复
 23. **Q13：提取公共行解析助手** — 7 处重复
 24. **Q20 + Q21：测试拆分 + pytest 基础设施** — 质量保障
@@ -340,10 +343,10 @@
 
 ### 实施路径建议
 
-**第一批（安全与稳定性基建）**：S1/S15/S14/S27 → Q4/Q5/Q6/Q9/Q10
+**第一批（安全与稳定性基建）**：S1/S15/S14/S27 → Q4/Q5/Q6 → ✅ Q9 → Q10
 **第二批（核心功能高价值）**：C1 → C6 → C7 → F24/C12 → F8 → C13 → C3/C20 → C16
 **第三批（体验一致性）**：F7 → F14/F33 → F1 → F23/F25 → F9 → C2 → F18/F19
-**第四批（可维护性 + 深化）**：Q1/Q2/Q3 → Q14/Q13 → Q20/Q21 → C10/C11 → C14/C15 → C17/C18/C19 → C8/C9 → C22
+**第四批（可维护性 + 深化）**：✅ Q1/Q2/Q3 → Q14/Q13 → Q20/Q21 → C10/C11 → C14/C15 → C17/C18/C19 → C8/C9 → C22
 
 ### 对核心目标的总结评价
 
