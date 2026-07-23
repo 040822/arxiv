@@ -6,20 +6,22 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 import database
+from source.storage import connection as db_connection
+from source.reports import renderer as report_renderer
 
 
 class DatabaseTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.original_db_dir = database.DB_DIR
-        self.original_db_path = database.DB_PATH
-        database.DB_DIR = self.tmp.name
-        database.DB_PATH = os.path.join(self.tmp.name, "papers.db")
+        self.original_db_dir = db_connection.DB_DIR
+        self.original_db_path = db_connection.DB_PATH
+        db_connection.DB_DIR = self.tmp.name
+        db_connection.DB_PATH = os.path.join(self.tmp.name, "papers.db")
         database.init_db()
 
     def tearDown(self):
-        database.DB_DIR = self.original_db_dir
-        database.DB_PATH = self.original_db_path
+        db_connection.DB_DIR = self.original_db_dir
+        db_connection.DB_PATH = self.original_db_path
         self.tmp.cleanup()
 
     def add_paper(self, arxiv_id, title, abstract="abstract", published_date="2026-07-10", tags=None,
@@ -203,8 +205,8 @@ class ReportTrendTests(DatabaseTestCase):
         )
         database.update_recommendation_result(paper_id, 88, "reason", "hash-v1")
 
-        with patch("settings.get_personalization_config", return_value={"research_interests": "robotics"}), \
-             patch("settings.get_research_interest_hash", return_value="hash-v1"):
+        with patch.object(report_renderer, "get_personalization_config", return_value={"research_interests": "robotics"}), \
+             patch.object(report_renderer, "get_research_interest_hash", return_value="hash-v1"):
             content, _, _, _ = database.generate_report_content("2026-07-10")
 
         self.assertIn("近 7 个有数据日趋势", content)

@@ -12,6 +12,8 @@ from unittest.mock import patch
 
 from settings import build_chat_completion_kwargs, validate_prompt_template
 from source.settings import store as settings_store
+from source.storage import connection as db_connection
+from source.reports import renderer as report_renderer
 
 
 class FakeArgs(dict):
@@ -494,12 +496,12 @@ class TaskLogDatabaseTests(unittest.TestCase):
     def test_task_logs_include_ordered_pipeline_steps(self):
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                database.DB_DIR = tmp
-                database.DB_PATH = os.path.join(tmp, "papers.db")
+                db_connection.DB_DIR = tmp
+                db_connection.DB_PATH = os.path.join(tmp, "papers.db")
                 database.init_db()
 
                 log_id = database.start_task_log("daily_pipeline", "每日定时任务启动")
@@ -519,18 +521,18 @@ class TaskLogDatabaseTests(unittest.TestCase):
             self.assertEqual(logs[0]["steps"][0]["status"], "success")
             self.assertEqual(logs[0]["steps"][1]["status"], "pending")
         finally:
-            database.DB_DIR = original_dir
-            database.DB_PATH = original_path
+            db_connection.DB_DIR = original_dir
+            db_connection.DB_PATH = original_path
 
     def test_startup_reconciliation_interrupts_orphaned_task_runs(self):
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                database.DB_DIR = tmp
-                database.DB_PATH = os.path.join(tmp, "papers.db")
+                db_connection.DB_DIR = tmp
+                db_connection.DB_PATH = os.path.join(tmp, "papers.db")
                 database.init_db()
 
                 running_id = database.start_task_log("daily_pipeline", "每日定时任务启动")
@@ -552,18 +554,18 @@ class TaskLogDatabaseTests(unittest.TestCase):
             self.assertEqual(by_id[running_id]["steps"][1]["status"], "skipped")
             self.assertEqual(by_id[finished_id]["status"], "success")
         finally:
-            database.DB_DIR = original_dir
-            database.DB_PATH = original_path
+            db_connection.DB_DIR = original_dir
+            db_connection.DB_PATH = original_path
 
     def test_clearing_parent_logs_cascades_pipeline_steps(self):
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                database.DB_DIR = tmp
-                database.DB_PATH = os.path.join(tmp, "papers.db")
+                db_connection.DB_DIR = tmp
+                db_connection.DB_PATH = os.path.join(tmp, "papers.db")
                 database.init_db()
                 log_id = database.start_task_log("daily_pipeline", "AI 论文日报启动")
                 database.initialize_task_log_steps(log_id, [("fetch", "抓取论文")])
@@ -578,8 +580,8 @@ class TaskLogDatabaseTests(unittest.TestCase):
             self.assertEqual(deleted, 1)
             self.assertEqual(step_count, 0)
         finally:
-            database.DB_DIR = original_dir
-            database.DB_PATH = original_path
+            db_connection.DB_DIR = original_dir
+            db_connection.DB_PATH = original_path
 
 
 class DummyOpenAI:
@@ -2007,11 +2009,11 @@ class PromptAndReportSafetyTests(unittest.TestCase):
     def test_report_generation_escapes_database_content(self):
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            database.DB_DIR = tmp
-            database.DB_PATH = os.path.join(tmp, "papers.db")
+            db_connection.DB_DIR = tmp
+            db_connection.DB_PATH = os.path.join(tmp, "papers.db")
             database.init_db()
             paper_id = database.insert_paper({
                 "arxiv_id": "2601.00001",
@@ -2035,12 +2037,12 @@ class PromptAndReportSafetyTests(unittest.TestCase):
             })
             database.update_recommendation_result(paper_id, 95, "<i>rec</i>", "hash-v1")
 
-            with patch("settings.get_personalization_config", return_value={"research_interests": "机器人基础模型\nVLA"}), \
-                 patch("settings.get_research_interest_hash", return_value="hash-v1"):
+            with patch.object(report_renderer, "get_personalization_config", return_value={"research_interests": "机器人基础模型\nVLA"}), \
+                 patch.object(report_renderer, "get_research_interest_hash", return_value="hash-v1"):
                 content, _, _, _ = database.generate_report_content("2026-01-01")
 
-        database.DB_DIR = original_dir
-        database.DB_PATH = original_path
+        db_connection.DB_DIR = original_dir
+        db_connection.DB_PATH = original_path
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", content)
         self.assertIn("&lt;img src=x onerror=alert(1)&gt;", content)
         self.assertIn("&lt;b&gt;bad&lt;/b&gt;", content)
@@ -2053,12 +2055,12 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         import sqlite3
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            database.DB_DIR = tmp
-            database.DB_PATH = os.path.join(tmp, "papers.db")
-            conn = sqlite3.connect(database.DB_PATH)
+            db_connection.DB_DIR = tmp
+            db_connection.DB_PATH = os.path.join(tmp, "papers.db")
+            conn = sqlite3.connect(db_connection.DB_PATH)
             conn.execute("""
                 CREATE TABLE analysis (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2077,7 +2079,7 @@ class PromptAndReportSafetyTests(unittest.TestCase):
             conn.close()
 
             database.init_db()
-            conn = sqlite3.connect(database.DB_PATH)
+            conn = sqlite3.connect(db_connection.DB_PATH)
             rows = conn.execute(
                 "SELECT id, rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis ORDER BY id"
             ).fetchall()
@@ -2088,26 +2090,26 @@ class PromptAndReportSafetyTests(unittest.TestCase):
             conn.close()
 
             database.init_db()
-            conn = sqlite3.connect(database.DB_PATH)
+            conn = sqlite3.connect(db_connection.DB_PATH)
             rows = conn.execute(
                 "SELECT id, rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis ORDER BY id"
             ).fetchall()
             conn.close()
 
-        database.DB_DIR = original_dir
-        database.DB_PATH = original_path
+        db_connection.DB_DIR = original_dir
+        db_connection.DB_PATH = original_path
         self.assertEqual(rows, [(1, 4, 3, 1), (2, 5, 5, 1)])
 
     def test_rating_restore_overwrites_current_rating_when_legacy_exists(self):
         import sqlite3
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            database.DB_DIR = tmp
-            database.DB_PATH = os.path.join(tmp, "papers.db")
-            conn = sqlite3.connect(database.DB_PATH)
+            db_connection.DB_DIR = tmp
+            db_connection.DB_PATH = os.path.join(tmp, "papers.db")
+            conn = sqlite3.connect(db_connection.DB_PATH)
             conn.execute("""
                 CREATE TABLE analysis (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2126,7 +2128,7 @@ class PromptAndReportSafetyTests(unittest.TestCase):
             conn.close()
 
             database.init_db()
-            conn = sqlite3.connect(database.DB_PATH)
+            conn = sqlite3.connect(db_connection.DB_PATH)
             row = conn.execute(
                 "SELECT rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis WHERE paper_id = 1"
             ).fetchone()
@@ -2135,14 +2137,14 @@ class PromptAndReportSafetyTests(unittest.TestCase):
             conn.close()
 
             database.init_db()
-            conn = sqlite3.connect(database.DB_PATH)
+            conn = sqlite3.connect(db_connection.DB_PATH)
             row_after_second_init = conn.execute(
                 "SELECT rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis WHERE paper_id = 1"
             ).fetchone()
             conn.close()
 
-        database.DB_DIR = original_dir
-        database.DB_PATH = original_path
+        db_connection.DB_DIR = original_dir
+        db_connection.DB_PATH = original_path
         self.assertEqual(row, (4, 4, 1))
         self.assertEqual(row_after_second_init, (2, 4, 1))
 
@@ -2150,11 +2152,11 @@ class PromptAndReportSafetyTests(unittest.TestCase):
         import sqlite3
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            database.DB_DIR = tmp
-            database.DB_PATH = os.path.join(tmp, "papers.db")
+            db_connection.DB_DIR = tmp
+            db_connection.DB_PATH = os.path.join(tmp, "papers.db")
             database.init_db()
             paper_id = database.insert_paper({
                 "arxiv_id": "2601.00000",
@@ -2175,22 +2177,22 @@ class PromptAndReportSafetyTests(unittest.TestCase):
                 "value_comment": "评价",
                 "qa_analysis": "",
             })
-            conn = sqlite3.connect(database.DB_PATH)
+            conn = sqlite3.connect(db_connection.DB_PATH)
             row = conn.execute("SELECT rating, legacy_ai_rating FROM analysis WHERE paper_id = ?", (paper_id,)).fetchone()
             conn.close()
 
-        database.DB_DIR = original_dir
-        database.DB_PATH = original_path
+        db_connection.DB_DIR = original_dir
+        db_connection.DB_PATH = original_path
         self.assertEqual(row, (0, None))
 
     def test_manual_rating_only_record_is_still_pending_basic_analysis(self):
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            database.DB_DIR = tmp
-            database.DB_PATH = os.path.join(tmp, "papers.db")
+            db_connection.DB_DIR = tmp
+            db_connection.DB_PATH = os.path.join(tmp, "papers.db")
             database.init_db()
             paper_id = database.insert_paper({
                 "arxiv_id": "2601.00007",
@@ -2209,8 +2211,8 @@ class PromptAndReportSafetyTests(unittest.TestCase):
             pending_count = database.get_unanalyzed_count()
             analyzed_count = database.get_analyzed_count()
 
-        database.DB_DIR = original_dir
-        database.DB_PATH = original_path
+        db_connection.DB_DIR = original_dir
+        db_connection.DB_PATH = original_path
         self.assertEqual([p["arxiv_id"] for p in pending], ["2601.00007"])
         self.assertEqual(pending_count, 1)
         self.assertEqual(analyzed_count, 0)
@@ -2218,11 +2220,11 @@ class PromptAndReportSafetyTests(unittest.TestCase):
     def test_recommendation_columns_update_and_report_sorting(self):
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            database.DB_DIR = tmp
-            database.DB_PATH = os.path.join(tmp, "papers.db")
+            db_connection.DB_DIR = tmp
+            db_connection.DB_PATH = os.path.join(tmp, "papers.db")
             database.init_db()
             high_rating_id = database.insert_paper({
                 "arxiv_id": "2601.00001",
@@ -2267,12 +2269,12 @@ class PromptAndReportSafetyTests(unittest.TestCase):
             self.assertTrue(database.update_recommendation_result(high_rating_id, 20, "弱相关", "hash-v1"))
             self.assertTrue(database.update_recommendation_result(high_interest_id, 95, "强相关", "hash-v1"))
 
-            with patch("settings.get_personalization_config", return_value={"research_interests": "机器人基础模型\nVLA"}), \
-                 patch("settings.get_research_interest_hash", return_value="hash-v1"):
+            with patch.object(report_renderer, "get_personalization_config", return_value={"research_interests": "机器人基础模型\nVLA"}), \
+                 patch.object(report_renderer, "get_research_interest_hash", return_value="hash-v1"):
                 content, _, _, _ = database.generate_report_content("2026-01-01")
 
-        database.DB_DIR = original_dir
-        database.DB_PATH = original_path
+        db_connection.DB_DIR = original_dir
+        db_connection.DB_PATH = original_path
         self.assertIn("个性化推荐", content)
         self.assertIn("<strong>研究兴趣:</strong><br>机器人基础模型<br>VLA", content)
         self.assertIn("推荐 95/100", content)
@@ -2288,11 +2290,11 @@ class PromptAndReportSafetyTests(unittest.TestCase):
     def test_recommendation_candidates_require_existing_analysis(self):
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            database.DB_DIR = tmp
-            database.DB_PATH = os.path.join(tmp, "papers.db")
+            db_connection.DB_DIR = tmp
+            db_connection.DB_PATH = os.path.join(tmp, "papers.db")
             database.init_db()
             unanalyzed_id = database.insert_paper({
                 "arxiv_id": "2601.00003",
@@ -2329,19 +2331,19 @@ class PromptAndReportSafetyTests(unittest.TestCase):
 
             candidates = database.get_papers_for_recommendation(limit=10, date="2026-01-01", interest_hash="hash-v1")
 
-        database.DB_DIR = original_dir
-        database.DB_PATH = original_path
+        db_connection.DB_DIR = original_dir
+        db_connection.DB_PATH = original_path
         self.assertEqual([p["id"] for p in candidates], [analyzed_id])
         self.assertNotIn(unanalyzed_id, [p["id"] for p in candidates])
 
     def test_ai_usage_log_records_and_summarizes_tokens(self):
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            database.DB_DIR = tmp
-            database.DB_PATH = os.path.join(tmp, "papers.db")
+            db_connection.DB_DIR = tmp
+            db_connection.DB_PATH = os.path.join(tmp, "papers.db")
             database.init_db()
             database.record_ai_usage({
                 "task_key": "basic_analysis",
@@ -2370,8 +2372,8 @@ class PromptAndReportSafetyTests(unittest.TestCase):
             summary = database.get_ai_usage_summary(days=7)
             summary_by_model = database.get_ai_usage_summary(days=7, group_by="model")
 
-        database.DB_DIR = original_dir
-        database.DB_PATH = original_path
+        db_connection.DB_DIR = original_dir
+        db_connection.DB_PATH = original_path
 
         self.assertEqual(summary["items"][0]["task_key"], "basic_analysis")
         self.assertEqual(summary["items"][0]["total_tokens"], 120)
@@ -2393,11 +2395,11 @@ class PromptAndReportSafetyTests(unittest.TestCase):
     def test_paper_learning_tables_store_history_and_cascade_delete(self):
         import database
 
-        original_dir = database.DB_DIR
-        original_path = database.DB_PATH
+        original_dir = db_connection.DB_DIR
+        original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            database.DB_DIR = tmp
-            database.DB_PATH = os.path.join(tmp, "papers.db")
+            db_connection.DB_DIR = tmp
+            db_connection.DB_PATH = os.path.join(tmp, "papers.db")
             database.init_db()
             paper_id = database.insert_paper({
                 "arxiv_id": "2601.00001",
@@ -2436,8 +2438,8 @@ class PromptAndReportSafetyTests(unittest.TestCase):
             }
             conn.close()
 
-        database.DB_DIR = original_dir
-        database.DB_PATH = original_path
+        db_connection.DB_DIR = original_dir
+        db_connection.DB_PATH = original_path
 
         self.assertEqual([m["role"] for m in messages], ["user", "assistant"])
         self.assertEqual(len(session["questions"]), 2)
