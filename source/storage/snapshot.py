@@ -2,6 +2,7 @@
 
 import os
 import sqlite3
+from contextlib import closing
 
 
 def copy_sqlite_snapshot(source_path, snapshot_path):
@@ -12,17 +13,14 @@ def copy_sqlite_snapshot(source_path, snapshot_path):
     if snapshot_dir:
         os.makedirs(snapshot_dir, exist_ok=True)
 
-    source = sqlite3.connect(f"file:{source_path}?mode=ro", uri=True)
-    destination = sqlite3.connect(snapshot_path)
     try:
-        source.backup(destination)
+        with closing(
+            sqlite3.connect(f"file:{source_path}?mode=ro", uri=True)
+        ) as source:
+            with closing(sqlite3.connect(snapshot_path)) as destination:
+                source.backup(destination)
     except Exception:
-        destination.close()
-        source.close()
         if os.path.exists(snapshot_path):
             os.remove(snapshot_path)
         raise
-    else:
-        destination.close()
-        source.close()
     return snapshot_path

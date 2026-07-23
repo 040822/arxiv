@@ -221,7 +221,7 @@
 
 ## 四、代码质量与架构
 > **修复状态更新（2026-07-24）：** Q1–Q9 已完成并通过
-> 171 项测试；对应实施记录见
+> 173 项测试；对应实施记录见
 > [`refactor-4.1-splitplan.md`](refactor-4.1-splitplan.md) 与
 > [`refactor-4.2-plan.md`](refactor-4.2-plan.md)。
 

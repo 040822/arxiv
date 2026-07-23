@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import time
 from datetime import datetime
 
@@ -59,6 +58,7 @@ from source.storage import (
     get_all_dates,
     get_all_tags,
     get_analyzed_count,
+    get_average_rating,
     get_paper_count,
     get_unanalyzed_count,
 )
@@ -404,20 +404,12 @@ def api_db_info():
     # 计算所有已分析论文的平均评级
     avg_rating = None
     if analyzed > 0:
-        conn = None
         try:
-            import sqlite3
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("SELECT AVG(rating) FROM analysis")
-            row = cursor.fetchone()
-            if row and row[0] is not None:
-                avg_rating = f"{row[0]:.1f}"
-        except:
-            pass
-        finally:
-            if conn:
-                conn.close()
+            value = get_average_rating()
+            if value is not None:
+                avg_rating = f"{value:.1f}"
+        except Exception as exc:
+            logger.warning("Failed to calculate average analysis rating: %s", exc)
 
     return jsonify({
         "total_papers": total,

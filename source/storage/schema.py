@@ -16,7 +16,7 @@ def apply_baseline_schema(conn):
     功能：
     1. 创建核心业务表、学习记录表和用量日志表（如果不存在）
     2. 创建索引优化查询性能
-    3. 执行数据库迁移（添加新字段）
+    3. 将未登记版本的历史数据库归一化到 v1 基线
     
     注意：此函数在应用启动时调用，可重复调用不会破坏已有数据。
     """
@@ -74,9 +74,9 @@ def apply_baseline_schema(conn):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_paper_id ON analysis(paper_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_rating ON analysis(rating)")
 
-    # ==================== 数据库迁移 ====================
-    # 使用 PRAGMA table_info 检查列是否存在，实现安全的字段添加
-    # 这是项目的迁移模式，新字段都通过这种方式添加
+    # ==================== v1 历史 schema 归一化 ====================
+    # 仅用于把没有 schema_migrations 记录的旧数据库补齐到 v1。
+    # 后续 schema 变更必须追加到 migrations.py，不再加入此处。
 
     # 迁移：添加 qa_analysis 字段（Q&A 深度阅读）
     cursor.execute("PRAGMA table_info(analysis)")

@@ -25,7 +25,7 @@
 | `settings.py` | 9 | `source.settings` 兼容 shim | 低 |
 | `source/settings/*` | 8 个模块 | 值转换、默认值、归一化、思考协议、store、供应商、Prompt、运行时配置 | 中 |
 | `database.py` | 8 | `source.storage` / `source.reports` 兼容 shim | 低 |
-| `source/storage/*` | 7 个模块 | SQLite schema、论文、分析、日志、报告与学习记录 | 中 |
+| `source/storage/*` | 10 个模块 | SQLite 托管连接、顺序迁移/快照、论文、分析、日志、报告与学习记录 | 中 |
 | `fetcher.py` | ~343 | arXiv 论文抓取 | 中 |
 | `analyzer.py` | ~204 | AI 分析（基础/完整） | 中 |
 | `pdf_reader.py` | ~107 | PDF 下载与文本提取 | 低 |

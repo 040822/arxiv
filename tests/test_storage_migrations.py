@@ -4,7 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from source.storage import connection, migrations, schema
 from source.storage.snapshot import copy_sqlite_snapshot
@@ -32,6 +32,24 @@ class SQLiteSnapshotTests(unittest.TestCase):
                 self.assertEqual(snapshot.execute("SELECT value FROM sample").fetchone()[0], "saved")
             finally:
                 snapshot.close()
+
+    def test_snapshot_destination_open_failure_closes_source_and_removes_partial_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = os.path.join(tmp, "source.db")
+            snapshot_path = os.path.join(tmp, "snapshot.db")
+            open(source_path, "wb").close()
+            open(snapshot_path, "wb").close()
+            source = Mock()
+
+            with patch(
+                "source.storage.snapshot.sqlite3.connect",
+                side_effect=[source, OSError("destination unavailable")],
+            ):
+                with self.assertRaisesRegex(OSError, "destination unavailable"):
+                    copy_sqlite_snapshot(source_path, snapshot_path)
+
+            source.close.assert_called_once_with()
+            self.assertFalse(os.path.exists(snapshot_path))
 
 
 class SchemaMigrationTests(unittest.TestCase):
@@ -187,6 +205,33 @@ class SchemaMigrationTests(unittest.TestCase):
         self.assertEqual(rows, [
             (canonical_id, '["VLA"]', "first summary", 4, "filled comment", "deep read")
         ])
+
+
+    def test_average_rating_query_is_exposed_by_storage(self):
+        database.init_db()
+        ratings = (2, 4)
+        for index, rating in enumerate(ratings):
+            paper_id = database.insert_paper({
+                "arxiv_id": f"2607.1000{index}",
+                "title": "title",
+                "authors": [],
+                "abstract": "abstract",
+                "categories": [],
+                "primary_category": "cs.AI",
+                "url": "",
+                "pdf_url": "",
+                "published_date": "2026-07-24",
+                "updated_date": "2026-07-24",
+            })
+            database.insert_analysis(paper_id, {
+                "tags": [],
+                "summary_cn": "",
+                "summary_en": "",
+                "rating": rating,
+                "value_comment": "",
+            })
+
+        self.assertEqual(database.get_average_rating(), 3.0)
 
 
     def test_concurrent_analysis_insert_creates_one_record_without_errors(self):

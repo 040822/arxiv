@@ -34,6 +34,7 @@ from .papers import (
 )
 from .analysis import (
     get_analysis_by_paper_id,
+    get_average_rating,
     get_papers_for_recommendation,
     insert_analysis,
     update_analysis,
@@ -100,6 +101,7 @@ __all__ = [
     "get_all_dates",
     "get_all_tags",
     "get_analysis_by_paper_id",
+    "get_average_rating",
     "get_analyzed_count",
     "get_connection",
     "get_daily_stats",

@@ -89,6 +89,15 @@ def get_analysis_by_paper_id(paper_id):
     return None
 
 
+def get_average_rating():
+    """Return the average rating across all analysis rows, or None when empty."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT AVG(rating) AS average FROM analysis").fetchone()
+    if not row or row["average"] is None:
+        return None
+    return float(row["average"])
+
+
 def update_analysis(paper_id, data):
     """更新或插入论文的分析结果。
     
