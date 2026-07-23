@@ -31,7 +31,6 @@ def start_task_log(task_name, message=""):
             "INSERT INTO task_logs (task_name, status, message, started_at) VALUES (?, 'running', ?, ?)",
             (task_name, message, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         )
-        conn.commit()
         log_id = cursor.lastrowid
 
     return log_id
@@ -62,7 +61,6 @@ def finish_task_log(log_id, status, message="", detail=""):
             "UPDATE task_logs SET status = ?, message = ?, detail = ?, finished_at = ?, duration_sec = ? WHERE id = ?",
             (status, message, detail, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), round(duration, 1), log_id)
         )
-        conn.commit()
 
 
 
@@ -85,7 +83,6 @@ def initialize_task_log_steps(log_id, steps):
                 for position, (step_key, step_name) in enumerate(steps, start=1)
             ],
         )
-        conn.commit()
 
 
 
@@ -134,7 +131,6 @@ def set_task_log_step_status(log_id, step_key, status, message="", detail=""):
                 """,
                 (status, message, detail, started_at, now, max(0, duration), log_id, step_key),
             )
-        conn.commit()
 
     return True
 
@@ -282,7 +278,6 @@ def interrupt_running_task_logs(reason="服务重启，任务已中断"):
                 """,
                 (now, now, row["id"]),
             )
-        conn.commit()
 
     return len(running_logs)
 
@@ -305,7 +300,6 @@ def clear_task_logs(keep_days=30):
             (f"-{keep_days} days",)
         )
         deleted = cursor.rowcount
-        conn.commit()
 
     return deleted
 
@@ -340,7 +334,6 @@ def record_ai_usage(usage):
             _safe_int(usage.get("cached_tokens")),
             _safe_int(usage.get("cache_miss_tokens")),
         ))
-        conn.commit()
 
 
 

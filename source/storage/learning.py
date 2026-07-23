@@ -27,7 +27,6 @@ def add_to_reading_list(paper_id):
         cursor = conn.cursor()
         try:
             cursor.execute("INSERT INTO reading_list (paper_id) VALUES (?)", (paper_id,))
-            conn.commit()
             return True
         except Exception:
             return False
@@ -46,7 +45,6 @@ def remove_from_reading_list(paper_id):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM reading_list WHERE paper_id = ?", (paper_id,))
         affected = cursor.rowcount
-        conn.commit()
 
     return affected > 0
 
@@ -86,7 +84,6 @@ def mark_as_read(paper_id):
             (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), paper_id)
         )
         affected = cursor.rowcount
-        conn.commit()
 
     return affected > 0
 
@@ -109,7 +106,6 @@ def mark_as_unread(paper_id):
             (paper_id,)
         )
         affected = cursor.rowcount
-        conn.commit()
 
     return affected > 0
 
@@ -197,7 +193,6 @@ def add_paper_chat_message(paper_id, role, content):
             INSERT INTO paper_chat_messages (paper_id, role, content)
             VALUES (?, ?, ?)
         """, (paper_id, str(role or ""), str(content or "")))
-        conn.commit()
         message_id = cursor.lastrowid
 
     return message_id
@@ -232,7 +227,6 @@ def create_paper_quiz_session(paper_id, mode):
             INSERT INTO paper_quiz_sessions (paper_id, mode, status, updated_at)
             VALUES (?, ?, 'active', CURRENT_TIMESTAMP)
         """, (paper_id, mode))
-        conn.commit()
         session_id = cursor.lastrowid
 
     return session_id
@@ -271,7 +265,6 @@ def add_paper_quiz_questions(session_id, questions):
             """, (session_id, idx, text, expected))
             saved.append(cursor.lastrowid)
         cursor.execute("UPDATE paper_quiz_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (session_id,))
-        conn.commit()
 
     return saved
 
@@ -285,7 +278,6 @@ def add_paper_quiz_question(session_id, position, question, expected_points=""):
             VALUES (?, ?, ?, ?)
         """, (session_id, int(position or 1), str(question or ""), str(expected_points or "")))
         cursor.execute("UPDATE paper_quiz_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (session_id,))
-        conn.commit()
         question_id = cursor.lastrowid
 
     return question_id
@@ -307,7 +299,6 @@ def add_paper_quiz_attempt(question_id, answer_text, score, feedback):
                 SELECT session_id FROM paper_quiz_questions WHERE id = ?
             )
         """, (question_id,))
-        conn.commit()
         attempt_id = cursor.lastrowid
 
     return attempt_id

@@ -62,7 +62,6 @@ def insert_analysis(paper_id, analysis_data):
         if cursor.rowcount == 0:
             logger.debug(f"Analysis already exists for paper_id={paper_id}, skipping.")
             return None
-        conn.commit()
         analysis_id = cursor.lastrowid
 
     return analysis_id
@@ -153,7 +152,6 @@ def update_analysis(paper_id, data):
                 params,
             )
 
-        conn.commit()
 
     return True
 
@@ -234,6 +232,5 @@ def update_recommendation_result(paper_id, score, reason, interest_hash):
             paper_id,
         ))
         updated = cursor.rowcount > 0
-        conn.commit()
 
     return updated

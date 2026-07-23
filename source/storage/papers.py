@@ -105,7 +105,6 @@ def insert_paper(paper_data):
                 paper_data["published_date"],
                 paper_data["updated_date"],
             ))
-            conn.commit()
             paper_id = cursor.lastrowid
 
             return paper_id
@@ -643,7 +642,6 @@ def hide_paper(arxiv_id):
         cursor = conn.cursor()
         cursor.execute("UPDATE papers SET hidden = 1 WHERE arxiv_id = ?", (arxiv_id,))
         affected = cursor.rowcount
-        conn.commit()
 
     return affected > 0
 
@@ -661,7 +659,6 @@ def unhide_paper(arxiv_id):
         cursor = conn.cursor()
         cursor.execute("UPDATE papers SET hidden = 0 WHERE arxiv_id = ?", (arxiv_id,))
         affected = cursor.rowcount
-        conn.commit()
 
     return affected > 0
 
@@ -681,7 +678,6 @@ def delete_paper(arxiv_id):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM papers WHERE arxiv_id = ?", (arxiv_id,))
         affected = cursor.rowcount
-        conn.commit()
 
     return affected > 0
 
@@ -703,7 +699,6 @@ def batch_delete_papers(arxiv_ids):
         placeholders = ",".join(["?"] * len(arxiv_ids))
         cursor.execute(f"DELETE FROM papers WHERE arxiv_id IN ({placeholders})", arxiv_ids)
         affected = cursor.rowcount
-        conn.commit()
 
     return affected
 
@@ -725,7 +720,6 @@ def batch_hide_papers(arxiv_ids):
         placeholders = ",".join(["?"] * len(arxiv_ids))
         cursor.execute(f"UPDATE papers SET hidden = 1 WHERE arxiv_id IN ({placeholders})", arxiv_ids)
         affected = cursor.rowcount
-        conn.commit()
 
     return affected
 

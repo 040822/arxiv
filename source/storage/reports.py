@@ -185,7 +185,6 @@ def save_report(report_date, content, paper_count, analyzed_count, avg_rating):
                 avg_rating=excluded.avg_rating,
                 created_at=CURRENT_TIMESTAMP
         """, (report_date, content, paper_count, analyzed_count, avg_rating))
-        conn.commit()
 
 
 
