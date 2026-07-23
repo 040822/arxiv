@@ -1,0 +1,518 @@
+[
+  {
+    "rule": "/",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/about",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/admin/password",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "rule": "/api/admin/password",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/analyze",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/auth/login",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/auth/logout",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/auth/status",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/backup/webdav/run",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/db/info",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/detect_thinking",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/email-report/test",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/fetch",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/generate",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/network/test-llm",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/analysis",
+    "methods": [
+      "PUT"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/chat/messages",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/chat/messages",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/hide",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/quiz/questions/<int:question_id>/answer",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/quiz/sessions",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/quiz/sessions/<int:session_id>",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/reanalyze",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/socratic/sessions",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/socratic/sessions/<int:session_id>/reply",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/todo",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/todo",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/todo/read",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/todo/status",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/todo/unread",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/<arxiv_id>/unhide",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/add",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/papers",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/papers/batch-analyze",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/papers/batch-delete",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/papers/batch-hide",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/progress/<task_id>",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/prompts",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/prompts",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/providers",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/providers",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/providers/<key>",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "rule": "/api/providers/<key>",
+    "methods": [
+      "PUT"
+    ]
+  },
+  {
+    "rule": "/api/providers/<key>/activate",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/providers/models",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/providers/presets",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/reading-list",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/recommendations/recalculate",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/run",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/settings/ai-tasks",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/settings/ai-tasks",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/settings/ai-usage",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/settings/concurrency",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/settings/email-report",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/settings/email-report",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/settings/fetch",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/settings/fetch",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/settings/per_page",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/settings/personalization",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/settings/personalization",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/settings/proxy",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/settings/proxy",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/settings/schedule",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/settings/schedule",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/settings/webdav-backup",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/settings/webdav-backup",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/stats",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/tags",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/tasks/clear",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/tasks/logs",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/tasks/scheduled",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/tasks/stats",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/test_connection",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/test_proxy",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/browse",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/login",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/paper/<arxiv_id>",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/paper/<arxiv_id>/chat",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/reading-list",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/reports",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/reports/<report_date>",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/search",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/settings",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/tasks",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/vision",
+    "methods": [
+      "GET"
+    ]
+  }
+]

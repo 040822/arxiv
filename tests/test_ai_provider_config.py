@@ -15,6 +15,14 @@ from source.settings import store as settings_store
 from source.storage import connection as db_connection
 pipeline_orchestrator = None
 pipeline_scheduler = None
+web_application = None
+web_auth = None
+web_learning_api = None
+web_pages = None
+web_papers_api = None
+web_providers_api = None
+web_settings_api = None
+web_tasks_api = None
 from source.reports import renderer as report_renderer
 
 
@@ -623,6 +631,21 @@ def install_import_stubs():
     os.environ.setdefault("FLASK_SECRET_KEY", "test-secret-key")
     flask_mod = types.ModuleType("flask")
 
+    class FakeBlueprint:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def route(self, *args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+
+        def before_app_request(self, func):
+            return func
+
+        def app_context_processor(self, func):
+            return func
+
     class FakeFlask:
         def __init__(self, *args, **kwargs):
             self.secret_key = None
@@ -638,6 +661,9 @@ def install_import_stubs():
 
         def context_processor(self, func):
             return func
+
+        def register_blueprint(self, blueprint):
+            pass
 
         def run(self, *args, **kwargs):
             pass
@@ -659,6 +685,8 @@ def install_import_stubs():
             super().clear()
 
     flask_mod.Flask = FakeFlask
+    flask_mod.Blueprint = FakeBlueprint
+    flask_mod.current_app = types.SimpleNamespace(secret_key="test-secret-key")
     flask_mod.render_template = lambda *args, **kwargs: ""
     flask_mod.request = types.SimpleNamespace(args={}, get_json=lambda: {})
     flask_mod.jsonify = jsonify
@@ -725,6 +753,24 @@ class ProviderEndpointTests(unittest.TestCase):
         global pipeline_orchestrator, pipeline_scheduler
         pipeline_orchestrator = importlib.import_module("source.pipeline.orchestrator")
         pipeline_scheduler = importlib.import_module("source.pipeline.scheduler")
+        global web_application, web_auth, web_learning_api, web_pages
+        global web_papers_api, web_providers_api, web_settings_api, web_tasks_api
+        web_application = importlib.import_module("source.web.application")
+        web_auth = importlib.import_module("source.web.auth")
+        web_learning_api = importlib.import_module("source.web.learning_api")
+        web_pages = importlib.import_module("source.web.pages")
+        web_papers_api = importlib.import_module("source.web.papers_api")
+        web_providers_api = importlib.import_module("source.web.providers_api")
+        web_settings_api = importlib.import_module("source.web.settings_api")
+        web_tasks_api = importlib.import_module("source.web.tasks_api")
+        cls.web_application = web_application
+        cls.web_auth = web_auth
+        cls.web_learning_api = web_learning_api
+        cls.web_pages = web_pages
+        cls.web_papers_api = web_papers_api
+        cls.web_providers_api = web_providers_api
+        cls.web_settings_api = web_settings_api
+        cls.web_tasks_api = web_tasks_api
         cls.app_module = app_module
 
     def tearDown(self):
@@ -736,8 +782,8 @@ class ProviderEndpointTests(unittest.TestCase):
         DummyHttpxClient.last_kwargs = None
 
     def test_provider_models_endpoint_returns_sorted_models(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest({
+        web_providers_api = self.web_providers_api
+        web_providers_api.request = FakeRequest({
             "provider_key": "demo",
             "api_key": "sk-test",
             "base_url": "https://api.example.com/v1",
@@ -746,16 +792,16 @@ class ProviderEndpointTests(unittest.TestCase):
             data=[types.SimpleNamespace(id="model-b"), {"id": "model-a"}]
         )
 
-        with patch.object(app_module, "update_provider") as update_provider:
-            result = app_module.api_provider_models()
+        with patch.object(web_providers_api, "update_provider") as update_provider:
+            result = web_providers_api.api_provider_models()
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["models"], ["model-a", "model-b"])
         update_provider.assert_called_once_with("demo", {"available_models": ["model-a", "model-b"]})
 
     def test_provider_models_uses_shared_openai_client(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest({
+        web_providers_api = self.web_providers_api
+        web_providers_api.request = FakeRequest({
             "provider_key": "demo",
             "api_key": "sk-test",
             "base_url": "https://api.example.com/v1",
@@ -764,30 +810,30 @@ class ProviderEndpointTests(unittest.TestCase):
             models=types.SimpleNamespace(list=lambda: types.SimpleNamespace(data=[{"id": "model-a"}]))
         )
 
-        with patch.object(app_module, "get_openai_client", return_value=fake_client) as get_client, \
-                patch.object(app_module, "update_provider"):
-            result = app_module.api_provider_models()
+        with patch.object(web_providers_api, "get_openai_client", return_value=fake_client) as get_client, \
+                patch.object(web_providers_api, "update_provider"):
+            result = web_providers_api.api_provider_models()
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(get_client.call_args.args[0]["api_key"], "sk-test")
         self.assertEqual(get_client.call_args.args[0]["base_url"], "https://api.example.com/v1")
 
     def test_provider_models_endpoint_reports_fetch_errors(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest({
+        web_providers_api = self.web_providers_api
+        web_providers_api.request = FakeRequest({
             "api_key": "sk-test",
             "base_url": "https://api.example.com/v1",
         })
         DummyOpenAI.models_error = RuntimeError("boom")
 
-        result, status = app_module.api_provider_models()
+        result, status = web_providers_api.api_provider_models()
 
         self.assertEqual(status, 500)
         self.assertEqual(result["status"], "error")
         self.assertIn("boom", result["message"])
 
     def test_detect_thinking_uses_provider_specific_request_and_saves_result(self):
-        app_module = self.app_module
+        web_providers_api = self.web_providers_api
         message = types.SimpleNamespace(content="2", reasoning_content="thinking")
         choice = types.SimpleNamespace(message=message)
         DummyOpenAI.chat_response = types.SimpleNamespace(
@@ -804,10 +850,10 @@ class ProviderEndpointTests(unittest.TestCase):
             "thinking_effort": "high",
         }
 
-        with patch.object(app_module, "get_ai_config", return_value=cfg), \
-             patch.object(app_module, "load_settings", return_value={"active_provider": "deepseek"}), \
-             patch.object(app_module, "update_provider") as update_provider:
-            result = app_module.api_detect_thinking()
+        with patch.object(web_providers_api, "get_ai_config", return_value=cfg), \
+             patch.object(web_providers_api, "load_settings", return_value={"active_provider": "deepseek"}), \
+             patch.object(web_providers_api, "update_provider") as update_provider:
+            result = web_providers_api.api_detect_thinking()
 
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["is_thinking"])
@@ -853,7 +899,7 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertFalse(DummyHttpxClient.last_kwargs["trust_env"])
 
     def test_network_llm_test_uses_basic_analysis_route(self):
-        app_module = self.app_module
+        web_providers_api = self.web_providers_api
         message = types.SimpleNamespace(content="ok")
         fake_client = types.SimpleNamespace(
             chat=types.SimpleNamespace(
@@ -873,9 +919,9 @@ class ProviderEndpointTests(unittest.TestCase):
             "max_tokens": 100,
         }
 
-        with patch.object(app_module, "get_ai_task_config", return_value=cfg), \
-                patch.object(app_module, "get_openai_client", return_value=fake_client) as get_client:
-            result = app_module.api_network_test_llm()
+        with patch.object(web_providers_api, "get_ai_task_config", return_value=cfg), \
+                patch.object(web_providers_api, "get_openai_client", return_value=fake_client) as get_client:
+            result = web_providers_api.api_network_test_llm()
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["provider_key"], "deepseek")
@@ -884,8 +930,8 @@ class ProviderEndpointTests(unittest.TestCase):
         get_client.assert_called_once_with(cfg)
 
     def test_provider_list_does_not_return_plain_api_key(self):
-        app_module = self.app_module
-        with patch.object(app_module, "load_settings", return_value={
+        web_providers_api = self.web_providers_api
+        with patch.object(web_providers_api, "load_settings", return_value={
             "active_provider": "demo",
             "providers": {
                 "demo": {
@@ -896,118 +942,118 @@ class ProviderEndpointTests(unittest.TestCase):
                 }
             },
         }):
-            result = app_module.api_list_providers()
+            result = web_providers_api.api_list_providers()
 
         provider = result["providers"]["demo"]
         self.assertNotIn("api_key", provider)
         self.assertEqual(provider["api_key_masked"], "sk-s****alue")
 
     def test_auth_blocks_protected_api_when_not_logged_in(self):
-        app_module = self.app_module
-        app_module.session.clear()
-        app_module.request = FakeRequest(
+        web_auth = self.web_auth
+        web_auth.session.clear()
+        web_auth.request = FakeRequest(
             {},
             endpoint="api_save_concurrency",
             method="POST",
             path="/api/settings/concurrency",
         )
 
-        with patch.object(app_module, "has_admin_password", return_value=True):
-            result, status = app_module.require_auth_for_protected_routes()
+        with patch.object(web_auth, "has_admin_password", return_value=True):
+            result, status = web_auth.require_auth_for_protected_routes()
 
         self.assertEqual(status, 401)
         self.assertTrue(result["auth_required"])
 
     def test_auth_login_sets_permanent_session_and_token(self):
-        app_module = self.app_module
-        app_module.session.clear()
-        app_module.request = FakeRequest({"password": "secret"})
+        web_auth = self.web_auth
+        web_auth.session.clear()
+        web_auth.request = FakeRequest({"password": "secret"})
 
-        with patch.object(app_module, "verify_admin_password", return_value=True), \
-             patch.object(app_module, "get_admin_password", return_value="hash-v1"):
-            result = app_module.api_auth_login()
+        with patch.object(web_auth, "verify_admin_password", return_value=True), \
+             patch.object(web_auth, "get_admin_password", return_value="hash-v1"):
+            result = web_auth.api_auth_login()
 
         self.assertEqual(result["status"], "ok")
-        self.assertTrue(app_module.session.permanent)
-        self.assertTrue(app_module.session["admin_authenticated"])
+        self.assertTrue(web_auth.session.permanent)
+        self.assertTrue(web_auth.session["admin_authenticated"])
         self.assertEqual(
-            app_module.session["admin_auth_token"],
-            app_module._admin_auth_token("hash-v1"),
+            web_auth.session["admin_auth_token"],
+            web_auth._admin_auth_token("hash-v1"),
         )
 
     def test_auth_rejects_legacy_session_without_password_token(self):
-        app_module = self.app_module
-        app_module.session.clear()
-        app_module.session["admin_authenticated"] = True
+        web_auth = self.web_auth
+        web_auth.session.clear()
+        web_auth.session["admin_authenticated"] = True
 
-        with patch.object(app_module, "has_admin_password", return_value=True), \
-             patch.object(app_module, "get_admin_password", return_value="hash-v1"):
-            self.assertFalse(app_module.is_authenticated())
+        with patch.object(web_auth, "has_admin_password", return_value=True), \
+             patch.object(web_auth, "get_admin_password", return_value="hash-v1"):
+            self.assertFalse(web_auth.is_authenticated())
 
     def test_auth_rejects_session_after_password_hash_changes(self):
-        app_module = self.app_module
-        app_module.session.clear()
-        app_module.session["admin_authenticated"] = True
-        app_module.session["admin_auth_token"] = app_module._admin_auth_token("hash-v1")
+        web_auth = self.web_auth
+        web_auth.session.clear()
+        web_auth.session["admin_authenticated"] = True
+        web_auth.session["admin_auth_token"] = web_auth._admin_auth_token("hash-v1")
 
-        with patch.object(app_module, "has_admin_password", return_value=True), \
-             patch.object(app_module, "get_admin_password", return_value="hash-v2"):
-            self.assertFalse(app_module.is_authenticated())
+        with patch.object(web_auth, "has_admin_password", return_value=True), \
+             patch.object(web_auth, "get_admin_password", return_value="hash-v2"):
+            self.assertFalse(web_auth.is_authenticated())
 
     def test_set_admin_password_refreshes_current_session_token(self):
-        app_module = self.app_module
-        app_module.session.clear()
-        app_module.session.permanent = True
-        app_module.session["admin_authenticated"] = True
-        app_module.session["admin_auth_token"] = app_module._admin_auth_token("old-hash")
-        app_module.request = FakeRequest({
+        web_auth = self.web_auth
+        web_auth.session.clear()
+        web_auth.session.permanent = True
+        web_auth.session["admin_authenticated"] = True
+        web_auth.session["admin_auth_token"] = web_auth._admin_auth_token("old-hash")
+        web_auth.request = FakeRequest({
             "current_password": "old-secret",
             "new_password": "new-secret",
         })
 
-        with patch.object(app_module, "has_admin_password", return_value=True), \
-             patch.object(app_module, "verify_admin_password", return_value=True), \
-             patch.object(app_module, "set_admin_password") as set_password, \
-             patch.object(app_module, "get_admin_password", return_value="new-hash"):
-            result = app_module.api_set_admin_password()
+        with patch.object(web_auth, "has_admin_password", return_value=True), \
+             patch.object(web_auth, "verify_admin_password", return_value=True), \
+             patch.object(web_auth, "set_admin_password") as set_password, \
+             patch.object(web_auth, "get_admin_password", return_value="new-hash"):
+            result = web_auth.api_set_admin_password()
 
         self.assertEqual(result["status"], "ok")
         set_password.assert_called_once_with("new-secret")
-        self.assertTrue(app_module.session.permanent)
-        self.assertTrue(app_module.session["admin_authenticated"])
+        self.assertTrue(web_auth.session.permanent)
+        self.assertTrue(web_auth.session["admin_authenticated"])
         self.assertEqual(
-            app_module.session["admin_auth_token"],
-            app_module._admin_auth_token("new-hash"),
+            web_auth.session["admin_auth_token"],
+            web_auth._admin_auth_token("new-hash"),
         )
 
     def test_todo_add_remove_are_public_even_when_password_enabled(self):
-        app_module = self.app_module
-        app_module.session.clear()
+        web_auth = self.web_auth
+        web_auth.session.clear()
 
         for endpoint, method in (("api_add_todo", "POST"), ("api_remove_todo", "DELETE")):
             with self.subTest(endpoint=endpoint):
-                app_module.request = FakeRequest(
+                web_auth.request = FakeRequest(
                     {},
                     endpoint=endpoint,
                     method=method,
                     path="/api/paper/2601.00001/todo",
                 )
-                with patch.object(app_module, "has_admin_password", return_value=True):
-                    self.assertIsNone(app_module.require_auth_for_protected_routes())
+                with patch.object(web_auth, "has_admin_password", return_value=True):
+                    self.assertIsNone(web_auth.require_auth_for_protected_routes())
 
     def test_promo_pages_are_public_even_when_password_enabled(self):
-        app_module = self.app_module
-        app_module.session.clear()
+        web_auth = self.web_auth
+        web_auth.session.clear()
 
         for endpoint, path in (("about_page", "/about"), ("vision_page", "/vision")):
             with self.subTest(endpoint=endpoint):
-                app_module.request = FakeRequest(
+                web_auth.request = FakeRequest(
                     endpoint=endpoint,
                     method="GET",
                     path=path,
                 )
-                with patch.object(app_module, "has_admin_password", return_value=True):
-                    self.assertIsNone(app_module.require_auth_for_protected_routes())
+                with patch.object(web_auth, "has_admin_password", return_value=True):
+                    self.assertIsNone(web_auth.require_auth_for_protected_routes())
 
     def test_promo_page_routes_render_their_public_templates(self):
         app_module = self.app_module
@@ -1017,75 +1063,75 @@ class ProviderEndpointTests(unittest.TestCase):
             ("vision_page", "vision.html"),
         ):
             with self.subTest(view_name=view_name), \
-                 patch.object(app_module, "render_template", return_value=template_name) as render:
-                result = getattr(app_module, view_name)()
+                 patch.object(web_pages, "render_template", return_value=template_name) as render:
+                result = getattr(web_pages, view_name)()
 
                 self.assertEqual(result, template_name)
                 render.assert_called_once_with(template_name)
 
     def test_todo_read_status_changes_still_require_login(self):
-        app_module = self.app_module
-        app_module.session.clear()
-        app_module.request = FakeRequest(
+        web_auth = self.web_auth
+        web_auth.session.clear()
+        web_auth.request = FakeRequest(
             {},
             endpoint="api_mark_read",
             method="POST",
             path="/api/paper/2601.00001/todo/read",
         )
 
-        with patch.object(app_module, "has_admin_password", return_value=True):
-            result, status = app_module.require_auth_for_protected_routes()
+        with patch.object(web_auth, "has_admin_password", return_value=True):
+            result, status = web_auth.require_auth_for_protected_routes()
 
         self.assertEqual(status, 401)
         self.assertTrue(result["auth_required"])
 
     def test_learning_write_api_requires_login_when_password_enabled(self):
-        app_module = self.app_module
-        app_module.session.clear()
-        app_module.request = FakeRequest(
+        web_auth = self.web_auth
+        web_auth.session.clear()
+        web_auth.request = FakeRequest(
             {"message": "请解释这篇论文"},
             endpoint="api_paper_chat_send",
             method="POST",
             path="/api/paper/2601.00001/chat/messages",
         )
 
-        with patch.object(app_module, "has_admin_password", return_value=True):
-            result, status = app_module.require_auth_for_protected_routes()
+        with patch.object(web_auth, "has_admin_password", return_value=True):
+            result, status = web_auth.require_auth_for_protected_routes()
 
         self.assertEqual(status, 401)
         self.assertTrue(result["auth_required"])
 
     def test_clear_admin_password_requires_current_password(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest({"current_password": "wrong"})
+        web_auth = self.web_auth
+        web_auth.request = FakeRequest({"current_password": "wrong"})
 
-        with patch.object(app_module, "has_admin_password", return_value=True), \
-             patch.object(app_module, "verify_admin_password", return_value=False), \
-             patch.object(app_module, "set_admin_password") as set_password:
-            result, status = app_module.api_clear_admin_password()
+        with patch.object(web_auth, "has_admin_password", return_value=True), \
+             patch.object(web_auth, "verify_admin_password", return_value=False), \
+             patch.object(web_auth, "set_admin_password") as set_password:
+            result, status = web_auth.api_clear_admin_password()
 
         self.assertEqual(status, 403)
         self.assertEqual(result["status"], "error")
         set_password.assert_not_called()
 
     def test_batch_analyze_uses_selected_papers(self):
-        app_module = self.app_module
+        web_papers_api = self.web_papers_api
         selected = [
             {"id": 1, "arxiv_id": "2601.00001", "title": "A", "authors": [], "abstract": ""},
             {"id": 2, "arxiv_id": "2601.00002", "title": "B", "authors": [], "abstract": ""},
         ]
-        app_module.request = FakeRequest({"arxiv_ids": ["2601.00001", "2601.00002"]})
+        web_papers_api.request = FakeRequest({"arxiv_ids": ["2601.00001", "2601.00002"]})
 
-        with patch("database.get_unanalyzed_papers_by_ids", return_value=selected), \
-             patch.object(app_module, "get_concurrency", return_value=3), \
-             patch.object(app_module, "analyze_papers", return_value=2) as analyze_papers:
-            result = app_module.api_batch_analyze_papers()
+        with patch.object(web_papers_api, "get_unanalyzed_papers_by_ids", return_value=selected), \
+             patch.object(web_papers_api, "get_concurrency", return_value=3), \
+             patch.object(web_papers_api, "analyze_papers", return_value=2) as analyze_papers:
+            result = web_papers_api.api_batch_analyze_papers()
 
         self.assertEqual(result["status"], "ok")
         analyze_papers.assert_called_once_with(selected, concurrency=3)
 
     def test_schedule_endpoint_saves_and_reconfigures(self):
-        app_module = self.app_module
+        web_settings_api = self.web_settings_api
         current = {
             "enabled": True,
             "days_of_week": ["mon", "wed", "fri"],
@@ -1095,12 +1141,12 @@ class ProviderEndpointTests(unittest.TestCase):
             "analyze_limit": 250,
         }
         saved = {**current, "hour": 8, "minute": 30}
-        app_module.request = FakeRequest({"enabled": True, "hour": 8, "minute": 30})
+        web_settings_api.request = FakeRequest({"enabled": True, "hour": 8, "minute": 30})
 
-        with patch.object(app_module, "save_schedule_config", return_value=True) as save_schedule, \
-             patch.object(app_module, "get_schedule_config", side_effect=[current, saved]), \
-             patch.object(app_module, "configure_daily_job") as configure_daily_job:
-            result = app_module.api_save_schedule_config()
+        with patch.object(web_settings_api, "save_schedule_config", return_value=True) as save_schedule, \
+             patch.object(web_settings_api, "get_schedule_config", side_effect=[current, saved]), \
+             patch.object(web_settings_api, "configure_daily_job") as configure_daily_job:
+            result = web_settings_api.api_save_schedule_config()
 
         self.assertEqual(result["status"], "ok")
         save_schedule.assert_called_once_with(saved)
@@ -1117,8 +1163,8 @@ class ProviderEndpointTests(unittest.TestCase):
             "analyze_limit": 1000,
         }
 
-        with patch.object(app_module.scheduler, "get_job", return_value=None), \
-             patch.object(app_module.scheduler, "add_job") as add_job:
+        with patch.object(pipeline_scheduler.scheduler, "get_job", return_value=None), \
+             patch.object(pipeline_scheduler.scheduler, "add_job") as add_job:
             pipeline_scheduler.configure_daily_job(schedule)
 
         kwargs = add_job.call_args.kwargs
@@ -1128,7 +1174,7 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertTrue(kwargs["coalesce"])
 
     def test_scheduled_tasks_endpoint_includes_timezone_config_and_last_run(self):
-        app_module = self.app_module
+        web_tasks_api = self.web_tasks_api
         schedule = {
             "enabled": True,
             "days_of_week": ["mon", "tue"],
@@ -1145,10 +1191,10 @@ class ProviderEndpointTests(unittest.TestCase):
         )
         last_run = {"id": 9, "status": "warning", "steps": [{"step_key": "backup"}]}
 
-        with patch.object(app_module, "get_schedule_config", return_value=schedule), \
-             patch.object(app_module.scheduler, "get_jobs", return_value=[job]), \
-             patch.object(app_module, "get_task_logs", return_value=([last_run], 1)):
-            result = app_module.api_scheduled_tasks()
+        with patch.object(web_tasks_api, "get_schedule_config", return_value=schedule), \
+             patch.object(web_tasks_api.scheduler, "get_jobs", return_value=[job]), \
+             patch.object(web_tasks_api, "get_task_logs", return_value=([last_run], 1)):
+            result = web_tasks_api.api_scheduled_tasks()
 
         self.assertEqual(result["days_of_week"], ["mon", "tue"])
         self.assertEqual(result["fetch_days"], 5)
@@ -1157,34 +1203,34 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(result["last_run"], last_run)
 
     def test_app_startup_reconciles_orphaned_running_tasks_before_scheduling(self):
-        app_module = self.app_module
+        web_application = self.web_application
 
-        with patch.object(app_module, "init_db"), \
-             patch.object(app_module, "interrupt_running_task_logs", return_value=2) as interrupt, \
-             patch.object(app_module, "configure_daily_job") as configure:
-            app_module.create_app()
+        with patch.object(web_application, "init_db"), \
+             patch.object(web_application, "interrupt_running_task_logs", return_value=2) as interrupt, \
+             patch.object(web_application, "configure_daily_job") as configure:
+            web_application.create_app()
 
         interrupt.assert_called_once()
         configure.assert_called_once()
 
     def test_get_webdav_backup_endpoint_masks_password(self):
-        app_module = self.app_module
+        web_settings_api = self.web_settings_api
 
-        with patch.object(app_module, "get_webdav_backup_config", return_value={
+        with patch.object(web_settings_api, "get_webdav_backup_config", return_value={
             "enabled": True,
             "url": "https://dav.example.com",
             "username": "alice",
             "password_masked": "******",
         }) as get_config:
-            result = app_module.api_get_webdav_backup()
+            result = web_settings_api.api_get_webdav_backup()
 
         get_config.assert_called_once_with(mask_password=True)
         self.assertEqual(result["password_masked"], "******")
         self.assertNotIn("password", result)
 
     def test_save_webdav_backup_endpoint_saves_config(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest({
+        web_settings_api = self.web_settings_api
+        web_settings_api.request = FakeRequest({
             "enabled": True,
             "url": "https://dav.example.com",
             "username": "alice",
@@ -1193,9 +1239,9 @@ class ProviderEndpointTests(unittest.TestCase):
             "history_days": "3",
         })
 
-        with patch.object(app_module, "save_webdav_backup_config", return_value=True) as save_config, \
-             patch.object(app_module, "get_webdav_backup_config", return_value={"password_masked": "******"}):
-            result = app_module.api_save_webdav_backup()
+        with patch.object(web_settings_api, "save_webdav_backup_config", return_value=True) as save_config, \
+             patch.object(web_settings_api, "get_webdav_backup_config", return_value={"password_masked": "******"}):
+            result = web_settings_api.api_save_webdav_backup()
 
         self.assertEqual(result["status"], "ok")
         save_config.assert_called_once_with({
@@ -1208,8 +1254,8 @@ class ProviderEndpointTests(unittest.TestCase):
         })
 
     def test_manual_webdav_backup_endpoint_logs_task(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest({}, endpoint="api_run_webdav_backup", method="POST", path="/api/backup/webdav/run")
+        web_tasks_api = self.web_tasks_api
+        web_tasks_api.request = FakeRequest({}, endpoint="api_run_webdav_backup", method="POST", path="/api/backup/webdav/run")
         result_payload = {
             "status": "ok",
             "message": "WebDAV 备份完成",
@@ -1221,11 +1267,11 @@ class ProviderEndpointTests(unittest.TestCase):
         }
 
         with patch.object(
-            app_module,
+            web_tasks_api,
             "_run_webdav_backup_task",
             return_value=result_payload,
         ) as backup:
-            result = app_module.api_run_webdav_backup()
+            result = web_tasks_api.api_run_webdav_backup()
 
         self.assertEqual(result["status"], "ok")
         backup.assert_called_once_with(force=True)
@@ -1338,29 +1384,29 @@ class ProviderEndpointTests(unittest.TestCase):
 
     def test_scheduled_pipeline_skips_when_full_pipeline_is_already_running(self):
         app_module = self.app_module
-        self.assertTrue(app_module.pipeline_lock.acquire(blocking=False))
+        self.assertTrue(pipeline_orchestrator.pipeline_lock.acquire(blocking=False))
         try:
             with patch.object(pipeline_orchestrator, "start_task_log", return_value=12), \
                  patch.object(pipeline_orchestrator, "finish_task_log") as finish_log, \
                  patch.object(pipeline_orchestrator, "fetch_latest_papers") as fetch:
                 result = pipeline_orchestrator.daily_pipeline()
         finally:
-            app_module.pipeline_lock.release()
+            pipeline_orchestrator.pipeline_lock.release()
 
         self.assertEqual(result["status"], "skipped")
         self.assertEqual(finish_log.call_args.args[1], "skipped")
         fetch.assert_not_called()
 
     def test_manual_combined_run_returns_conflict_when_pipeline_is_busy(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest(args={"task_id": "manual-1"})
-        self.assertTrue(app_module.pipeline_lock.acquire(blocking=False))
+        web_tasks_api = self.web_tasks_api
+        web_tasks_api.request = FakeRequest(args={"task_id": "manual-1"})
+        self.assertTrue(web_tasks_api.pipeline_lock.acquire(blocking=False))
         try:
-            with patch.object(app_module, "start_task_log") as start_log, \
-                 patch.object(app_module, "fetch_latest_papers") as fetch:
-                result, status = app_module.api_run()
+            with patch.object(web_tasks_api, "start_task_log") as start_log, \
+                 patch.object(web_tasks_api, "fetch_latest_papers") as fetch:
+                result, status = web_tasks_api.api_run()
         finally:
-            app_module.pipeline_lock.release()
+            web_tasks_api.pipeline_lock.release()
 
         self.assertEqual(status, 409)
         self.assertEqual(result["status"], "error")
@@ -1479,21 +1525,21 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertTrue(send.call_args.kwargs["force"])
 
     def test_save_personalization_saves_interest_without_recommendation_call(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest({"research_interests": "robotics"})
+        web_settings_api = self.web_settings_api
+        web_settings_api.request = FakeRequest({"research_interests": "robotics"})
 
-        with patch.object(app_module, "save_personalization_config", return_value=True) as save_personalization, \
-             patch.object(app_module, "get_personalization_config", return_value={"research_interests": "robotics"}), \
-             patch.object(app_module, "recommend_pending_papers") as recommend:
-            result = app_module.api_save_personalization()
+        with patch.object(web_settings_api, "save_personalization_config", return_value=True) as save_personalization, \
+             patch.object(web_settings_api, "get_personalization_config", return_value={"research_interests": "robotics"}), \
+             patch.object(web_settings_api, "recommend_pending_papers") as recommend:
+            result = web_settings_api.api_save_personalization()
 
         self.assertEqual(result["status"], "ok")
         save_personalization.assert_called_once_with({"research_interests": "robotics"})
         recommend.assert_not_called()
 
     def test_recalculate_recommendations_calls_recommendation_task(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest(
+        web_tasks_api = self.web_tasks_api
+        web_tasks_api.request = FakeRequest(
             {"limit": 5},
             endpoint="api_recalculate_recommendations",
             method="POST",
@@ -1501,12 +1547,12 @@ class ProviderEndpointTests(unittest.TestCase):
             args={"task_id": "rec-task"},
         )
 
-        with patch.object(app_module, "start_task_log", return_value=1), \
-             patch.object(app_module, "finish_task_log"), \
-             patch.object(app_module, "get_personalization_config", return_value={"research_interests": "robotics"}), \
-             patch.object(app_module, "get_concurrency", return_value=2), \
-             patch.object(app_module, "recommend_pending_papers", return_value=3) as recommend:
-            result = app_module.api_recalculate_recommendations()
+        with patch.object(web_tasks_api, "start_task_log", return_value=1), \
+             patch.object(web_tasks_api, "finish_task_log"), \
+             patch.object(web_tasks_api, "get_personalization_config", return_value={"research_interests": "robotics"}), \
+             patch.object(web_tasks_api, "get_concurrency", return_value=2), \
+             patch.object(web_tasks_api, "recommend_pending_papers", return_value=3) as recommend:
+            result = web_tasks_api.api_recalculate_recommendations()
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["count"], 3)
@@ -1515,18 +1561,18 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertIsNone(recommend.call_args.kwargs["date"])
 
     def test_generate_report_default_does_not_call_ai_summary(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest({}, endpoint="api_generate", method="POST", path="/api/generate")
+        web_tasks_api = self.web_tasks_api
+        web_tasks_api.request = FakeRequest({}, endpoint="api_generate", method="POST", path="/api/generate")
 
-        with patch.object(app_module, "start_task_log", return_value=1), \
-             patch.object(app_module, "finish_task_log"), \
-             patch.object(app_module, "get_all_dates", return_value=[("2026-01-01",)]), \
-             patch.object(app_module, "get_concurrency", return_value=2), \
-             patch.object(app_module, "recommend_pending_papers", return_value=1) as recommend, \
-             patch.object(app_module, "generate_report_ai_summary") as ai_summary, \
-             patch.object(app_module, "generate_report_content", return_value=("html", 2, 1, 4.0)) as report_content, \
-             patch.object(app_module, "save_report") as save_report:
-            result = app_module.api_generate()
+        with patch.object(web_tasks_api, "start_task_log", return_value=1), \
+             patch.object(web_tasks_api, "finish_task_log"), \
+             patch.object(web_tasks_api, "get_all_dates", return_value=[("2026-01-01",)]), \
+             patch.object(web_tasks_api, "get_concurrency", return_value=2), \
+             patch.object(web_tasks_api, "recommend_pending_papers", return_value=1) as recommend, \
+             patch.object(web_tasks_api, "generate_report_ai_summary") as ai_summary, \
+             patch.object(web_tasks_api, "generate_report_content", return_value=("html", 2, 1, 4.0)) as report_content, \
+             patch.object(web_tasks_api, "save_report") as save_report:
+            result = web_tasks_api.api_generate()
 
         self.assertEqual(result["status"], "ok")
         ai_summary.assert_not_called()
@@ -1535,8 +1581,8 @@ class ProviderEndpointTests(unittest.TestCase):
         save_report.assert_called_once()
 
     def test_generate_report_recommend_zero_skips_recommendation(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest(
+        web_tasks_api = self.web_tasks_api
+        web_tasks_api.request = FakeRequest(
             {},
             endpoint="api_generate",
             method="POST",
@@ -1544,20 +1590,20 @@ class ProviderEndpointTests(unittest.TestCase):
             args={"date": "2026-01-01", "recommend": "0"},
         )
 
-        with patch.object(app_module, "start_task_log", return_value=1), \
-             patch.object(app_module, "finish_task_log"), \
-             patch.object(app_module, "recommend_pending_papers") as recommend, \
-             patch.object(app_module, "generate_report_content", return_value=("html", 2, 1, 4.0)) as report_content, \
-             patch.object(app_module, "save_report"):
-            result = app_module.api_generate()
+        with patch.object(web_tasks_api, "start_task_log", return_value=1), \
+             patch.object(web_tasks_api, "finish_task_log"), \
+             patch.object(web_tasks_api, "recommend_pending_papers") as recommend, \
+             patch.object(web_tasks_api, "generate_report_content", return_value=("html", 2, 1, 4.0)) as report_content, \
+             patch.object(web_tasks_api, "save_report"):
+            result = web_tasks_api.api_generate()
 
         self.assertEqual(result["status"], "ok")
         recommend.assert_not_called()
         report_content.assert_called_once_with("2026-01-01", ai_summary=None)
 
     def test_generate_report_with_ai_summary_calls_report_task(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest(
+        web_tasks_api = self.web_tasks_api
+        web_tasks_api.request = FakeRequest(
             {},
             endpoint="api_generate",
             method="POST",
@@ -1565,14 +1611,14 @@ class ProviderEndpointTests(unittest.TestCase):
             args={"date": "2026-01-01", "ai_summary": "1"},
         )
 
-        with patch.object(app_module, "start_task_log", return_value=1), \
-             patch.object(app_module, "finish_task_log"), \
-             patch.object(app_module, "get_concurrency", return_value=2), \
-             patch.object(app_module, "recommend_pending_papers", return_value=0), \
-             patch.object(app_module, "generate_report_ai_summary", return_value=("导读", None)) as ai_summary, \
-             patch.object(app_module, "generate_report_content", return_value=("html", 2, 1, 4.0)) as report_content, \
-             patch.object(app_module, "save_report"):
-            result = app_module.api_generate()
+        with patch.object(web_tasks_api, "start_task_log", return_value=1), \
+             patch.object(web_tasks_api, "finish_task_log"), \
+             patch.object(web_tasks_api, "get_concurrency", return_value=2), \
+             patch.object(web_tasks_api, "recommend_pending_papers", return_value=0), \
+             patch.object(web_tasks_api, "generate_report_ai_summary", return_value=("导读", None)) as ai_summary, \
+             patch.object(web_tasks_api, "generate_report_content", return_value=("html", 2, 1, 4.0)) as report_content, \
+             patch.object(web_tasks_api, "save_report"):
+            result = web_tasks_api.api_generate()
 
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["ai_summary"])
@@ -1580,7 +1626,7 @@ class ProviderEndpointTests(unittest.TestCase):
         report_content.assert_called_once_with("2026-01-01", ai_summary="导读")
 
     def test_reanalyze_updates_only_qa_analysis(self):
-        app_module = self.app_module
+        web_papers_api = self.web_papers_api
         paper = {
             "id": 9,
             "arxiv_id": "2601.00009",
@@ -1595,16 +1641,16 @@ class ProviderEndpointTests(unittest.TestCase):
             "value_comment": "should-not-write",
         }
 
-        with patch.object(app_module, "get_paper_by_arxiv_id", return_value=paper), \
-             patch.object(app_module, "analyze_paper_full", return_value=(paper, deep_result, None)), \
-             patch.object(app_module, "update_analysis") as update_analysis:
-            result = app_module.api_reanalyze_paper("2601.00009")
+        with patch.object(web_papers_api, "get_paper_by_arxiv_id", return_value=paper), \
+             patch.object(web_papers_api, "analyze_paper_full", return_value=(paper, deep_result, None)), \
+             patch.object(web_papers_api, "update_analysis") as update_analysis:
+            result = web_papers_api.api_reanalyze_paper("2601.00009")
 
         self.assertEqual(result["status"], "ok")
         update_analysis.assert_called_once_with(9, {"qa_analysis": "### Q1: deep"})
 
     def test_reanalyze_warns_and_preserves_old_qa_when_repair_is_incomplete(self):
-        app_module = self.app_module
+        web_papers_api = self.web_papers_api
         paper = {
             "id": 9,
             "arxiv_id": "2601.00009",
@@ -1619,10 +1665,10 @@ class ProviderEndpointTests(unittest.TestCase):
             "finish_reason": "length",
         }
 
-        with patch.object(app_module, "get_paper_by_arxiv_id", return_value=paper), \
-             patch.object(app_module, "analyze_paper_full", return_value=(paper, deep_result, None)), \
-             patch.object(app_module, "update_analysis") as update_analysis:
-            result = app_module.api_reanalyze_paper("2601.00009")
+        with patch.object(web_papers_api, "get_paper_by_arxiv_id", return_value=paper), \
+             patch.object(web_papers_api, "analyze_paper_full", return_value=(paper, deep_result, None)), \
+             patch.object(web_papers_api, "update_analysis") as update_analysis:
+            result = web_papers_api.api_reanalyze_paper("2601.00009")
 
         self.assertEqual(result["status"], "warning")
         self.assertEqual(result["missing_questions"], ["Q2"])
@@ -1630,8 +1676,8 @@ class ProviderEndpointTests(unittest.TestCase):
         update_analysis.assert_not_called()
 
     def test_add_paper_runs_basic_then_deep_reading(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest({"input": "2601.00010", "task_id": "t1"})
+        web_papers_api = self.web_papers_api
+        web_papers_api.request = FakeRequest({"input": "2601.00010", "task_id": "t1"})
         paper = {
             "id": 10,
             "arxiv_id": "2601.00010",
@@ -1665,14 +1711,14 @@ class ProviderEndpointTests(unittest.TestCase):
             self.assertEqual(result, {"qa_analysis": "### Q1: deep"})
             return True
 
-        with patch.object(app_module, "parse_arxiv_id", return_value="2601.00010"), \
-             patch.object(app_module, "fetch_paper_by_id", return_value=paper), \
-             patch.object(app_module, "get_analysis_by_paper_id", return_value=None), \
-             patch.object(app_module, "analyze_paper_basic", side_effect=fake_basic), \
-             patch.object(app_module, "insert_analysis", side_effect=fake_insert), \
-             patch.object(app_module, "analyze_paper_full", side_effect=fake_deep), \
-             patch.object(app_module, "update_analysis", side_effect=fake_update):
-            result = app_module.api_add_paper()
+        with patch.object(web_papers_api, "parse_arxiv_id", return_value="2601.00010"), \
+             patch.object(web_papers_api, "fetch_paper_by_id", return_value=paper), \
+             patch.object(web_papers_api, "get_analysis_by_paper_id", return_value=None), \
+             patch.object(web_papers_api, "analyze_paper_basic", side_effect=fake_basic), \
+             patch.object(web_papers_api, "insert_analysis", side_effect=fake_insert), \
+             patch.object(web_papers_api, "analyze_paper_full", side_effect=fake_deep), \
+             patch.object(web_papers_api, "update_analysis", side_effect=fake_update):
+            result = web_papers_api.api_add_paper()
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["rating"], 4)
@@ -1680,8 +1726,8 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(events, ["basic", "insert", "deep", "update"])
 
     def test_add_paper_preserves_basic_analysis_when_deep_reading_is_incomplete(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest({"input": "2601.00012", "task_id": "t1"})
+        web_papers_api = self.web_papers_api
+        web_papers_api.request = FakeRequest({"input": "2601.00012", "task_id": "t1"})
         paper = {
             "id": 12,
             "arxiv_id": "2601.00012",
@@ -1700,14 +1746,14 @@ class ProviderEndpointTests(unittest.TestCase):
             "finish_reason": "length",
         }
 
-        with patch.object(app_module, "parse_arxiv_id", return_value="2601.00012"), \
-             patch.object(app_module, "fetch_paper_by_id", return_value=paper), \
-             patch.object(app_module, "get_analysis_by_paper_id", return_value=None), \
-             patch.object(app_module, "analyze_paper_basic", return_value=(paper, basic_result, None)), \
-             patch.object(app_module, "insert_analysis", return_value=1), \
-             patch.object(app_module, "analyze_paper_full", return_value=(paper, deep_result, None)), \
-             patch.object(app_module, "update_analysis") as update_analysis:
-            result = app_module.api_add_paper()
+        with patch.object(web_papers_api, "parse_arxiv_id", return_value="2601.00012"), \
+             patch.object(web_papers_api, "fetch_paper_by_id", return_value=paper), \
+             patch.object(web_papers_api, "get_analysis_by_paper_id", return_value=None), \
+             patch.object(web_papers_api, "analyze_paper_basic", return_value=(paper, basic_result, None)), \
+             patch.object(web_papers_api, "insert_analysis", return_value=1), \
+             patch.object(web_papers_api, "analyze_paper_full", return_value=(paper, deep_result, None)), \
+             patch.object(web_papers_api, "update_analysis") as update_analysis:
+            result = web_papers_api.api_add_paper()
 
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["deep_reading_incomplete"])
@@ -1715,8 +1761,8 @@ class ProviderEndpointTests(unittest.TestCase):
         update_analysis.assert_not_called()
 
     def test_add_paper_with_manual_rating_only_still_runs_basic_analysis(self):
-        app_module = self.app_module
-        app_module.request = FakeRequest({"input": "2601.00011", "task_id": "t1"})
+        web_papers_api = self.web_papers_api
+        web_papers_api.request = FakeRequest({"input": "2601.00011", "task_id": "t1"})
         paper = {
             "id": 11,
             "arxiv_id": "2601.00011",
@@ -1729,14 +1775,14 @@ class ProviderEndpointTests(unittest.TestCase):
         basic_result = {"tags": ["VLA"], "summary_cn": "摘要", "summary_en": "", "rating": 4, "value_comment": "有价值"}
         deep_result = {"qa_analysis": "### Q1: deep"}
 
-        with patch.object(app_module, "parse_arxiv_id", return_value="2601.00011"), \
-             patch.object(app_module, "fetch_paper_by_id", return_value=paper), \
-             patch.object(app_module, "get_analysis_by_paper_id", return_value={"rating": 4, "tags": [], "summary_cn": "", "value_comment": ""}), \
-             patch.object(app_module, "analyze_paper_basic", return_value=(paper, basic_result, None)) as basic, \
-             patch.object(app_module, "insert_analysis", return_value=None) as insert, \
-             patch.object(app_module, "analyze_paper_full", return_value=(paper, deep_result, None)), \
-             patch.object(app_module, "update_analysis", return_value=True):
-            result = app_module.api_add_paper()
+        with patch.object(web_papers_api, "parse_arxiv_id", return_value="2601.00011"), \
+             patch.object(web_papers_api, "fetch_paper_by_id", return_value=paper), \
+             patch.object(web_papers_api, "get_analysis_by_paper_id", return_value={"rating": 4, "tags": [], "summary_cn": "", "value_comment": ""}), \
+             patch.object(web_papers_api, "analyze_paper_basic", return_value=(paper, basic_result, None)) as basic, \
+             patch.object(web_papers_api, "insert_analysis", return_value=None) as insert, \
+             patch.object(web_papers_api, "analyze_paper_full", return_value=(paper, deep_result, None)), \
+             patch.object(web_papers_api, "update_analysis", return_value=True):
+            result = web_papers_api.api_add_paper()
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["rating"], 4)
@@ -2565,10 +2611,10 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
         cls.settings = settings
 
     def test_api_papers_uses_saved_per_page_setting(self):
-        self.app.request = FakeRequest(args={"page": "2"})
-        with patch.object(self.app, "get_per_page", return_value=50), \
-             patch.object(self.app, "get_papers_with_analysis", return_value=[]) as get_papers:
-            result = self.app.api_papers()
+        web_papers_api.request = FakeRequest(args={"page": "2"})
+        with patch.object(web_papers_api, "get_per_page", return_value=50), \
+             patch.object(web_papers_api, "get_papers_with_analysis", return_value=[]) as get_papers:
+            result = web_papers_api.api_papers()
 
         self.assertEqual(result, [])
         get_papers.assert_called_once()
@@ -2576,10 +2622,10 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
         self.assertEqual(get_papers.call_args.kwargs["offset"], 50)
 
     def test_api_papers_allows_request_per_page_override(self):
-        self.app.request = FakeRequest(args={"page": "3", "per_page": "10"})
-        with patch.object(self.app, "get_per_page", return_value=50), \
-             patch.object(self.app, "get_papers_with_analysis", return_value=[]) as get_papers:
-            self.app.api_papers()
+        web_papers_api.request = FakeRequest(args={"page": "3", "per_page": "10"})
+        with patch.object(web_papers_api, "get_per_page", return_value=50), \
+             patch.object(web_papers_api, "get_papers_with_analysis", return_value=[]) as get_papers:
+            web_papers_api.api_papers()
 
         self.assertEqual(get_papers.call_args.kwargs["limit"], 10)
         self.assertEqual(get_papers.call_args.kwargs["offset"], 20)
@@ -3604,6 +3650,16 @@ class ScheduleRetryTests(unittest.TestCase):
         global pipeline_orchestrator, pipeline_scheduler
         pipeline_orchestrator = importlib.import_module("source.pipeline.orchestrator")
         pipeline_scheduler = importlib.import_module("source.pipeline.scheduler")
+        global web_application, web_auth, web_learning_api, web_pages
+        global web_papers_api, web_providers_api, web_settings_api, web_tasks_api
+        web_application = importlib.import_module("source.web.application")
+        web_auth = importlib.import_module("source.web.auth")
+        web_learning_api = importlib.import_module("source.web.learning_api")
+        web_pages = importlib.import_module("source.web.pages")
+        web_papers_api = importlib.import_module("source.web.papers_api")
+        web_providers_api = importlib.import_module("source.web.providers_api")
+        web_settings_api = importlib.import_module("source.web.settings_api")
+        web_tasks_api = importlib.import_module("source.web.tasks_api")
         return app_module
 
     def test_schedule_api_saves_and_returns_fetch_retry_config(self):
@@ -3613,7 +3669,7 @@ class ScheduleRetryTests(unittest.TestCase):
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                app_module = self.import_app_with_temp_settings(tmp)
+                self.import_app_with_temp_settings(tmp)
                 payload = {
                     "enabled": True,
                     "days_of_week": ["mon", "fri"],
@@ -3624,13 +3680,13 @@ class ScheduleRetryTests(unittest.TestCase):
                     "fetch_retry_interval_minutes": 12,
                     "fetch_max_retries": 25,
                 }
-                with patch.object(app_module, "configure_daily_job"), \
-                        patch.object(app_module, "scheduler", types.SimpleNamespace(running=True)), \
-                        patch.object(app_module, "request", types.SimpleNamespace(get_json=lambda: payload)):
-                    response = app_module.api_save_schedule_config()
+                with patch.object(web_settings_api, "configure_daily_job"), \
+                        patch.object(web_settings_api, "scheduler", types.SimpleNamespace(running=True)), \
+                        patch.object(web_settings_api, "request", types.SimpleNamespace(get_json=lambda: payload)):
+                    response = web_settings_api.api_save_schedule_config()
                     self.assertEqual(response["status"], "ok")
 
-                    data = app_module.api_get_schedule_config()
+                    data = web_settings_api.api_get_schedule_config()
 
             self.assertEqual(data["fetch_retry_interval_minutes"], 12)
             self.assertEqual(data["fetch_max_retries"], 25)
@@ -3652,7 +3708,7 @@ class ScheduleRetryTests(unittest.TestCase):
                     RuntimeError("still limited"),
                     [{"id": 1}],
                 ]) as fetch_mock, \
-                        patch.object(app_module.time, "sleep") as sleep_mock, \
+                        patch.object(pipeline_orchestrator.time, "sleep") as sleep_mock, \
                         patch.object(pipeline_orchestrator, "set_task_log_step_status") as step_mock:
                     papers, retries = pipeline_orchestrator._fetch_for_daily_pipeline_with_retries(
                         log_id=123,
@@ -3681,7 +3737,7 @@ class ScheduleRetryTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 app_module = self.import_app_with_temp_settings(tmp)
                 with patch.object(pipeline_orchestrator, "fetch_latest_papers", side_effect=RuntimeError("offline")) as fetch_mock, \
-                        patch.object(app_module.time, "sleep") as sleep_mock, \
+                        patch.object(pipeline_orchestrator.time, "sleep") as sleep_mock, \
                         patch.object(pipeline_orchestrator, "set_task_log_step_status"):
                     with self.assertRaisesRegex(RuntimeError, "已重试 2 次仍未成功"):
                         pipeline_orchestrator._fetch_for_daily_pipeline_with_retries(
@@ -3707,7 +3763,7 @@ class ScheduleRetryTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 app_module = self.import_app_with_temp_settings(tmp)
                 with patch.object(pipeline_orchestrator, "fetch_latest_papers", side_effect=RuntimeError("offline")) as fetch_mock, \
-                        patch.object(app_module.time, "sleep") as sleep_mock, \
+                        patch.object(pipeline_orchestrator.time, "sleep") as sleep_mock, \
                         patch.object(pipeline_orchestrator, "set_task_log_step_status"):
                     with self.assertRaisesRegex(RuntimeError, "已重试 0 次仍未成功"):
                         pipeline_orchestrator._fetch_for_daily_pipeline_with_retries(

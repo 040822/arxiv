@@ -130,9 +130,9 @@ class SearchPapersTests(DatabaseTestCase):
             database.search_papers("one two three four five six seven eight nine ten eleven")
 
     def test_search_result_builds_highlight_segments_without_marking_database_html_safe(self):
-        import app as app_module
+        from source.web import pages as web_pages
 
-        prepared = app_module._prepare_search_result({
+        prepared = web_pages._prepare_search_result({
             "title": "<script>alert(1)</script> World Model",
             "abstract": "A safe robotics abstract.",
             "summary_cn": "中文摘要",
