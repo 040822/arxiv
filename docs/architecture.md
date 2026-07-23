@@ -215,6 +215,12 @@ app.py -> source/web/application.py + Blueprints
 - SQLite 零配置，文件级数据库，便于备份
 - WAL 模式支持读写并发，满足 Web 服务需求
 
+所有业务访问通过兼容式托管连接完成：上下文正常退出提交、异常退出回滚，
+两种路径都会关闭连接；每条连接同时启用外键与 5000 ms `busy_timeout`。
+`init_db()` 运行带 `schema_migrations` 版本表的顺序迁移器。存在待执行版本时，
+迁移前先用 SQLite online backup 创建一致性快照（最近保留 3 份），每个版本
+独立事务执行；版本异常、快照失败或迁移失败都会阻止应用继续启动。
+
 ### 3. 无前端框架
 
 **决策：** 使用原生 JS + Jinja2 模板，不使用 React/Vue。

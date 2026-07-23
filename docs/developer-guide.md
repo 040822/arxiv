@@ -118,7 +118,7 @@ CREATE TABLE papers (
 ```sql
 CREATE TABLE analysis (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    paper_id INTEGER NOT NULL,         -- FK -> papers.id (CASCADE DELETE)
+    paper_id INTEGER NOT NULL,         -- FK -> papers.id；uq_analysis_paper_id 保证每篇论文唯一
     tags TEXT,                         -- JSON 数组
     summary_cn TEXT,                   -- 中文摘要翻译
     summary_en TEXT,                   -- 英文摘要（未使用）
@@ -280,13 +280,16 @@ WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生�
 
 ### 1. 添加新数据库字段
 
-在 `source/storage/schema.py` 的 `init_db()` 中添加迁移逻辑：
+在 `source/storage/migrations.py` 注册下一个连续版本的迁移：
 
 ```python
-cursor.execute("PRAGMA table_info(table_name)")
-columns = [row["name"] for row in cursor.fetchall()]
-if "new_column" not in columns:
-    cursor.execute("ALTER TABLE table_name ADD COLUMN new_column TYPE DEFAULT value")
+def migrate_new_field(conn):
+    conn.execute("ALTER TABLE table_name ADD COLUMN new_column TYPE")
+
+MIGRATIONS = (
+    # ...保留已有版本...
+    (3, "new_field", migrate_new_field),
+)
 ```
 
 ### 2. 添加新 API 端点
@@ -319,15 +322,16 @@ def api_new_endpoint():
 
 ## 数据库迁移模式
 
-```python
-# 检查列是否存在
-cursor.execute("PRAGMA table_info(table_name)")
-columns = [row["name"] for row in cursor.fetchall()]
+`schema.apply_baseline_schema()` 只负责基线 schema；后续变更必须作为
+`source/storage/migrations.py` 中的连续版本追加。迁移器会：
 
-# 添加新列
-if "new_column" not in columns:
-    cursor.execute("ALTER TABLE table_name ADD COLUMN new_column TYPE DEFAULT value")
-```
+1. 校验数据库版本连续且不高于当前代码；
+2. 在首次待迁移版本前生成 SQLite online-backup 快照，最近保留 3 份；
+3. 对每个版本执行 `BEGIN IMMEDIATE`，将 schema/data 变更与版本记录原子提交；
+4. 任一快照或迁移失败时回滚并中止应用启动。
+
+业务访问统一使用 `with get_connection() as conn:`，不要再手动
+`commit()`/`close()`；连接默认启用 WAL、外键与 5000 ms `busy_timeout`。
 
 ---
 

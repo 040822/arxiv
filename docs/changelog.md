@@ -2,6 +2,12 @@
 
 ## 未发布
 
+### 4.2 SQLite 稳定性与版本迁移
+- 全部生产数据库调用改用兼容式托管连接，统一提交/回滚/关闭，并显式启用 WAL、外键和 5000 ms `busy_timeout`
+- 新增 `schema_migrations` 顺序迁移器；迁移前创建 SQLite 一致性快照，最近保留 3 份，失败时回滚并中止启动
+- v2 迁移合并历史重复分析记录并建立 `uq_analysis_paper_id` 唯一索引；分析插入改为原子 `INSERT OR IGNORE`
+- 数据库快照能力由 WebDAV 备份和 schema 迁移共同复用；新增并发、锁竞争、迁移回滚、快照失败与版本异常测试
+
 ### 4.1 超大文件拆分（目标 v0.6.0）
 - `app.py`、`database.py`、`settings.py` 收缩为 14/8/9 行兼容 shim，实际实现迁入 `source/`
 - Flask 路由按 auth/pages/papers/learning/tasks/settings/providers 拆成 7 个 Blueprint，保留全部 86 条 URL + method 契约

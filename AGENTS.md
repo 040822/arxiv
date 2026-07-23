@@ -37,7 +37,7 @@ arxiv/
 ├── app.py              # Flask 启动兼容 shim（实现位于 source/web/）
 ├── source/
 │   ├── settings/       # 值转换、默认值、归一化、思考协议、store、供应商、Prompt、运行时配置
-│   ├── storage/        # 连接/schema、论文、分析、日志、报告、学习记录
+│   ├── storage/        # 托管连接、顺序迁移/快照、论文、分析、日志、报告、学习记录
 │   ├── reports/        # Web 日报 HTML 渲染
 │   ├── pipeline/       # 定时/手动组合流水线与 APScheduler
 │   └── web/            # Flask application assembly、Blueprint 路由、鉴权与进度
@@ -90,7 +90,7 @@ CREATE TABLE papers (
 ```sql
 CREATE TABLE analysis (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    paper_id INTEGER NOT NULL,         -- FK -> papers.id (CASCADE DELETE)
+    paper_id INTEGER NOT NULL,         -- FK -> papers.id；uq_analysis_paper_id 保证每篇论文唯一
     tags TEXT,                         -- JSON 数组，如 ["VLA","World Model"]
     summary_cn TEXT,                   -- Abstract 中文翻译
     summary_en TEXT,                   -- 英文摘要（当前未使用）
@@ -104,6 +104,15 @@ CREATE TABLE analysis (
     recommendation_interest_hash TEXT, -- 对应研究兴趣哈希
     recommendation_analyzed_at TEXT,   -- 推荐评分时间
     analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### schema_migrations 表
+```sql
+CREATE TABLE schema_migrations (
+    version INTEGER PRIMARY KEY,       -- 连续迁移版本
+    name TEXT NOT NULL UNIQUE,         -- 稳定迁移名称
+    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
@@ -469,20 +478,20 @@ APScheduler cron(day_of_week, hour, minute)
 ## 7. 开发规范
 
 ### 7.1 添加新功能的步骤
-1. 如果涉及新数据库表/字段 → 修改 `source/storage/schema.py` 的 `init_db()` 并添加迁移逻辑
+1. 如果涉及新数据库表/字段 → 在 `source/storage/migrations.py` 注册下一个连续版本的迁移函数
 2. 如果涉及新 API → 在对应的 `source/web/*_api.py` Blueprint 添加路由函数
 3. 如果涉及新页面 → 创建 `templates/xxx.html`，在 `source/web/pages.py` 添加页面路由
 4. 如果涉及新样式 → 通用业务页面在 `static/style.css` 添加；独立宣传页使用 `static/promo.css` 和 `.promo-*` 命名空间
 5. 更新 `AGENTS.md` 记录变更
 
 ### 7.2 数据库迁移模式
-```python
-# 在 init_db() 中使用 PRAGMA table_info 检查列是否存在
-cursor.execute("PRAGMA table_info(table_name)")
-columns = [row["name"] for row in cursor.fetchall()]
-if "new_column" not in columns:
-    cursor.execute("ALTER TABLE table_name ADD COLUMN new_column TYPE DEFAULT value")
-```
+`init_db()` 只负责启动顺序迁移器。新增 schema 变更时，在
+`source/storage/migrations.py` 的 `MIGRATIONS` 末尾注册连续版本，并把实际
+DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事务中执行并写入
+`schema_migrations`；变更前会创建 SQLite 一致性快照，失败时回滚并中止启动。
+
+所有业务数据库访问都使用 `with get_connection() as conn:`。该兼容式托管连接
+退出时会提交或回滚并关闭，且统一启用 WAL、外键和 5000 ms `busy_timeout`。
 
 ### 7.3 添加新供应商
 在 `source/settings/defaults.py` 的 `PROVIDER_PRESETS` 字典中添加：
@@ -582,7 +591,7 @@ cp data/papers.db data/papers.db.bak
 ### 当前限制
 - PDF 提取依赖 PyMuPDF，扫描版 PDF 无法提取文本
 - arXiv API 有速率限制，大量抓取时需增加 delay_seconds
-- SQLite 在高并发写入时可能有锁竞争（已用 WAL 模式缓解）
+- SQLite 仍适合单机中低并发；WAL 与 5000 ms `busy_timeout` 可缓解短时写锁竞争，但不替代分布式数据库
 - 无多用户隔离系统，管理密码只提供本地单用户访问保护
 
 ### 可扩展方向

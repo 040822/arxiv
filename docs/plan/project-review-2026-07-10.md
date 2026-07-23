@@ -220,9 +220,10 @@
 ---
 
 ## 四、代码质量与架构
-> **修复状态更新（2026-07-24）：** Q1、Q2、Q3、Q9 已完成并通过
-> 157 项测试；对应实施记录见
-> [`refactor-4.1-splitplan.md`](refactor-4.1-splitplan.md)。
+> **修复状态更新（2026-07-24）：** Q1–Q9 已完成并通过
+> 171 项测试；对应实施记录见
+> [`refactor-4.1-splitplan.md`](refactor-4.1-splitplan.md) 与
+> [`refactor-4.2-plan.md`](refactor-4.2-plan.md)。
 
 ### 4.1 超大文件
 
@@ -236,11 +237,11 @@
 
 | # | 严重度 | 问题 | 位置 | 建议 |
 |---|--------|------|------|------|
-| Q4 | **高** | `get_connection()` 的调用点仍主要靠手动 `close()`；异常路径可泄漏连接。当前 storage 有 62 处连接调用，仅 1 处 finally | `source/storage/connection.py`, `source/storage/*.py` | 引入真正负责 close 的连接 context manager，并逐调用点迁移 |
-| Q5 | **中** | `analysis` 表仍无 `UNIQUE(paper_id)`；`insert_analysis` 仍为先 SELECT 再 INSERT，并发可产生重复行 | `source/storage/schema.py`, `source/storage/analysis.py` | 先清理历史重复数据，再加唯一索引与原子 upsert |
-| Q6 | **中** | 数据库连接仍未设置 `PRAGMA busy_timeout`，写锁竞争时可能立即抛 `database is locked` | `source/storage/connection.py` | 设置 `PRAGMA busy_timeout=5000` 并补锁竞争测试 |
-| Q7 | 中 | `init_db()` 仍在正常路径末尾手动 commit/close，中途异常会泄漏连接且不提交 | `source/storage/schema.py` | 纳入 Q4 的连接 context manager 改造 |
-| Q8 | 中 | 迁移仍依赖 `PRAGMA table_info` 逐列判断，无 schema 版本表 | `source/storage/schema.py` | 引入 `schema_version` 表 + 顺序迁移函数 |
+| Q4 ✅ | ~~高~~ **已完成** | 所有生产调用点均使用兼容式托管连接；退出上下文时统一提交/回滚并关闭，旧的直接调用接口仍可用 | `source/storage/connection.py`, `source/storage/*.py` | 已移除业务层手动 `commit/close` |
+| Q5 ✅ | ~~中~~ **已完成** | v2 迁移合并历史重复分析并建立 `uq_analysis_paper_id`；插入改为原子 `INSERT OR IGNORE` | `source/storage/analysis_migrations.py`, `source/storage/analysis.py` | 保留最早记录，空字段从后续记录补齐，冲突保留主记录并告警 |
+| Q6 ✅ | ~~中~~ **已完成** | 每条托管连接显式设置 `busy_timeout=5000`，短时写锁竞争会等待 | `source/storage/connection.py` | 已覆盖锁竞争成功测试 |
+| Q7 ✅ | ~~中~~ **已完成** | `init_db()` 改为调用顺序迁移器；每个版本在独立事务中原子提交或回滚 | `source/storage/schema.py`, `source/storage/migrations.py` | 迁移或快照失败会中止启动 |
+| Q8 ✅ | ~~中~~ **已完成** | 新增 `schema_migrations` 版本表与 v1/v2 有序迁移；变更前创建 SQLite 一致性快照并保留最近 3 份 | `source/storage/migrations.py`, `source/storage/snapshot.py` | 拒绝未知未来版本与版本断层 |
 
 ### 4.3 配置管理
 
@@ -304,7 +305,7 @@
 1. **S1 + S15：默认无密码安全姿态 + 密码慢哈希** — 公网部署风险最高
 2. **S14：CSRF 防护** — 全站无 CSRF token
 3. **S27：错误响应脱敏** — `str(e)` 直传客户端贯穿全站
-4. **Q4 + Q5 + Q6：数据库连接泄漏 + analysis 唯一约束 + busy_timeout** — 并发稳定性根基
+4. **✅ Q4 + Q5 + Q6：数据库连接生命周期 + analysis 唯一约束 + busy_timeout 已完成** — 并发稳定性根基已补齐
 5. **✅ Q9 / 待修 Q10：settings 深合并已完成；异常回退保护仍待修复** — 配置丢失风险仍需继续收口
 
 #### P1 — 核心功能价值提升（直接服务"AI 辅助论文阅读"目标）
@@ -343,7 +344,7 @@
 
 ### 实施路径建议
 
-**第一批（安全与稳定性基建）**：S1/S15/S14/S27 → Q4/Q5/Q6 → ✅ Q9 → Q10
+**第一批（安全与稳定性基建）**：S1/S15/S14/S27 → ✅ Q4/Q5/Q6/Q7/Q8/Q9 → Q10
 **第二批（核心功能高价值）**：C1 → C6 → C7 → F24/C12 → F8 → C13 → C3/C20 → C16
 **第三批（体验一致性）**：F7 → F14/F33 → F1 → F23/F25 → F9 → C2 → F18/F19
 **第四批（可维护性 + 深化）**：✅ Q1/Q2/Q3 → Q14/Q13 → Q20/Q21 → C10/C11 → C14/C15 → C17/C18/C19 → C8/C9 → C22

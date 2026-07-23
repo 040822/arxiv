@@ -132,12 +132,10 @@ APScheduler cron(day_of_week, hour, minute)
 
 ### 4. 数据库迁移模式
 
-```python
-cursor.execute("PRAGMA table_info(table_name)")
-columns = [row["name"] for row in cursor.fetchall()]
-if "new_column" not in columns:
-    cursor.execute("ALTER TABLE table_name ADD COLUMN new_column TYPE DEFAULT value")
-```
+在 `source/storage/migrations.py` 的 `MIGRATIONS` 末尾增加连续版本和独立迁移
+函数，不要把新迁移继续堆入 baseline schema。迁移器会在变更前创建一致性
+快照，每个版本在独立事务中执行，并把结果写入 `schema_migrations`；快照或
+迁移失败会中止启动。业务代码统一使用 `with get_connection() as conn:`。
 
 ### 4. API 返回格式
 
@@ -166,7 +164,7 @@ Prompt 已拆为 `prompt_profiles`。学习功能必须通过 `build_paper_learn
 
 ### 场景 1：添加新的数据库字段
 
-1. 在 `source/storage/schema.py` 的 `init_db()` 中添加迁移逻辑
+1. 在 `source/storage/migrations.py` 注册下一个连续版本的迁移
 2. 在相关的 CRUD 函数中添加新字段的处理
 3. 在对应的 `source/web/*_api.py` 中返回新字段
 4. 在模板中显示新字段
@@ -204,7 +202,7 @@ Prompt 已拆为 `prompt_profiles`。学习功能必须通过 `build_paper_learn
 
 ### 1. 论文可能没有分析结果
 
-papers 表和 analysis 表是 1:N 关系（实际是 1:1），使用 LEFT JOIN 查询。访问分析字段前需检查：
+papers 表和 analysis 表是数据库唯一索引保证的 1:1 关系，查询通常使用 LEFT JOIN。访问分析字段前需检查：
 
 ```python
 if paper.get("rating") and paper["rating"] > 0:
