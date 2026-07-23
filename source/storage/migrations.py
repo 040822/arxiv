@@ -1,0 +1,168 @@
+"""Ordered, transactional SQLite schema migrations."""
+
+import logging
+import os
+import sqlite3
+from datetime import datetime
+
+from . import connection
+from .schema import apply_baseline_schema
+from .snapshot import copy_sqlite_snapshot
+
+logger = logging.getLogger(__name__)
+
+MIGRATION_BACKUP_KEEP = 3
+MIGRATIONS = (
+    (1, "baseline", apply_baseline_schema),
+)
+
+
+class MigrationError(RuntimeError):
+    """Raised when database schema migration cannot complete safely."""
+
+
+def _read_applied_versions(db_path):
+    if not os.path.exists(db_path) or os.path.getsize(db_path) == 0:
+        return []
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        exists = conn.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'schema_migrations'
+            """
+        ).fetchone()
+        if not exists:
+            return []
+        return [
+            int(row[0])
+            for row in conn.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+
+
+def _validate_versions(versions):
+    target = MIGRATIONS[-1][0]
+    if versions and versions[-1] > target:
+        raise MigrationError(
+            f"数据库 schema 版本 {versions[-1]} 高于程序支持的版本 {target}"
+        )
+    expected = list(range(1, (versions[-1] if versions else 0) + 1))
+    if versions != expected:
+        raise MigrationError(f"数据库 migration 版本不连续: {versions}")
+
+
+def _migration_backup_path(db_path, current_version, target_version, now=None):
+    now = now or datetime.now()
+    backup_dir = os.path.join(os.path.dirname(db_path), "migration_backups")
+    basename = os.path.splitext(os.path.basename(db_path))[0]
+    stamp = now.strftime("%Y%m%d-%H%M%S-%f")
+    filename = f"{basename}-v{current_version}-to-v{target_version}-{stamp}.db"
+    return os.path.join(backup_dir, filename)
+
+
+def _prune_migration_backups(backup_dir):
+    backups = sorted(
+        (
+            os.path.join(backup_dir, name)
+            for name in os.listdir(backup_dir)
+            if name.endswith(".db")
+        ),
+        key=lambda path: (os.path.getmtime(path), path),
+        reverse=True,
+    )
+    for path in backups[MIGRATION_BACKUP_KEEP:]:
+        os.remove(path)
+
+
+def _create_migration_backup(db_path, current_version, target_version):
+    backup_path = _migration_backup_path(
+        db_path,
+        current_version,
+        target_version,
+    )
+    copy_sqlite_snapshot(db_path, backup_path)
+    _prune_migration_backups(os.path.dirname(backup_path))
+    return backup_path
+
+
+def _ensure_migration_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def run_migrations():
+    """Apply pending migrations in order and return the current schema version."""
+    db_path = connection.DB_PATH
+    target_version = MIGRATIONS[-1][0]
+    try:
+        applied_versions = _read_applied_versions(db_path)
+        _validate_versions(applied_versions)
+    except MigrationError:
+        raise
+    except Exception as exc:
+        raise MigrationError(f"无法读取数据库 migration 状态: {exc}") from exc
+
+    pending = [
+        migration
+        for migration in MIGRATIONS
+        if migration[0] not in applied_versions
+    ]
+    if not pending:
+        return applied_versions[-1] if applied_versions else 0
+
+    current_version = applied_versions[-1] if applied_versions else 0
+    backup_path = None
+    if os.path.exists(db_path) and os.path.getsize(db_path) > 0:
+        try:
+            backup_path = _create_migration_backup(
+                db_path,
+                current_version,
+                target_version,
+            )
+        except Exception as exc:
+            raise MigrationError(f"迁移前数据库快照失败: {exc}") from exc
+
+    for version, name, migration in pending:
+        try:
+            with connection.get_connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                _ensure_migration_table(conn)
+                live_versions = [
+                    int(row[0])
+                    for row in conn.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    ).fetchall()
+                ]
+                _validate_versions(live_versions)
+                if version in live_versions:
+                    continue
+                expected_version = (live_versions[-1] if live_versions else 0) + 1
+                if version != expected_version:
+                    raise MigrationError(
+                        f"migration 顺序错误: 期望 v{expected_version}，实际 v{version}"
+                    )
+                migration(conn)
+                conn.execute(
+                    "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
+                    (version, name),
+                )
+        except Exception as exc:
+            location = f"，快照: {backup_path}" if backup_path else ""
+            raise MigrationError(
+                f"数据库 migration v{version} ({name}) 失败{location}: {exc}"
+            ) from exc
+        logger.info("Applied database migration v%s (%s)", version, name)
+
+    return target_version
