@@ -40,15 +40,8 @@ def insert_analysis(paper_id, analysis_data):
     with get_connection() as conn:
         cursor = conn.cursor()
 
-        # 检查是否已存在分析结果，避免重复插入
-        cursor.execute("SELECT id FROM analysis WHERE paper_id = ?", (paper_id,))
-        if cursor.fetchone():
-
-            logger.debug(f"Analysis already exists for paper_id={paper_id}, skipping.")
-            return None
-
         cursor.execute("""
-            INSERT INTO analysis (
+            INSERT OR IGNORE INTO analysis (
                 paper_id, tags, summary_cn, summary_en, rating, value_comment, qa_analysis,
                 recommendation_score, recommendation_reason, recommendation_interest_hash, recommendation_analyzed_at
             )
@@ -66,6 +59,9 @@ def insert_analysis(paper_id, analysis_data):
             analysis_data.get("recommendation_interest_hash", ""),
             analysis_data.get("recommendation_analyzed_at"),
         ))
+        if cursor.rowcount == 0:
+            logger.debug(f"Analysis already exists for paper_id={paper_id}, skipping.")
+            return None
         conn.commit()
         analysis_id = cursor.lastrowid
 
@@ -120,67 +116,42 @@ def update_analysis(paper_id, data):
     with get_connection() as conn:
         cursor = conn.cursor()
 
-        # 检查是否已有分析记录
-        cursor.execute("SELECT id FROM analysis WHERE paper_id = ?", (paper_id,))
-        exists = cursor.fetchone()
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO analysis (
+                paper_id, tags, summary_cn, summary_en, rating, value_comment, qa_analysis,
+                recommendation_score, recommendation_reason, recommendation_interest_hash,
+                recommendation_analyzed_at
+            )
+            VALUES (?, '[]', '', '', 0, '', '', NULL, '', '', NULL)
+            """,
+            (paper_id,),
+        )
 
-        if exists:
-            # 更新现有记录：动态构建 SET 子句，仅更新传入的字段
-            sets = []
-            params = []
-            if "rating" in data:
-                sets.append("rating = ?")
-                params.append(int(data["rating"]))
-            if "tags" in data:
-                sets.append("tags = ?")
-                params.append(json.dumps(data["tags"], ensure_ascii=False))
-            if "summary_cn" in data:
-                sets.append("summary_cn = ?")
-                params.append(data["summary_cn"])
-            if "value_comment" in data:
-                sets.append("value_comment = ?")
-                params.append(data["value_comment"])
-            if "qa_analysis" in data:
-                sets.append("qa_analysis = ?")
-                params.append(data["qa_analysis"])
-            if "recommendation_score" in data:
-                sets.append("recommendation_score = ?")
-                score = data["recommendation_score"]
-                params.append(None if score is None else int(score))
-            if "recommendation_reason" in data:
-                sets.append("recommendation_reason = ?")
-                params.append(data["recommendation_reason"])
-            if "recommendation_interest_hash" in data:
-                sets.append("recommendation_interest_hash = ?")
-                params.append(data["recommendation_interest_hash"])
-            if "recommendation_analyzed_at" in data:
-                sets.append("recommendation_analyzed_at = ?")
-                params.append(data["recommendation_analyzed_at"])
-
-            if sets:
-                params.append(paper_id)
-                cursor.execute(f"UPDATE analysis SET {', '.join(sets)} WHERE paper_id = ?", params)
-        else:
-            # 插入新记录：使用 get 提供默认值
-            cursor.execute("""
-                INSERT INTO analysis (
-                    paper_id, tags, summary_cn, summary_en, rating, value_comment, qa_analysis,
-                    recommendation_score, recommendation_reason, recommendation_interest_hash, recommendation_analyzed_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                paper_id,
-                json.dumps(data.get("tags", []), ensure_ascii=False),
-                data.get("summary_cn", ""),
-                data.get("summary_en", ""),
-                int(data.get("rating", 0)),
-                data.get("value_comment", ""),
-                data.get("qa_analysis", ""),
-                data.get("recommendation_score"),
-                data.get("recommendation_reason", ""),
-                data.get("recommendation_interest_hash", ""),
-                data.get("recommendation_analyzed_at"),
-            ))
+        sets = []
+        params = []
+        field_values = {
+            "rating": lambda value: int(value),
+            "tags": lambda value: json.dumps(value, ensure_ascii=False),
+            "summary_cn": lambda value: value,
+            "summary_en": lambda value: value,
+            "value_comment": lambda value: value,
+            "qa_analysis": lambda value: value,
+            "recommendation_score": lambda value: None if value is None else int(value),
+            "recommendation_reason": lambda value: value,
+            "recommendation_interest_hash": lambda value: value,
+            "recommendation_analyzed_at": lambda value: value,
+        }
+        for field, convert in field_values.items():
+            if field in data:
+                sets.append(f"{field} = ?")
+                params.append(convert(data[field]))
+        if sets:
+            params.append(paper_id)
+            cursor.execute(
+                f"UPDATE analysis SET {', '.join(sets)} WHERE paper_id = ?",
+                params,
+            )
 
         conn.commit()
 

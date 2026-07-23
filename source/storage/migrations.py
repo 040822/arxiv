@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime
 
 from . import connection
+from .analysis_migrations import migrate_analysis_unique
 from .schema import apply_baseline_schema
 from .snapshot import copy_sqlite_snapshot
 
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 MIGRATION_BACKUP_KEEP = 3
 MIGRATIONS = (
     (1, "baseline", apply_baseline_schema),
+    (2, "analysis_unique", migrate_analysis_unique),
 )
 
 
