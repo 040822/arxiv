@@ -13,6 +13,8 @@ from unittest.mock import patch
 from settings import build_chat_completion_kwargs, validate_prompt_template
 from source.settings import store as settings_store
 from source.storage import connection as db_connection
+pipeline_orchestrator = None
+pipeline_scheduler = None
 from source.reports import renderer as report_renderer
 
 
@@ -720,6 +722,9 @@ class ProviderEndpointTests(unittest.TestCase):
     def setUpClass(cls):
         install_import_stubs()
         import app as app_module
+        global pipeline_orchestrator, pipeline_scheduler
+        pipeline_orchestrator = importlib.import_module("source.pipeline.orchestrator")
+        pipeline_scheduler = importlib.import_module("source.pipeline.scheduler")
         cls.app_module = app_module
 
     def tearDown(self):
@@ -1114,7 +1119,7 @@ class ProviderEndpointTests(unittest.TestCase):
 
         with patch.object(app_module.scheduler, "get_job", return_value=None), \
              patch.object(app_module.scheduler, "add_job") as add_job:
-            app_module.configure_daily_job(schedule)
+            pipeline_scheduler.configure_daily_job(schedule)
 
         kwargs = add_job.call_args.kwargs
         self.assertEqual(kwargs["day_of_week"], "mon,wed,fri")
@@ -1215,15 +1220,15 @@ class ProviderEndpointTests(unittest.TestCase):
             "last_uploaded_file": "arxiv-backup-20260615-120000.zip",
         }
 
-        with patch.object(app_module, "start_task_log", return_value=7) as start_log, \
-             patch.object(app_module, "finish_task_log") as finish_log, \
-             patch.object(app_module, "run_webdav_backup", return_value=result_payload) as backup:
+        with patch.object(
+            app_module,
+            "_run_webdav_backup_task",
+            return_value=result_payload,
+        ) as backup:
             result = app_module.api_run_webdav_backup()
 
         self.assertEqual(result["status"], "ok")
         backup.assert_called_once_with(force=True)
-        start_log.assert_called_once_with("webdav_backup", "WebDAV 云同步备份")
-        self.assertEqual(finish_log.call_args.args[1], "success")
 
     def test_daily_pipeline_uses_saved_limits_and_records_six_steps(self):
         app_module = self.app_module
@@ -1236,22 +1241,22 @@ class ProviderEndpointTests(unittest.TestCase):
             "analyze_limit": 200,
         }
 
-        with patch.object(app_module, "start_task_log", return_value=1), \
-             patch.object(app_module, "initialize_task_log_steps") as initialize_steps, \
-             patch.object(app_module, "set_task_log_step_status") as set_step, \
-             patch.object(app_module, "finish_task_log") as finish_log, \
-             patch.object(app_module, "get_schedule_config", return_value=schedule), \
-             patch.object(app_module, "fetch_latest_papers", return_value=[]) as fetch, \
-             patch.object(app_module, "get_concurrency", return_value=2), \
-             patch.object(app_module, "analyze_pending_papers", return_value=0) as analyze, \
-             patch.object(app_module, "get_all_dates", return_value=[("2026-06-23",)]), \
-             patch.object(app_module, "get_personalization_config", return_value={"research_interests": ""}), \
-             patch.object(app_module, "recommend_pending_papers") as recommend, \
-             patch.object(app_module, "generate_report_content", return_value=("html", 0, 0, 0.0)), \
-             patch.object(app_module, "save_report"), \
-             patch.object(app_module, "get_email_report_config", return_value={"enabled": False}), \
-             patch.object(app_module, "get_webdav_backup_config", return_value={"enabled": False}):
-            result = app_module.daily_pipeline()
+        with patch.object(pipeline_orchestrator, "start_task_log", return_value=1), \
+             patch.object(pipeline_orchestrator, "initialize_task_log_steps") as initialize_steps, \
+             patch.object(pipeline_orchestrator, "set_task_log_step_status") as set_step, \
+             patch.object(pipeline_orchestrator, "finish_task_log") as finish_log, \
+             patch.object(pipeline_orchestrator, "get_schedule_config", return_value=schedule), \
+             patch.object(pipeline_orchestrator, "fetch_latest_papers", return_value=[]) as fetch, \
+             patch.object(pipeline_orchestrator, "get_concurrency", return_value=2), \
+             patch.object(pipeline_orchestrator, "analyze_pending_papers", return_value=0) as analyze, \
+             patch.object(pipeline_orchestrator, "get_all_dates", return_value=[("2026-06-23",)]), \
+             patch.object(pipeline_orchestrator, "get_personalization_config", return_value={"research_interests": ""}), \
+             patch.object(pipeline_orchestrator, "recommend_pending_papers") as recommend, \
+             patch.object(pipeline_orchestrator, "generate_report_content", return_value=("html", 0, 0, 0.0)), \
+             patch.object(pipeline_orchestrator, "save_report"), \
+             patch.object(pipeline_orchestrator, "get_email_report_config", return_value={"enabled": False}), \
+             patch.object(pipeline_orchestrator, "get_webdav_backup_config", return_value={"enabled": False}):
+            result = pipeline_orchestrator.daily_pipeline()
 
         self.assertEqual(result["status"], "success")
         fetch.assert_called_once_with(days=5)
@@ -1267,28 +1272,28 @@ class ProviderEndpointTests(unittest.TestCase):
     def test_daily_pipeline_backup_failure_does_not_fail_pipeline(self):
         app_module = self.app_module
 
-        with patch.object(app_module, "start_task_log", return_value=1), \
-             patch.object(app_module, "initialize_task_log_steps"), \
-             patch.object(app_module, "set_task_log_step_status") as set_step, \
-             patch.object(app_module, "finish_task_log") as finish_log, \
-             patch.object(app_module, "get_schedule_config", return_value={
+        with patch.object(pipeline_orchestrator, "start_task_log", return_value=1), \
+             patch.object(pipeline_orchestrator, "initialize_task_log_steps"), \
+             patch.object(pipeline_orchestrator, "set_task_log_step_status") as set_step, \
+             patch.object(pipeline_orchestrator, "finish_task_log") as finish_log, \
+             patch.object(pipeline_orchestrator, "get_schedule_config", return_value={
                  "fetch_days": 3,
                  "analyze_limit": 1000,
                  "fetch_retry_interval_minutes": 10,
                  "fetch_max_retries": 20,
              }), \
-             patch.object(app_module, "fetch_latest_papers", return_value=[]), \
-             patch.object(app_module, "get_concurrency", return_value=2), \
-             patch.object(app_module, "analyze_pending_papers", return_value=0), \
-             patch.object(app_module, "get_all_dates", return_value=[("2026-06-15",)]), \
-             patch.object(app_module, "get_personalization_config", return_value={"research_interests": "robotics"}), \
-             patch.object(app_module, "recommend_pending_papers", return_value=0), \
-             patch.object(app_module, "generate_report_content", return_value=("html", 1, 1, 0.0)), \
-             patch.object(app_module, "save_report"), \
-             patch.object(app_module, "get_email_report_config", return_value={"enabled": False}), \
-             patch.object(app_module, "get_webdav_backup_config", return_value={"enabled": True}), \
-             patch.object(app_module, "_run_webdav_backup_task", side_effect=RuntimeError("dav down")):
-            result = app_module.daily_pipeline()
+             patch.object(pipeline_orchestrator, "fetch_latest_papers", return_value=[]), \
+             patch.object(pipeline_orchestrator, "get_concurrency", return_value=2), \
+             patch.object(pipeline_orchestrator, "analyze_pending_papers", return_value=0), \
+             patch.object(pipeline_orchestrator, "get_all_dates", return_value=[("2026-06-15",)]), \
+             patch.object(pipeline_orchestrator, "get_personalization_config", return_value={"research_interests": "robotics"}), \
+             patch.object(pipeline_orchestrator, "recommend_pending_papers", return_value=0), \
+             patch.object(pipeline_orchestrator, "generate_report_content", return_value=("html", 1, 1, 0.0)), \
+             patch.object(pipeline_orchestrator, "save_report"), \
+             patch.object(pipeline_orchestrator, "get_email_report_config", return_value={"enabled": False}), \
+             patch.object(pipeline_orchestrator, "get_webdav_backup_config", return_value={"enabled": True}), \
+             patch.object(pipeline_orchestrator, "_run_webdav_backup_task", side_effect=RuntimeError("dav down")):
+            result = pipeline_orchestrator.daily_pipeline()
 
         self.assertEqual(result["status"], "warning")
         self.assertEqual(finish_log.call_args.args[1], "warning")
@@ -1304,28 +1309,28 @@ class ProviderEndpointTests(unittest.TestCase):
             "report_date": "2026-06-17",
         }
 
-        with patch.object(app_module, "start_task_log", return_value=1), \
-             patch.object(app_module, "initialize_task_log_steps"), \
-             patch.object(app_module, "set_task_log_step_status") as set_step, \
-             patch.object(app_module, "finish_task_log") as finish_log, \
-             patch.object(app_module, "get_schedule_config", return_value={
+        with patch.object(pipeline_orchestrator, "start_task_log", return_value=1), \
+             patch.object(pipeline_orchestrator, "initialize_task_log_steps"), \
+             patch.object(pipeline_orchestrator, "set_task_log_step_status") as set_step, \
+             patch.object(pipeline_orchestrator, "finish_task_log") as finish_log, \
+             patch.object(pipeline_orchestrator, "get_schedule_config", return_value={
                  "fetch_days": 3,
                  "analyze_limit": 1000,
                  "fetch_retry_interval_minutes": 10,
                  "fetch_max_retries": 20,
              }), \
-             patch.object(app_module, "fetch_latest_papers", return_value=[]), \
-             patch.object(app_module, "get_concurrency", return_value=2), \
-             patch.object(app_module, "analyze_pending_papers", return_value=0), \
-             patch.object(app_module, "get_all_dates", return_value=[("2026-06-17",)]), \
-             patch.object(app_module, "get_personalization_config", return_value={"research_interests": "robotics"}), \
-             patch.object(app_module, "recommend_pending_papers", return_value=0), \
-             patch.object(app_module, "generate_report_content", return_value=("html", 1, 1, 4.0)), \
-             patch.object(app_module, "save_report"), \
-             patch.object(app_module, "get_email_report_config", return_value={"enabled": True}), \
-             patch.object(app_module, "_run_email_report_task", return_value=skipped) as email_task, \
-             patch.object(app_module, "get_webdav_backup_config", return_value={"enabled": False}):
-            app_module.daily_pipeline()
+             patch.object(pipeline_orchestrator, "fetch_latest_papers", return_value=[]), \
+             patch.object(pipeline_orchestrator, "get_concurrency", return_value=2), \
+             patch.object(pipeline_orchestrator, "analyze_pending_papers", return_value=0), \
+             patch.object(pipeline_orchestrator, "get_all_dates", return_value=[("2026-06-17",)]), \
+             patch.object(pipeline_orchestrator, "get_personalization_config", return_value={"research_interests": "robotics"}), \
+             patch.object(pipeline_orchestrator, "recommend_pending_papers", return_value=0), \
+             patch.object(pipeline_orchestrator, "generate_report_content", return_value=("html", 1, 1, 4.0)), \
+             patch.object(pipeline_orchestrator, "save_report"), \
+             patch.object(pipeline_orchestrator, "get_email_report_config", return_value={"enabled": True}), \
+             patch.object(pipeline_orchestrator, "_run_email_report_task", return_value=skipped) as email_task, \
+             patch.object(pipeline_orchestrator, "get_webdav_backup_config", return_value={"enabled": False}):
+            pipeline_orchestrator.daily_pipeline()
 
         self.assertFalse(email_task.call_args.kwargs["log_task"])
         self.assertEqual(finish_log.call_args.args[1], "success")
@@ -1335,10 +1340,10 @@ class ProviderEndpointTests(unittest.TestCase):
         app_module = self.app_module
         self.assertTrue(app_module.pipeline_lock.acquire(blocking=False))
         try:
-            with patch.object(app_module, "start_task_log", return_value=12), \
-                 patch.object(app_module, "finish_task_log") as finish_log, \
-                 patch.object(app_module, "fetch_latest_papers") as fetch:
-                result = app_module.daily_pipeline()
+            with patch.object(pipeline_orchestrator, "start_task_log", return_value=12), \
+                 patch.object(pipeline_orchestrator, "finish_task_log") as finish_log, \
+                 patch.object(pipeline_orchestrator, "fetch_latest_papers") as fetch:
+                result = pipeline_orchestrator.daily_pipeline()
         finally:
             app_module.pipeline_lock.release()
 
@@ -1366,19 +1371,19 @@ class ProviderEndpointTests(unittest.TestCase):
     def test_daily_pipeline_stops_after_core_step_failure(self):
         app_module = self.app_module
 
-        with patch.object(app_module, "start_task_log", return_value=1), \
-             patch.object(app_module, "initialize_task_log_steps"), \
-             patch.object(app_module, "set_task_log_step_status") as set_step, \
-             patch.object(app_module, "finish_task_log") as finish_log, \
-             patch.object(app_module, "get_schedule_config", return_value={
+        with patch.object(pipeline_orchestrator, "start_task_log", return_value=1), \
+             patch.object(pipeline_orchestrator, "initialize_task_log_steps"), \
+             patch.object(pipeline_orchestrator, "set_task_log_step_status") as set_step, \
+             patch.object(pipeline_orchestrator, "finish_task_log") as finish_log, \
+             patch.object(pipeline_orchestrator, "get_schedule_config", return_value={
                  "fetch_days": 3,
                  "analyze_limit": 1000,
                  "fetch_retry_interval_minutes": 10,
                  "fetch_max_retries": 0,
              }), \
-             patch.object(app_module, "fetch_latest_papers", side_effect=RuntimeError("arXiv down")), \
-             patch.object(app_module, "analyze_pending_papers") as analyze:
-            result = app_module.daily_pipeline()
+             patch.object(pipeline_orchestrator, "fetch_latest_papers", side_effect=RuntimeError("arXiv down")), \
+             patch.object(pipeline_orchestrator, "analyze_pending_papers") as analyze:
+            result = pipeline_orchestrator.daily_pipeline()
 
         self.assertEqual(result["status"], "error")
         analyze.assert_not_called()
@@ -1401,15 +1406,15 @@ class ProviderEndpointTests(unittest.TestCase):
             "overview_count": 1,
         }
 
-        with patch.object(app_module, "start_task_log", return_value=9), \
-             patch.object(app_module, "finish_task_log") as finish_log, \
-             patch.object(app_module, "get_email_report_config", return_value={
+        with patch.object(pipeline_orchestrator, "start_task_log", return_value=9), \
+             patch.object(pipeline_orchestrator, "finish_task_log") as finish_log, \
+             patch.object(pipeline_orchestrator, "get_email_report_config", return_value={
                  "enabled": True,
                  "last_sent_report_date": "2026-06-16",
              }), \
-             patch.object(app_module, "generate_report_ai_summary", return_value=(None, "summary model down")) as summary, \
-             patch.object(app_module, "send_report_email", return_value=send_result) as send:
-            result = app_module._run_email_report_task(report, force=False)
+             patch.object(pipeline_orchestrator, "generate_report_ai_summary", return_value=(None, "summary model down")) as summary, \
+             patch.object(pipeline_orchestrator, "send_report_email", return_value=send_result) as send:
+            result = pipeline_orchestrator._run_email_report_task(report, force=False)
 
         self.assertEqual(result["status"], "ok")
         summary.assert_called_once_with("2026-06-17")
@@ -1423,15 +1428,15 @@ class ProviderEndpointTests(unittest.TestCase):
         app_module = self.app_module
         report = {"report_date": "2026-06-17", "paper_count": 1, "analyzed_count": 1, "avg_rating": 4}
 
-        with patch.object(app_module, "start_task_log", return_value=10), \
-             patch.object(app_module, "finish_task_log") as finish_log, \
-             patch.object(app_module, "get_email_report_config", return_value={
+        with patch.object(pipeline_orchestrator, "start_task_log", return_value=10), \
+             patch.object(pipeline_orchestrator, "finish_task_log") as finish_log, \
+             patch.object(pipeline_orchestrator, "get_email_report_config", return_value={
                  "enabled": True,
                  "last_sent_report_date": "2026-06-17",
              }), \
-             patch.object(app_module, "generate_report_ai_summary") as summary, \
-             patch.object(app_module, "send_report_email") as send:
-            result = app_module._run_email_report_task(report, force=False)
+             patch.object(pipeline_orchestrator, "generate_report_ai_summary") as summary, \
+             patch.object(pipeline_orchestrator, "send_report_email") as send:
+            result = pipeline_orchestrator._run_email_report_task(report, force=False)
 
         self.assertEqual(result["status"], "skipped")
         self.assertEqual(result["reason"], "already_sent")
@@ -1458,15 +1463,15 @@ class ProviderEndpointTests(unittest.TestCase):
             "overview_count": 1,
         }
 
-        with patch.object(app_module, "start_task_log", return_value=11), \
-             patch.object(app_module, "finish_task_log"), \
-             patch.object(app_module, "get_email_report_config", return_value={
+        with patch.object(pipeline_orchestrator, "start_task_log", return_value=11), \
+             patch.object(pipeline_orchestrator, "finish_task_log"), \
+             patch.object(pipeline_orchestrator, "get_email_report_config", return_value={
                  "enabled": True,
                  "last_sent_report_date": "2026-06-17",
              }), \
-             patch.object(app_module, "generate_report_ai_summary", return_value=("summary", "")) as summary, \
-             patch.object(app_module, "send_report_email", return_value=send_result) as send:
-            result = app_module._run_email_report_task(report, force=True)
+             patch.object(pipeline_orchestrator, "generate_report_ai_summary", return_value=("summary", "")) as summary, \
+             patch.object(pipeline_orchestrator, "send_report_email", return_value=send_result) as send:
+            result = pipeline_orchestrator._run_email_report_task(report, force=True)
 
         self.assertEqual(result["status"], "ok")
         summary.assert_called_once_with("2026-06-17")
@@ -3595,7 +3600,11 @@ class ScheduleRetryTests(unittest.TestCase):
         settings.DB_DIR = tmp
         settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
         sys.modules.pop("app", None)
-        return importlib.import_module("app")
+        app_module = importlib.import_module("app")
+        global pipeline_orchestrator, pipeline_scheduler
+        pipeline_orchestrator = importlib.import_module("source.pipeline.orchestrator")
+        pipeline_scheduler = importlib.import_module("source.pipeline.scheduler")
+        return app_module
 
     def test_schedule_api_saves_and_returns_fetch_retry_config(self):
         import settings
@@ -3638,14 +3647,14 @@ class ScheduleRetryTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 app_module = self.import_app_with_temp_settings(tmp)
-                with patch.object(app_module, "fetch_latest_papers", side_effect=[
+                with patch.object(pipeline_orchestrator, "fetch_latest_papers", side_effect=[
                     RuntimeError("arXiv 429"),
                     RuntimeError("still limited"),
                     [{"id": 1}],
                 ]) as fetch_mock, \
                         patch.object(app_module.time, "sleep") as sleep_mock, \
-                        patch.object(app_module, "set_task_log_step_status") as step_mock:
-                    papers, retries = app_module._fetch_for_daily_pipeline_with_retries(
+                        patch.object(pipeline_orchestrator, "set_task_log_step_status") as step_mock:
+                    papers, retries = pipeline_orchestrator._fetch_for_daily_pipeline_with_retries(
                         log_id=123,
                         fetch_days=3,
                         retry_interval_minutes=10,
@@ -3671,11 +3680,11 @@ class ScheduleRetryTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 app_module = self.import_app_with_temp_settings(tmp)
-                with patch.object(app_module, "fetch_latest_papers", side_effect=RuntimeError("offline")) as fetch_mock, \
+                with patch.object(pipeline_orchestrator, "fetch_latest_papers", side_effect=RuntimeError("offline")) as fetch_mock, \
                         patch.object(app_module.time, "sleep") as sleep_mock, \
-                        patch.object(app_module, "set_task_log_step_status"):
+                        patch.object(pipeline_orchestrator, "set_task_log_step_status"):
                     with self.assertRaisesRegex(RuntimeError, "已重试 2 次仍未成功"):
-                        app_module._fetch_for_daily_pipeline_with_retries(
+                        pipeline_orchestrator._fetch_for_daily_pipeline_with_retries(
                             log_id=123,
                             fetch_days=3,
                             retry_interval_minutes=10,
@@ -3697,11 +3706,11 @@ class ScheduleRetryTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 app_module = self.import_app_with_temp_settings(tmp)
-                with patch.object(app_module, "fetch_latest_papers", side_effect=RuntimeError("offline")) as fetch_mock, \
+                with patch.object(pipeline_orchestrator, "fetch_latest_papers", side_effect=RuntimeError("offline")) as fetch_mock, \
                         patch.object(app_module.time, "sleep") as sleep_mock, \
-                        patch.object(app_module, "set_task_log_step_status"):
+                        patch.object(pipeline_orchestrator, "set_task_log_step_status"):
                     with self.assertRaisesRegex(RuntimeError, "已重试 0 次仍未成功"):
-                        app_module._fetch_for_daily_pipeline_with_retries(
+                        pipeline_orchestrator._fetch_for_daily_pipeline_with_retries(
                             log_id=123,
                             fetch_days=3,
                             retry_interval_minutes=10,
