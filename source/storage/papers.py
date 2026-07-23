@@ -64,7 +64,7 @@ def paper_exists(arxiv_id):
         cursor.execute("SELECT 1 FROM papers WHERE arxiv_id = ?", (arxiv_id,))
         exists = cursor.fetchone() is not None
 
-        return exists
+    return exists
 
 
 def insert_paper(paper_data):
@@ -128,7 +128,7 @@ def get_paper_by_arxiv_id(arxiv_id):
         cursor.execute("SELECT * FROM papers WHERE arxiv_id = ?", (arxiv_id,))
         row = cursor.fetchone()
 
-        return dict(row) if row else None
+    return dict(row) if row else None
 
 
 def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, offset=0, count_total=False):
@@ -201,21 +201,21 @@ def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, of
         rows = cursor.fetchall()
 
 
-        # 解析 JSON 字段：将数据库中的 JSON 字符串转为 Python 对象
-        results = []
-        for row in rows:
-            r = dict(row)
-            if r.get("authors") and isinstance(r["authors"], str):
-                r["authors"] = json.loads(r["authors"])
-            if r.get("categories") and isinstance(r["categories"], str):
-                r["categories"] = json.loads(r["categories"])
-            if r.get("tags") and isinstance(r["tags"], str):
-                r["tags"] = json.loads(r["tags"])
-            results.append(r)
+    # 解析 JSON 字段：将数据库中的 JSON 字符串转为 Python 对象
+    results = []
+    for row in rows:
+        r = dict(row)
+        if r.get("authors") and isinstance(r["authors"], str):
+            r["authors"] = json.loads(r["authors"])
+        if r.get("categories") and isinstance(r["categories"], str):
+            r["categories"] = json.loads(r["categories"])
+        if r.get("tags") and isinstance(r["tags"], str):
+            r["tags"] = json.loads(r["tags"])
+        results.append(r)
 
-        if count_total:
-            return results, total
-        return results
+    if count_total:
+        return results, total
+    return results
 
 
 def browse_papers(date=None, tag=None, min_rating=None, max_rating=None,
@@ -314,19 +314,19 @@ def browse_papers(date=None, tag=None, min_rating=None, max_rating=None,
         rows = cursor.fetchall()
 
 
-        # 解析 JSON 字段
-        results = []
-        for row in rows:
-            r = dict(row)
-            if r.get("authors") and isinstance(r["authors"], str):
-                r["authors"] = json.loads(r["authors"])
-            if r.get("categories") and isinstance(r["categories"], str):
-                r["categories"] = json.loads(r["categories"])
-            if r.get("tags") and isinstance(r["tags"], str):
-                r["tags"] = json.loads(r["tags"])
-            results.append(r)
+    # 解析 JSON 字段
+    results = []
+    for row in rows:
+        r = dict(row)
+        if r.get("authors") and isinstance(r["authors"], str):
+            r["authors"] = json.loads(r["authors"])
+        if r.get("categories") and isinstance(r["categories"], str):
+            r["categories"] = json.loads(r["categories"])
+        if r.get("tags") and isinstance(r["tags"], str):
+            r["tags"] = json.loads(r["tags"])
+        results.append(r)
 
-        return results, total
+    return results, total
 
 
 def get_all_categories():
@@ -347,7 +347,7 @@ def get_all_categories():
         """)
         rows = cursor.fetchall()
 
-        return [(row["primary_category"], row["cnt"]) for row in rows]
+    return [(row["primary_category"], row["cnt"]) for row in rows]
 
 
 def get_all_dates():
@@ -368,7 +368,7 @@ def get_all_dates():
         """)
         rows = cursor.fetchall()
 
-        return [(row["published_date"], row["cnt"]) for row in rows]
+    return [(row["published_date"], row["cnt"]) for row in rows]
 
 
 def get_earliest_date(category=None):
@@ -392,7 +392,7 @@ def get_earliest_date(category=None):
             cursor.execute("SELECT MIN(published_date) as earliest FROM papers")
         row = cursor.fetchone()
 
-        return row["earliest"] if row else None
+    return row["earliest"] if row else None
 
 
 def get_date_range_for_category(category):
@@ -416,9 +416,9 @@ def get_date_range_for_category(category):
         """, (category,))
         row = cursor.fetchone()
 
-        if row and row["earliest"]:
-            return {"earliest": row["earliest"], "latest": row["latest"], "count": row["cnt"]}
-        return None
+    if row and row["earliest"]:
+        return {"earliest": row["earliest"], "latest": row["latest"], "count": row["cnt"]}
+    return None
 
 
 def get_all_tags():
@@ -436,13 +436,13 @@ def get_all_tags():
         rows = cursor.fetchall()
 
 
-        # 遍历所有标签 JSON，统计每个标签的出现次数
-        tag_counts = {}
-        for row in rows:
-            tags = json.loads(row["tags"])
-            for tag in tags:
-                tag_counts[tag] = tag_counts.get(tag, 0) + 1
-        return sorted(tag_counts.items(), key=lambda x: -x[1])
+    # 遍历所有标签 JSON，统计每个标签的出现次数
+    tag_counts = {}
+    for row in rows:
+        tags = json.loads(row["tags"])
+        for tag in tags:
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    return sorted(tag_counts.items(), key=lambda x: -x[1])
 
 
 def get_paper_count():
@@ -456,7 +456,7 @@ def get_paper_count():
         cursor.execute("SELECT COUNT(*) as cnt FROM papers")
         count = cursor.fetchone()["cnt"]
 
-        return count
+    return count
 
 
 def get_analyzed_count():
@@ -475,7 +475,7 @@ def get_analyzed_count():
         """)
         count = cursor.fetchone()["cnt"]
 
-        return count
+    return count
 
 
 def get_unanalyzed_count():
@@ -495,7 +495,7 @@ def get_unanalyzed_count():
         """)
         count = cursor.fetchone()["cnt"]
 
-        return count
+    return count
 
 
 def get_unanalyzed_papers(limit=100):
@@ -521,16 +521,16 @@ def get_unanalyzed_papers(limit=100):
         rows = cursor.fetchall()
 
 
-        # 解析 JSON 字段
-        results = []
-        for row in rows:
-            r = dict(row)
-            if r.get("authors") and isinstance(r["authors"], str):
-                r["authors"] = json.loads(r["authors"])
-            if r.get("categories") and isinstance(r["categories"], str):
-                r["categories"] = json.loads(r["categories"])
-            results.append(r)
-        return results
+    # 解析 JSON 字段
+    results = []
+    for row in rows:
+        r = dict(row)
+        if r.get("authors") and isinstance(r["authors"], str):
+            r["authors"] = json.loads(r["authors"])
+        if r.get("categories") and isinstance(r["categories"], str):
+            r["categories"] = json.loads(r["categories"])
+        results.append(r)
+    return results
 
 
 def search_papers(keyword, limit=50):
@@ -616,18 +616,18 @@ def search_papers(keyword, limit=50):
         rows = cursor.fetchall()
 
 
-        # 解析 JSON 字段
-        results = []
-        for row in rows:
-            r = dict(row)
-            if r.get("authors") and isinstance(r["authors"], str):
-                r["authors"] = json.loads(r["authors"])
-            if r.get("categories") and isinstance(r["categories"], str):
-                r["categories"] = json.loads(r["categories"])
-            if r.get("tags") and isinstance(r["tags"], str):
-                r["tags"] = json.loads(r["tags"])
-            results.append(r)
-        return results
+    # 解析 JSON 字段
+    results = []
+    for row in rows:
+        r = dict(row)
+        if r.get("authors") and isinstance(r["authors"], str):
+            r["authors"] = json.loads(r["authors"])
+        if r.get("categories") and isinstance(r["categories"], str):
+            r["categories"] = json.loads(r["categories"])
+        if r.get("tags") and isinstance(r["tags"], str):
+            r["tags"] = json.loads(r["tags"])
+        results.append(r)
+    return results
 
 
 def hide_paper(arxiv_id):
@@ -645,7 +645,7 @@ def hide_paper(arxiv_id):
         affected = cursor.rowcount
         conn.commit()
 
-        return affected > 0
+    return affected > 0
 
 
 def unhide_paper(arxiv_id):
@@ -663,7 +663,7 @@ def unhide_paper(arxiv_id):
         affected = cursor.rowcount
         conn.commit()
 
-        return affected > 0
+    return affected > 0
 
 
 def delete_paper(arxiv_id):
@@ -683,7 +683,7 @@ def delete_paper(arxiv_id):
         affected = cursor.rowcount
         conn.commit()
 
-        return affected > 0
+    return affected > 0
 
 
 def batch_delete_papers(arxiv_ids):
@@ -705,7 +705,7 @@ def batch_delete_papers(arxiv_ids):
         affected = cursor.rowcount
         conn.commit()
 
-        return affected
+    return affected
 
 
 def batch_hide_papers(arxiv_ids):
@@ -727,7 +727,7 @@ def batch_hide_papers(arxiv_ids):
         affected = cursor.rowcount
         conn.commit()
 
-        return affected
+    return affected
 
 
 def get_unanalyzed_papers_by_ids(arxiv_ids):
@@ -754,13 +754,13 @@ def get_unanalyzed_papers_by_ids(arxiv_ids):
         """, arxiv_ids)
         rows = cursor.fetchall()
 
-        # 解析 JSON 字段
-        results = []
-        for row in rows:
-            r = dict(row)
-            if r.get("authors") and isinstance(r["authors"], str):
-                r["authors"] = json.loads(r["authors"])
-            if r.get("categories") and isinstance(r["categories"], str):
-                r["categories"] = json.loads(r["categories"])
-            results.append(r)
-        return results
+    # 解析 JSON 字段
+    results = []
+    for row in rows:
+        r = dict(row)
+        if r.get("authors") and isinstance(r["authors"], str):
+            r["authors"] = json.loads(r["authors"])
+        if r.get("categories") and isinstance(r["categories"], str):
+            r["categories"] = json.loads(r["categories"])
+        results.append(r)
+    return results

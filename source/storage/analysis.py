@@ -69,7 +69,7 @@ def insert_analysis(paper_id, analysis_data):
         conn.commit()
         analysis_id = cursor.lastrowid
 
-        return analysis_id
+    return analysis_id
 
 
 def get_analysis_by_paper_id(paper_id):
@@ -86,12 +86,12 @@ def get_analysis_by_paper_id(paper_id):
         cursor.execute("SELECT * FROM analysis WHERE paper_id = ?", (paper_id,))
         row = cursor.fetchone()
 
-        if row:
-            r = dict(row)
-            if r.get("tags") and isinstance(r["tags"], str):
-                r["tags"] = json.loads(r["tags"])
-            return r
-        return None
+    if row:
+        r = dict(row)
+        if r.get("tags") and isinstance(r["tags"], str):
+            r["tags"] = json.loads(r["tags"])
+        return r
+    return None
 
 
 def update_analysis(paper_id, data):
@@ -184,7 +184,7 @@ def update_analysis(paper_id, data):
 
         conn.commit()
 
-        return True
+    return True
 
 
 def _parse_paper_analysis_row(row):
@@ -237,7 +237,7 @@ def get_papers_for_recommendation(limit=200, date=None, interest_hash=""):
         """, params)
         rows = cursor.fetchall()
 
-        return [_parse_paper_analysis_row(row) for row in rows]
+    return [_parse_paper_analysis_row(row) for row in rows]
 
 
 def update_recommendation_result(paper_id, score, reason, interest_hash):
@@ -265,4 +265,4 @@ def update_recommendation_result(paper_id, score, reason, interest_hash):
         updated = cursor.rowcount > 0
         conn.commit()
 
-        return updated
+    return updated

@@ -35,7 +35,7 @@ def get_daily_stats(date):
         """, (date,))
         row = cursor.fetchone()
 
-        return dict(row) if row else None
+    return dict(row) if row else None
 
 
 def get_report_trends(report_date, interest_hash="", days=7, top_tags=5):
@@ -77,88 +77,88 @@ def get_report_trends(report_date, interest_hash="", days=7, top_tags=5):
         rows = [dict(row) for row in cursor.fetchall()]
 
 
-        date_tag_counts = {date: {} for date in dates}
-        for row in rows:
-            try:
-                tags = json.loads(row.get("tags") or "[]")
-            except (TypeError, json.JSONDecodeError):
-                tags = []
-            for tag in tags if isinstance(tags, list) else []:
-                tag = str(tag).strip()
-                if tag:
-                    counts = date_tag_counts[row["published_date"]]
-                    counts[tag] = counts.get(tag, 0) + 1
+    date_tag_counts = {date: {} for date in dates}
+    for row in rows:
+        try:
+            tags = json.loads(row.get("tags") or "[]")
+        except (TypeError, json.JSONDecodeError):
+            tags = []
+        for tag in tags if isinstance(tags, list) else []:
+            tag = str(tag).strip()
+            if tag:
+                counts = date_tag_counts[row["published_date"]]
+                counts[tag] = counts.get(tag, 0) + 1
 
-        totals = {}
-        for counts in date_tag_counts.values():
-            for tag, count in counts.items():
-                totals[tag] = totals.get(tag, 0) + count
-        ranked_tags = sorted(totals, key=lambda tag: (-totals[tag], tag.casefold()))[:max(1, int(top_tags))]
-        tag_series = [
-            {
-                "tag": tag,
-                "total": totals[tag],
-                "counts": [date_tag_counts[date].get(tag, 0) for date in dates],
-            }
-            for tag in ranked_tags
-        ]
-
-        has_tag_history = len(dates) > 1
-        new_tags = []
-        if has_tag_history:
-            previous_tags = set()
-            for date in dates[:-1]:
-                previous_tags.update(date_tag_counts[date])
-            new_tags = [
-                {"tag": tag, "count": count}
-                for tag, count in sorted(
-                    date_tag_counts[dates[-1]].items(),
-                    key=lambda item: (-item[1], item[0].casefold()),
-                )
-                if tag not in previous_tags
-            ]
-
-        buckets = [
-            {"key": "low", "label": "0–59", "count": 0},
-            {"key": "recommended", "label": "60–79", "count": 0},
-            {"key": "strong", "label": "80–100", "count": 0},
-        ]
-        scored = 0
-        unscored = 0
-        for row in rows:
-            score = row.get("recommendation_score")
-            if not interest_hash or row.get("recommendation_interest_hash") != interest_hash:
-                unscored += 1
-                continue
-            try:
-                score = int(score)
-            except (TypeError, ValueError):
-                unscored += 1
-                continue
-            if not 0 <= score <= 100:
-                unscored += 1
-                continue
-            scored += 1
-            if score < 60:
-                buckets[0]["count"] += 1
-            elif score < 80:
-                buckets[1]["count"] += 1
-            else:
-                buckets[2]["count"] += 1
-
-        return {
-            "dates": dates,
-            "tag_series": tag_series,
-            "new_tags": new_tags,
-            "has_tag_history": has_tag_history,
-            "recommendation": {
-                "enabled": bool(interest_hash),
-                "buckets": buckets,
-                "scored": scored,
-                "unscored": unscored,
-                "total": len(rows),
-            },
+    totals = {}
+    for counts in date_tag_counts.values():
+        for tag, count in counts.items():
+            totals[tag] = totals.get(tag, 0) + count
+    ranked_tags = sorted(totals, key=lambda tag: (-totals[tag], tag.casefold()))[:max(1, int(top_tags))]
+    tag_series = [
+        {
+            "tag": tag,
+            "total": totals[tag],
+            "counts": [date_tag_counts[date].get(tag, 0) for date in dates],
         }
+        for tag in ranked_tags
+    ]
+
+    has_tag_history = len(dates) > 1
+    new_tags = []
+    if has_tag_history:
+        previous_tags = set()
+        for date in dates[:-1]:
+            previous_tags.update(date_tag_counts[date])
+        new_tags = [
+            {"tag": tag, "count": count}
+            for tag, count in sorted(
+                date_tag_counts[dates[-1]].items(),
+                key=lambda item: (-item[1], item[0].casefold()),
+            )
+            if tag not in previous_tags
+        ]
+
+    buckets = [
+        {"key": "low", "label": "0–59", "count": 0},
+        {"key": "recommended", "label": "60–79", "count": 0},
+        {"key": "strong", "label": "80–100", "count": 0},
+    ]
+    scored = 0
+    unscored = 0
+    for row in rows:
+        score = row.get("recommendation_score")
+        if not interest_hash or row.get("recommendation_interest_hash") != interest_hash:
+            unscored += 1
+            continue
+        try:
+            score = int(score)
+        except (TypeError, ValueError):
+            unscored += 1
+            continue
+        if not 0 <= score <= 100:
+            unscored += 1
+            continue
+        scored += 1
+        if score < 60:
+            buckets[0]["count"] += 1
+        elif score < 80:
+            buckets[1]["count"] += 1
+        else:
+            buckets[2]["count"] += 1
+
+    return {
+        "dates": dates,
+        "tag_series": tag_series,
+        "new_tags": new_tags,
+        "has_tag_history": has_tag_history,
+        "recommendation": {
+            "enabled": bool(interest_hash),
+            "buckets": buckets,
+            "scored": scored,
+            "unscored": unscored,
+            "total": len(rows),
+        },
+    }
 
 
 def save_report(report_date, content, paper_count, analyzed_count, avg_rating):
@@ -203,7 +203,7 @@ def get_reports(limit=50):
         cursor.execute("SELECT * FROM reports ORDER BY report_date DESC LIMIT ?", (limit,))
         rows = cursor.fetchall()
 
-        return [dict(row) for row in rows]
+    return [dict(row) for row in rows]
 
 
 def get_report_by_date(report_date):
@@ -220,7 +220,7 @@ def get_report_by_date(report_date):
         cursor.execute("SELECT * FROM reports WHERE report_date = ?", (report_date,))
         row = cursor.fetchone()
 
-        return dict(row) if row else None
+    return dict(row) if row else None
 
 
 def get_report_dates():
@@ -236,4 +236,4 @@ def get_report_dates():
         cursor.execute("SELECT report_date, paper_count, analyzed_count, avg_rating FROM reports ORDER BY report_date DESC")
         rows = cursor.fetchall()
 
-        return [dict(row) for row in rows]
+    return [dict(row) for row in rows]

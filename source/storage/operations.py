@@ -34,7 +34,7 @@ def start_task_log(task_name, message=""):
         conn.commit()
         log_id = cursor.lastrowid
 
-        return log_id
+    return log_id
 
 
 def finish_task_log(log_id, status, message="", detail=""):
@@ -136,7 +136,7 @@ def set_task_log_step_status(log_id, step_key, status, message="", detail=""):
             )
         conn.commit()
 
-        return True
+    return True
 
 
 def get_task_logs(task_name=None, limit=50, offset=0):
@@ -192,7 +192,7 @@ def get_task_logs(task_name=None, limit=50, offset=0):
                 row["steps"] = steps_by_log.get(row["id"], [])
 
 
-        return results, total
+    return results, total
 
 
 def get_task_stats():
@@ -221,7 +221,7 @@ def get_task_stats():
         """)
         rows = cursor.fetchall()
 
-        return [dict(row) for row in rows]
+    return [dict(row) for row in rows]
 
 
 def get_running_tasks():
@@ -237,7 +237,7 @@ def get_running_tasks():
         cursor.execute("SELECT * FROM task_logs WHERE status = 'running' ORDER BY started_at DESC")
         rows = cursor.fetchall()
 
-        return [dict(row) for row in rows]
+    return [dict(row) for row in rows]
 
 
 def interrupt_running_task_logs(reason="服务重启，任务已中断"):
@@ -284,7 +284,7 @@ def interrupt_running_task_logs(reason="服务重启，任务已中断"):
             )
         conn.commit()
 
-        return len(running_logs)
+    return len(running_logs)
 
 
 def clear_task_logs(keep_days=30):
@@ -307,7 +307,7 @@ def clear_task_logs(keep_days=30):
         deleted = cursor.rowcount
         conn.commit()
 
-        return deleted
+    return deleted
 
 
 def _safe_int(value):
@@ -425,47 +425,47 @@ def get_ai_usage_summary(days=7, group_by="task"):
         series_rows = cursor.fetchall()
 
 
-        groups = {}
-        for row in series_rows:
-            item = dict(row)
-            key = item["group_key"]
-            if key not in groups:
-                groups[key] = {
-                    "key": key,
-                    "label": item["label"],
-                    "call_count": 0,
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                    "cached_tokens": 0,
-                    "cache_miss_tokens": 0,
-                    "points": {day: _empty_usage_point(day) for day in dates},
-                }
-            point = groups[key]["points"].setdefault(item["usage_date"], _empty_usage_point(item["usage_date"]))
-            for field in ("call_count", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "cache_miss_tokens"):
-                value = _safe_int(item.get(field))
-                point[field] = value
-                groups[key][field] += value
+    groups = {}
+    for row in series_rows:
+        item = dict(row)
+        key = item["group_key"]
+        if key not in groups:
+            groups[key] = {
+                "key": key,
+                "label": item["label"],
+                "call_count": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cached_tokens": 0,
+                "cache_miss_tokens": 0,
+                "points": {day: _empty_usage_point(day) for day in dates},
+            }
+        point = groups[key]["points"].setdefault(item["usage_date"], _empty_usage_point(item["usage_date"]))
+        for field in ("call_count", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "cache_miss_tokens"):
+            value = _safe_int(item.get(field))
+            point[field] = value
+            groups[key][field] += value
 
-        group_items = []
-        for group in groups.values():
-            group["points"] = [group["points"].get(day, _empty_usage_point(day)) for day in dates]
-            group_items.append(group)
-        group_items.sort(key=lambda item: (item["total_tokens"], item["call_count"]), reverse=True)
+    group_items = []
+    for group in groups.values():
+        group["points"] = [group["points"].get(day, _empty_usage_point(day)) for day in dates]
+        group_items.append(group)
+    group_items.sort(key=lambda item: (item["total_tokens"], item["call_count"]), reverse=True)
 
-        totals = {
-            "call_count": sum(_safe_int(row["call_count"]) for row in rows),
-            "prompt_tokens": sum(_safe_int(row["prompt_tokens"]) for row in rows),
-            "completion_tokens": sum(_safe_int(row["completion_tokens"]) for row in rows),
-            "total_tokens": sum(_safe_int(row["total_tokens"]) for row in rows),
-            "cached_tokens": sum(_safe_int(row["cached_tokens"]) for row in rows),
-            "cache_miss_tokens": sum(_safe_int(row["cache_miss_tokens"]) for row in rows),
-        }
-        return {
-            "days": days,
-            "group_by": group_by,
-            "dates": dates,
-            "totals": totals,
-            "groups": group_items,
-            "items": [dict(row) for row in rows],
-        }
+    totals = {
+        "call_count": sum(_safe_int(row["call_count"]) for row in rows),
+        "prompt_tokens": sum(_safe_int(row["prompt_tokens"]) for row in rows),
+        "completion_tokens": sum(_safe_int(row["completion_tokens"]) for row in rows),
+        "total_tokens": sum(_safe_int(row["total_tokens"]) for row in rows),
+        "cached_tokens": sum(_safe_int(row["cached_tokens"]) for row in rows),
+        "cache_miss_tokens": sum(_safe_int(row["cache_miss_tokens"]) for row in rows),
+    }
+    return {
+        "days": days,
+        "group_by": group_by,
+        "dates": dates,
+        "totals": totals,
+        "groups": group_items,
+        "items": [dict(row) for row in rows],
+    }

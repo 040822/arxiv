@@ -631,19 +631,19 @@ def _load_report_papers(report_date):
         return []
     current_interests = get_personalization_config().get("research_interests", "")
     current_interest_hash = get_research_interest_hash(current_interests)
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT p.*, a.id AS analysis_id, a.tags, a.summary_cn, a.rating, a.value_comment,
-               a.recommendation_score, a.recommendation_reason, a.recommendation_interest_hash,
-               a.recommendation_analyzed_at
-        FROM papers p
-        LEFT JOIN analysis a ON p.id = a.paper_id
-        WHERE p.published_date = ?
-        ORDER BY p.arxiv_id
-    """, (report_date,))
-    rows = cursor.fetchall()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT p.*, a.id AS analysis_id, a.tags, a.summary_cn, a.rating, a.value_comment,
+                   a.recommendation_score, a.recommendation_reason, a.recommendation_interest_hash,
+                   a.recommendation_analyzed_at
+            FROM papers p
+            LEFT JOIN analysis a ON p.id = a.paper_id
+            WHERE p.published_date = ?
+            ORDER BY p.arxiv_id
+        """, (report_date,))
+        rows = cursor.fetchall()
+
 
     papers = []
     for row in rows:

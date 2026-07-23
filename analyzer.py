@@ -870,30 +870,30 @@ def socratic_reply(paper_data, session_history=None, user_answer=None):
 
 def _get_report_summary_context(report_date, limit=30):
     """读取报告导读所需的轻量论文上下文，避免把全文再次送给模型。"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    interest_hash = get_research_interest_hash()
-    cursor.execute("""
-        SELECT p.arxiv_id, p.title, p.authors, p.categories,
-               a.tags, a.rating, a.value_comment, a.summary_cn,
-               a.recommendation_score, a.recommendation_interest_hash
-        FROM papers p
-        LEFT JOIN analysis a ON p.id = a.paper_id
-        WHERE p.published_date = ?
-        ORDER BY
-            CASE
-                WHEN ? <> ''
-                 AND a.recommendation_interest_hash = ?
-                 AND a.recommendation_score IS NOT NULL
-                THEN a.recommendation_score
-                ELSE -1
-            END DESC,
-            COALESCE(a.rating, 0) DESC,
-            p.arxiv_id
-        LIMIT ?
-    """, (report_date, interest_hash, interest_hash, limit))
-    rows = cursor.fetchall()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        interest_hash = get_research_interest_hash()
+        cursor.execute("""
+            SELECT p.arxiv_id, p.title, p.authors, p.categories,
+                   a.tags, a.rating, a.value_comment, a.summary_cn,
+                   a.recommendation_score, a.recommendation_interest_hash
+            FROM papers p
+            LEFT JOIN analysis a ON p.id = a.paper_id
+            WHERE p.published_date = ?
+            ORDER BY
+                CASE
+                    WHEN ? <> ''
+                     AND a.recommendation_interest_hash = ?
+                     AND a.recommendation_score IS NOT NULL
+                    THEN a.recommendation_score
+                    ELSE -1
+                END DESC,
+                COALESCE(a.rating, 0) DESC,
+                p.arxiv_id
+            LIMIT ?
+        """, (report_date, interest_hash, interest_hash, limit))
+        rows = cursor.fetchall()
+
 
     papers = []
     for row in rows:

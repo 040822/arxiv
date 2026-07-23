@@ -48,7 +48,7 @@ def remove_from_reading_list(paper_id):
         affected = cursor.rowcount
         conn.commit()
 
-        return affected > 0
+    return affected > 0
 
 
 def is_in_reading_list(paper_id):
@@ -65,7 +65,7 @@ def is_in_reading_list(paper_id):
         cursor.execute("SELECT 1 FROM reading_list WHERE paper_id = ?", (paper_id,))
         exists = cursor.fetchone() is not None
 
-        return exists
+    return exists
 
 
 def mark_as_read(paper_id):
@@ -88,7 +88,7 @@ def mark_as_read(paper_id):
         affected = cursor.rowcount
         conn.commit()
 
-        return affected > 0
+    return affected > 0
 
 
 def mark_as_unread(paper_id):
@@ -111,7 +111,7 @@ def mark_as_unread(paper_id):
         affected = cursor.rowcount
         conn.commit()
 
-        return affected > 0
+    return affected > 0
 
 
 def get_reading_list(status=None):
@@ -156,18 +156,18 @@ def get_reading_list(status=None):
         rows = cursor.fetchall()
 
 
-        # 解析 JSON 字段
-        results = []
-        for row in rows:
-            r = dict(row)
-            if r.get("authors") and isinstance(r["authors"], str):
-                r["authors"] = json.loads(r["authors"])
-            if r.get("categories") and isinstance(r["categories"], str):
-                r["categories"] = json.loads(r["categories"])
-            if r.get("tags") and isinstance(r["tags"], str):
-                r["tags"] = json.loads(r["tags"])
-            results.append(r)
-        return results
+    # 解析 JSON 字段
+    results = []
+    for row in rows:
+        r = dict(row)
+        if r.get("authors") and isinstance(r["authors"], str):
+            r["authors"] = json.loads(r["authors"])
+        if r.get("categories") and isinstance(r["categories"], str):
+            r["categories"] = json.loads(r["categories"])
+        if r.get("tags") and isinstance(r["tags"], str):
+            r["tags"] = json.loads(r["tags"])
+        results.append(r)
+    return results
 
 
 def get_reading_list_count():
@@ -186,7 +186,7 @@ def get_reading_list_count():
         """)
         row = cursor.fetchone()
 
-        return {"total": row["total"] or 0, "unread": row["unread"] or 0}
+    return {"total": row["total"] or 0, "unread": row["unread"] or 0}
 
 
 def add_paper_chat_message(paper_id, role, content):
@@ -200,7 +200,7 @@ def add_paper_chat_message(paper_id, role, content):
         conn.commit()
         message_id = cursor.lastrowid
 
-        return message_id
+    return message_id
 
 
 def get_paper_chat_messages(paper_id, limit=200):
@@ -220,7 +220,7 @@ def get_paper_chat_messages(paper_id, limit=200):
         """, (paper_id, limit))
         rows = cursor.fetchall()
 
-        return [dict(row) for row in rows]
+    return [dict(row) for row in rows]
 
 
 def create_paper_quiz_session(paper_id, mode):
@@ -235,7 +235,7 @@ def create_paper_quiz_session(paper_id, mode):
         conn.commit()
         session_id = cursor.lastrowid
 
-        return session_id
+    return session_id
 
 
 def get_paper_quiz_session(session_id, paper_id=None):
@@ -248,7 +248,7 @@ def get_paper_quiz_session(session_id, paper_id=None):
             cursor.execute("SELECT * FROM paper_quiz_sessions WHERE id = ? AND paper_id = ?", (session_id, paper_id))
         row = cursor.fetchone()
 
-        return dict(row) if row else None
+    return dict(row) if row else None
 
 
 def add_paper_quiz_questions(session_id, questions):
@@ -273,7 +273,7 @@ def add_paper_quiz_questions(session_id, questions):
         cursor.execute("UPDATE paper_quiz_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (session_id,))
         conn.commit()
 
-        return saved
+    return saved
 
 
 def add_paper_quiz_question(session_id, position, question, expected_points=""):
@@ -288,7 +288,7 @@ def add_paper_quiz_question(session_id, position, question, expected_points=""):
         conn.commit()
         question_id = cursor.lastrowid
 
-        return question_id
+    return question_id
 
 
 def add_paper_quiz_attempt(question_id, answer_text, score, feedback):
@@ -310,7 +310,7 @@ def add_paper_quiz_attempt(question_id, answer_text, score, feedback):
         conn.commit()
         attempt_id = cursor.lastrowid
 
-        return attempt_id
+    return attempt_id
 
 
 def get_paper_quiz_question(question_id, paper_id=None):
@@ -330,7 +330,7 @@ def get_paper_quiz_question(question_id, paper_id=None):
         cursor.execute(query, params)
         row = cursor.fetchone()
 
-        return dict(row) if row else None
+    return dict(row) if row else None
 
 
 def get_paper_quiz_session_detail(session_id, paper_id=None):
@@ -356,26 +356,26 @@ def get_paper_quiz_session_detail(session_id, paper_id=None):
         rows = cursor.fetchall()
 
 
-        questions = []
-        for row in rows:
-            item = dict(row)
-            expected = item.get("expected_points")
-            if expected:
-                try:
-                    item["expected_points"] = json.loads(expected)
-                except json.JSONDecodeError:
-                    item["expected_points"] = expected
-            feedback = item.get("feedback_json")
-            if feedback:
-                try:
-                    item["feedback"] = json.loads(feedback)
-                except json.JSONDecodeError:
-                    item["feedback"] = {"feedback": feedback}
-            else:
-                item["feedback"] = None
-            questions.append(item)
-        session["questions"] = questions
-        return session
+    questions = []
+    for row in rows:
+        item = dict(row)
+        expected = item.get("expected_points")
+        if expected:
+            try:
+                item["expected_points"] = json.loads(expected)
+            except json.JSONDecodeError:
+                item["expected_points"] = expected
+        feedback = item.get("feedback_json")
+        if feedback:
+            try:
+                item["feedback"] = json.loads(feedback)
+            except json.JSONDecodeError:
+                item["feedback"] = {"feedback": feedback}
+        else:
+            item["feedback"] = None
+        questions.append(item)
+    session["questions"] = questions
+    return session
 
 
 def get_latest_paper_quiz_sessions(paper_id, limit=20):
@@ -397,4 +397,4 @@ def get_latest_paper_quiz_sessions(paper_id, limit=20):
         """, (paper_id, limit))
         rows = cursor.fetchall()
 
-        return [dict(row) for row in rows]
+    return [dict(row) for row in rows]
