@@ -25,16 +25,16 @@ def start_task_log(task_name, message=""):
     返回：
         int: 日志记录 ID
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO task_logs (task_name, status, message, started_at) VALUES (?, 'running', ?, ?)",
-        (task_name, message, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    )
-    conn.commit()
-    log_id = cursor.lastrowid
-    conn.close()
-    return log_id
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO task_logs (task_name, status, message, started_at) VALUES (?, 'running', ?, ?)",
+            (task_name, message, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        conn.commit()
+        log_id = cursor.lastrowid
+
+        return log_id
 
 
 def finish_task_log(log_id, status, message="", detail=""):
@@ -48,22 +48,22 @@ def finish_task_log(log_id, status, message="", detail=""):
         message (str): 结果描述信息
         detail (str): 技术细节（如错误堆栈）
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    # 计算执行时长：当前时间 - 开始时间
-    cursor.execute("SELECT started_at FROM task_logs WHERE id = ?", (log_id,))
-    row = cursor.fetchone()
-    duration = 0
-    if row and row["started_at"]:
-        started = datetime.strptime(row["started_at"], "%Y-%m-%d %H:%M:%S")
-        duration = (datetime.now() - started).total_seconds()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        # 计算执行时长：当前时间 - 开始时间
+        cursor.execute("SELECT started_at FROM task_logs WHERE id = ?", (log_id,))
+        row = cursor.fetchone()
+        duration = 0
+        if row and row["started_at"]:
+            started = datetime.strptime(row["started_at"], "%Y-%m-%d %H:%M:%S")
+            duration = (datetime.now() - started).total_seconds()
 
-    cursor.execute(
-        "UPDATE task_logs SET status = ?, message = ?, detail = ?, finished_at = ?, duration_sec = ? WHERE id = ?",
-        (status, message, detail, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), round(duration, 1), log_id)
-    )
-    conn.commit()
-    conn.close()
+        cursor.execute(
+            "UPDATE task_logs SET status = ?, message = ?, detail = ?, finished_at = ?, duration_sec = ? WHERE id = ?",
+            (status, message, detail, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), round(duration, 1), log_id)
+        )
+        conn.commit()
+
 
 
 def initialize_task_log_steps(log_id, steps):
@@ -72,71 +72,71 @@ def initialize_task_log_steps(log_id, steps):
     ``steps`` 是 ``(step_key, step_name)`` 二元组列表。重复初始化不会覆盖
     已经开始或完成的步骤，便于调用方安全重试日志初始化。
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.executemany(
-        """
-        INSERT OR IGNORE INTO task_log_steps
-            (task_log_id, step_key, step_name, position, status)
-        VALUES (?, ?, ?, ?, 'pending')
-        """,
-        [
-            (log_id, step_key, step_name, position)
-            for position, (step_key, step_name) in enumerate(steps, start=1)
-        ],
-    )
-    conn.commit()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.executemany(
+            """
+            INSERT OR IGNORE INTO task_log_steps
+                (task_log_id, step_key, step_name, position, status)
+            VALUES (?, ?, ?, ?, 'pending')
+            """,
+            [
+                (log_id, step_key, step_name, position)
+                for position, (step_key, step_name) in enumerate(steps, start=1)
+            ],
+        )
+        conn.commit()
+
 
 
 def set_task_log_step_status(log_id, step_key, status, message="", detail=""):
     """更新流水线步骤状态，并维护步骤开始/结束时间和耗时。"""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT started_at FROM task_log_steps WHERE task_log_id = ? AND step_key = ?",
-        (log_id, step_key),
-    )
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return False
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT started_at FROM task_log_steps WHERE task_log_id = ? AND step_key = ?",
+            (log_id, step_key),
+        )
+        row = cursor.fetchone()
+        if not row:
 
-    if status == "running":
-        cursor.execute(
-            """
-            UPDATE task_log_steps
-            SET status = ?, message = ?, detail = ?,
-                started_at = COALESCE(started_at, ?), finished_at = NULL, duration_sec = NULL
-            WHERE task_log_id = ? AND step_key = ?
-            """,
-            (status, message, detail, now, log_id, step_key),
-        )
-    elif status == "pending":
-        cursor.execute(
-            """
-            UPDATE task_log_steps SET status = ?, message = ?, detail = ?
-            WHERE task_log_id = ? AND step_key = ?
-            """,
-            (status, message, detail, log_id, step_key),
-        )
-    else:
-        started_at = row["started_at"] or now
-        started = datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S")
-        duration = round((datetime.now() - started).total_seconds(), 1)
-        cursor.execute(
-            """
-            UPDATE task_log_steps
-            SET status = ?, message = ?, detail = ?, started_at = ?,
-                finished_at = ?, duration_sec = ?
-            WHERE task_log_id = ? AND step_key = ?
-            """,
-            (status, message, detail, started_at, now, max(0, duration), log_id, step_key),
-        )
-    conn.commit()
-    conn.close()
-    return True
+            return False
+
+        if status == "running":
+            cursor.execute(
+                """
+                UPDATE task_log_steps
+                SET status = ?, message = ?, detail = ?,
+                    started_at = COALESCE(started_at, ?), finished_at = NULL, duration_sec = NULL
+                WHERE task_log_id = ? AND step_key = ?
+                """,
+                (status, message, detail, now, log_id, step_key),
+            )
+        elif status == "pending":
+            cursor.execute(
+                """
+                UPDATE task_log_steps SET status = ?, message = ?, detail = ?
+                WHERE task_log_id = ? AND step_key = ?
+                """,
+                (status, message, detail, log_id, step_key),
+            )
+        else:
+            started_at = row["started_at"] or now
+            started = datetime.strptime(started_at, "%Y-%m-%d %H:%M:%S")
+            duration = round((datetime.now() - started).total_seconds(), 1)
+            cursor.execute(
+                """
+                UPDATE task_log_steps
+                SET status = ?, message = ?, detail = ?, started_at = ?,
+                    finished_at = ?, duration_sec = ?
+                WHERE task_log_id = ? AND step_key = ?
+                """,
+                (status, message, detail, started_at, now, max(0, duration), log_id, step_key),
+            )
+        conn.commit()
+
+        return True
 
 
 def get_task_logs(task_name=None, limit=50, offset=0):
@@ -150,49 +150,49 @@ def get_task_logs(task_name=None, limit=50, offset=0):
     返回：
         tuple: (日志列表, 总数) 元组
     """
-    conn = get_connection()
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    # 构建查询：可选按任务名筛选
-    query = "SELECT * FROM task_logs WHERE 1=1"
-    params = []
+        # 构建查询：可选按任务名筛选
+        query = "SELECT * FROM task_logs WHERE 1=1"
+        params = []
 
-    if task_name:
-        query += " AND task_name = ?"
-        params.append(task_name)
+        if task_name:
+            query += " AND task_name = ?"
+            params.append(task_name)
 
-    # 统计总数（用于分页）
-    count_query = query.replace("SELECT *", "SELECT COUNT(*) as cnt")
-    cursor.execute(count_query, params)
-    total = cursor.fetchone()["cnt"]
+        # 统计总数（用于分页）
+        count_query = query.replace("SELECT *", "SELECT COUNT(*) as cnt")
+        cursor.execute(count_query, params)
+        total = cursor.fetchone()["cnt"]
 
-    # 分页查询：按开始时间降序
-    query += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
-    params.extend([limit, offset])
+        # 分页查询：按开始时间降序
+        query += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
 
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    results = [dict(row) for row in rows]
-    if results:
-        log_ids = [row["id"] for row in results]
-        placeholders = ",".join("?" for _ in log_ids)
-        cursor.execute(
-            f"""
-            SELECT * FROM task_log_steps
-            WHERE task_log_id IN ({placeholders})
-            ORDER BY task_log_id, position
-            """,
-            log_ids,
-        )
-        steps_by_log = {log_id: [] for log_id in log_ids}
-        for step in cursor.fetchall():
-            step_data = dict(step)
-            steps_by_log.setdefault(step_data["task_log_id"], []).append(step_data)
-        for row in results:
-            row["steps"] = steps_by_log.get(row["id"], [])
-    conn.close()
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        results = [dict(row) for row in rows]
+        if results:
+            log_ids = [row["id"] for row in results]
+            placeholders = ",".join("?" for _ in log_ids)
+            cursor.execute(
+                f"""
+                SELECT * FROM task_log_steps
+                WHERE task_log_id IN ({placeholders})
+                ORDER BY task_log_id, position
+                """,
+                log_ids,
+            )
+            steps_by_log = {log_id: [] for log_id in log_ids}
+            for step in cursor.fetchall():
+                step_data = dict(step)
+                steps_by_log.setdefault(step_data["task_log_id"], []).append(step_data)
+            for row in results:
+                row["steps"] = steps_by_log.get(row["id"], [])
 
-    return results, total
+
+        return results, total
 
 
 def get_task_stats():
@@ -204,24 +204,24 @@ def get_task_stats():
     返回：
         list: 统计数据字典列表
     """
-    conn = get_connection()
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT task_name,
-               COUNT(*) as total_runs,
-               SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_runs,
-               SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_runs,
-               SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running,
-               MAX(started_at) as last_run,
-               AVG(duration_sec) as avg_duration
-        FROM task_logs
-        GROUP BY task_name
-        ORDER BY last_run DESC
-    """)
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+        cursor.execute("""
+            SELECT task_name,
+                   COUNT(*) as total_runs,
+                   SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_runs,
+                   SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as error_runs,
+                   SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running,
+                   MAX(started_at) as last_run,
+                   AVG(duration_sec) as avg_duration
+            FROM task_logs
+            GROUP BY task_name
+            ORDER BY last_run DESC
+        """)
+        rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]
 
 
 def get_running_tasks():
@@ -232,59 +232,59 @@ def get_running_tasks():
     返回：
         list: 状态为 "running" 的日志记录列表
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM task_logs WHERE status = 'running' ORDER BY started_at DESC")
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM task_logs WHERE status = 'running' ORDER BY started_at DESC")
+        rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]
 
 
 def interrupt_running_task_logs(reason="服务重启，任务已中断"):
     """在应用启动时收口上一次进程遗留的运行中任务。"""
     now_dt = datetime.now()
     now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, started_at FROM task_logs WHERE status = 'running'")
-    running_logs = cursor.fetchall()
-    for row in running_logs:
-        duration = 0
-        if row["started_at"]:
-            started = datetime.strptime(row["started_at"], "%Y-%m-%d %H:%M:%S")
-            duration = max(0, round((now_dt - started).total_seconds(), 1))
-        cursor.execute(
-            """
-            UPDATE task_logs
-            SET status = 'interrupted', message = ?, finished_at = ?, duration_sec = ?
-            WHERE id = ?
-            """,
-            (reason, now, duration, row["id"]),
-        )
-        cursor.execute(
-            """
-            UPDATE task_log_steps
-            SET status = 'interrupted', message = ?, finished_at = ?,
-                duration_sec = CASE
-                    WHEN started_at IS NULL THEN 0
-                    ELSE MAX(0, ROUND((julianday(?) - julianday(started_at)) * 86400, 1))
-                END
-            WHERE task_log_id = ? AND status = 'running'
-            """,
-            (reason, now, now, row["id"]),
-        )
-        cursor.execute(
-            """
-            UPDATE task_log_steps
-            SET status = 'skipped', message = '父任务中断前未执行',
-                started_at = COALESCE(started_at, ?), finished_at = ?, duration_sec = 0
-            WHERE task_log_id = ? AND status = 'pending'
-            """,
-            (now, now, row["id"]),
-        )
-    conn.commit()
-    conn.close()
-    return len(running_logs)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, started_at FROM task_logs WHERE status = 'running'")
+        running_logs = cursor.fetchall()
+        for row in running_logs:
+            duration = 0
+            if row["started_at"]:
+                started = datetime.strptime(row["started_at"], "%Y-%m-%d %H:%M:%S")
+                duration = max(0, round((now_dt - started).total_seconds(), 1))
+            cursor.execute(
+                """
+                UPDATE task_logs
+                SET status = 'interrupted', message = ?, finished_at = ?, duration_sec = ?
+                WHERE id = ?
+                """,
+                (reason, now, duration, row["id"]),
+            )
+            cursor.execute(
+                """
+                UPDATE task_log_steps
+                SET status = 'interrupted', message = ?, finished_at = ?,
+                    duration_sec = CASE
+                        WHEN started_at IS NULL THEN 0
+                        ELSE MAX(0, ROUND((julianday(?) - julianday(started_at)) * 86400, 1))
+                    END
+                WHERE task_log_id = ? AND status = 'running'
+                """,
+                (reason, now, now, row["id"]),
+            )
+            cursor.execute(
+                """
+                UPDATE task_log_steps
+                SET status = 'skipped', message = '父任务中断前未执行',
+                    started_at = COALESCE(started_at, ?), finished_at = ?, duration_sec = 0
+                WHERE task_log_id = ? AND status = 'pending'
+                """,
+                (now, now, row["id"]),
+            )
+        conn.commit()
+
+        return len(running_logs)
 
 
 def clear_task_logs(keep_days=30):
@@ -298,16 +298,16 @@ def clear_task_logs(keep_days=30):
     返回：
         int: 实际删除的日志条数
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "DELETE FROM task_logs WHERE started_at < datetime('now', ?)",
-        (f"-{keep_days} days",)
-    )
-    deleted = cursor.rowcount
-    conn.commit()
-    conn.close()
-    return deleted
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM task_logs WHERE started_at < datetime('now', ?)",
+            (f"-{keep_days} days",)
+        )
+        deleted = cursor.rowcount
+        conn.commit()
+
+        return deleted
 
 
 def _safe_int(value):
@@ -319,29 +319,29 @@ def _safe_int(value):
 
 def record_ai_usage(usage):
     """记录一次 LLM API 调用的 token 用量。"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO ai_usage_logs (
-            task_key, provider_key, provider_name, model, paper_id, arxiv_id,
-            prompt_tokens, completion_tokens, total_tokens, cached_tokens, cache_miss_tokens
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        usage.get("task_key", ""),
-        usage.get("provider_key", ""),
-        usage.get("provider_name", ""),
-        usage.get("model", ""),
-        usage.get("paper_id"),
-        usage.get("arxiv_id", ""),
-        _safe_int(usage.get("prompt_tokens")),
-        _safe_int(usage.get("completion_tokens")),
-        _safe_int(usage.get("total_tokens")),
-        _safe_int(usage.get("cached_tokens")),
-        _safe_int(usage.get("cache_miss_tokens")),
-    ))
-    conn.commit()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO ai_usage_logs (
+                task_key, provider_key, provider_name, model, paper_id, arxiv_id,
+                prompt_tokens, completion_tokens, total_tokens, cached_tokens, cache_miss_tokens
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            usage.get("task_key", ""),
+            usage.get("provider_key", ""),
+            usage.get("provider_name", ""),
+            usage.get("model", ""),
+            usage.get("paper_id"),
+            usage.get("arxiv_id", ""),
+            _safe_int(usage.get("prompt_tokens")),
+            _safe_int(usage.get("completion_tokens")),
+            _safe_int(usage.get("total_tokens")),
+            _safe_int(usage.get("cached_tokens")),
+            _safe_int(usage.get("cache_miss_tokens")),
+        ))
+        conn.commit()
+
 
 
 def _usage_dates(days):
@@ -367,33 +367,14 @@ def get_ai_usage_summary(days=7, group_by="task"):
     days = max(1, min(365, _safe_int(days) or 7))
     group_by = group_by if group_by in {"task", "model"} else "task"
     dates = _usage_dates(days)
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT
-            task_key,
-            provider_key,
-            provider_name,
-            model,
-            COUNT(*) AS call_count,
-            SUM(prompt_tokens) AS prompt_tokens,
-            SUM(completion_tokens) AS completion_tokens,
-            SUM(total_tokens) AS total_tokens,
-            SUM(cached_tokens) AS cached_tokens,
-            SUM(cache_miss_tokens) AS cache_miss_tokens
-        FROM ai_usage_logs
-        WHERE created_at >= datetime('now', ?)
-        GROUP BY task_key, provider_key, provider_name, model
-        ORDER BY total_tokens DESC, call_count DESC
-    """, (f"-{days} days",))
-    rows = cursor.fetchall()
-
-    if group_by == "model":
+    with get_connection() as conn:
+        cursor = conn.cursor()
         cursor.execute("""
             SELECT
-                date(created_at) AS usage_date,
-                COALESCE(NULLIF(model, ''), 'unknown') AS group_key,
-                COALESCE(NULLIF(model, ''), 'unknown') AS label,
+                task_key,
+                provider_key,
+                provider_name,
+                model,
                 COUNT(*) AS call_count,
                 SUM(prompt_tokens) AS prompt_tokens,
                 SUM(completion_tokens) AS completion_tokens,
@@ -402,70 +383,89 @@ def get_ai_usage_summary(days=7, group_by="task"):
                 SUM(cache_miss_tokens) AS cache_miss_tokens
             FROM ai_usage_logs
             WHERE created_at >= datetime('now', ?)
-            GROUP BY usage_date, group_key
-            ORDER BY usage_date, group_key
+            GROUP BY task_key, provider_key, provider_name, model
+            ORDER BY total_tokens DESC, call_count DESC
         """, (f"-{days} days",))
-    else:
-        cursor.execute("""
-            SELECT
-                date(created_at) AS usage_date,
-                COALESCE(NULLIF(task_key, ''), 'unknown') AS group_key,
-                COALESCE(NULLIF(task_key, ''), 'unknown') AS label,
-                COUNT(*) AS call_count,
-                SUM(prompt_tokens) AS prompt_tokens,
-                SUM(completion_tokens) AS completion_tokens,
-                SUM(total_tokens) AS total_tokens,
-                SUM(cached_tokens) AS cached_tokens,
-                SUM(cache_miss_tokens) AS cache_miss_tokens
-            FROM ai_usage_logs
-            WHERE created_at >= datetime('now', ?)
-            GROUP BY usage_date, group_key
-            ORDER BY usage_date, group_key
-        """, (f"-{days} days",))
-    series_rows = cursor.fetchall()
-    conn.close()
+        rows = cursor.fetchall()
 
-    groups = {}
-    for row in series_rows:
-        item = dict(row)
-        key = item["group_key"]
-        if key not in groups:
-            groups[key] = {
-                "key": key,
-                "label": item["label"],
-                "call_count": 0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-                "cached_tokens": 0,
-                "cache_miss_tokens": 0,
-                "points": {day: _empty_usage_point(day) for day in dates},
-            }
-        point = groups[key]["points"].setdefault(item["usage_date"], _empty_usage_point(item["usage_date"]))
-        for field in ("call_count", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "cache_miss_tokens"):
-            value = _safe_int(item.get(field))
-            point[field] = value
-            groups[key][field] += value
+        if group_by == "model":
+            cursor.execute("""
+                SELECT
+                    date(created_at) AS usage_date,
+                    COALESCE(NULLIF(model, ''), 'unknown') AS group_key,
+                    COALESCE(NULLIF(model, ''), 'unknown') AS label,
+                    COUNT(*) AS call_count,
+                    SUM(prompt_tokens) AS prompt_tokens,
+                    SUM(completion_tokens) AS completion_tokens,
+                    SUM(total_tokens) AS total_tokens,
+                    SUM(cached_tokens) AS cached_tokens,
+                    SUM(cache_miss_tokens) AS cache_miss_tokens
+                FROM ai_usage_logs
+                WHERE created_at >= datetime('now', ?)
+                GROUP BY usage_date, group_key
+                ORDER BY usage_date, group_key
+            """, (f"-{days} days",))
+        else:
+            cursor.execute("""
+                SELECT
+                    date(created_at) AS usage_date,
+                    COALESCE(NULLIF(task_key, ''), 'unknown') AS group_key,
+                    COALESCE(NULLIF(task_key, ''), 'unknown') AS label,
+                    COUNT(*) AS call_count,
+                    SUM(prompt_tokens) AS prompt_tokens,
+                    SUM(completion_tokens) AS completion_tokens,
+                    SUM(total_tokens) AS total_tokens,
+                    SUM(cached_tokens) AS cached_tokens,
+                    SUM(cache_miss_tokens) AS cache_miss_tokens
+                FROM ai_usage_logs
+                WHERE created_at >= datetime('now', ?)
+                GROUP BY usage_date, group_key
+                ORDER BY usage_date, group_key
+            """, (f"-{days} days",))
+        series_rows = cursor.fetchall()
 
-    group_items = []
-    for group in groups.values():
-        group["points"] = [group["points"].get(day, _empty_usage_point(day)) for day in dates]
-        group_items.append(group)
-    group_items.sort(key=lambda item: (item["total_tokens"], item["call_count"]), reverse=True)
 
-    totals = {
-        "call_count": sum(_safe_int(row["call_count"]) for row in rows),
-        "prompt_tokens": sum(_safe_int(row["prompt_tokens"]) for row in rows),
-        "completion_tokens": sum(_safe_int(row["completion_tokens"]) for row in rows),
-        "total_tokens": sum(_safe_int(row["total_tokens"]) for row in rows),
-        "cached_tokens": sum(_safe_int(row["cached_tokens"]) for row in rows),
-        "cache_miss_tokens": sum(_safe_int(row["cache_miss_tokens"]) for row in rows),
-    }
-    return {
-        "days": days,
-        "group_by": group_by,
-        "dates": dates,
-        "totals": totals,
-        "groups": group_items,
-        "items": [dict(row) for row in rows],
-    }
+        groups = {}
+        for row in series_rows:
+            item = dict(row)
+            key = item["group_key"]
+            if key not in groups:
+                groups[key] = {
+                    "key": key,
+                    "label": item["label"],
+                    "call_count": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "cached_tokens": 0,
+                    "cache_miss_tokens": 0,
+                    "points": {day: _empty_usage_point(day) for day in dates},
+                }
+            point = groups[key]["points"].setdefault(item["usage_date"], _empty_usage_point(item["usage_date"]))
+            for field in ("call_count", "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "cache_miss_tokens"):
+                value = _safe_int(item.get(field))
+                point[field] = value
+                groups[key][field] += value
+
+        group_items = []
+        for group in groups.values():
+            group["points"] = [group["points"].get(day, _empty_usage_point(day)) for day in dates]
+            group_items.append(group)
+        group_items.sort(key=lambda item: (item["total_tokens"], item["call_count"]), reverse=True)
+
+        totals = {
+            "call_count": sum(_safe_int(row["call_count"]) for row in rows),
+            "prompt_tokens": sum(_safe_int(row["prompt_tokens"]) for row in rows),
+            "completion_tokens": sum(_safe_int(row["completion_tokens"]) for row in rows),
+            "total_tokens": sum(_safe_int(row["total_tokens"]) for row in rows),
+            "cached_tokens": sum(_safe_int(row["cached_tokens"]) for row in rows),
+            "cache_miss_tokens": sum(_safe_int(row["cache_miss_tokens"]) for row in rows),
+        }
+        return {
+            "days": days,
+            "group_by": group_by,
+            "dates": dates,
+            "totals": totals,
+            "groups": group_items,
+            "items": [dict(row) for row in rows],
+        }
