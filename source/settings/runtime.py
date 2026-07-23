@@ -44,9 +44,6 @@ from .defaults import (
     DEFAULT_SETTINGS,
 )
 from .normalize import (
-    _as_bool,
-    _as_float,
-    _as_int,
     _normalize_schedule,
     _normalize_fetch_config,
     _normalize_personalization_config,

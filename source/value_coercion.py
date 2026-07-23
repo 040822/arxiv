@@ -1,8 +1,8 @@
-"""Primitive runtime-settings value coercion helpers."""
+"""Shared primitive value coercion."""
 
 
-def _as_bool(value, default=False):
-    """将前端/JSON 中的布尔值安全转换为 bool。"""
+def as_bool(value, default=False):
+    """Return value as bool using the project's JSON/form conventions."""
     if isinstance(value, bool):
         return value
     if value is None:
@@ -12,8 +12,8 @@ def _as_bool(value, default=False):
     return bool(value)
 
 
-def _as_float(value, default):
-    """将数值配置安全转换为 float。"""
+def as_float(value, default=0.0):
+    """Return value as float, falling back for empty or invalid input."""
     try:
         if value is None or value == "":
             return default
@@ -22,8 +22,8 @@ def _as_float(value, default):
         return default
 
 
-def _as_int(value, default):
-    """将数值配置安全转换为 int。"""
+def as_int(value, default=0):
+    """Return value as int, falling back for empty or invalid input."""
     try:
         if value is None or value == "":
             return default

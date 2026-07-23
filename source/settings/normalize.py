@@ -43,7 +43,7 @@ from .defaults import (
     DEFAULT_PROMPT_PROFILES,
     DEFAULT_SETTINGS,
 )
-from .coercion import _as_bool, _as_float, _as_int
+from source.value_coercion import as_bool, as_float, as_int
 from .thinking import normalize_provider_config
 
 
@@ -60,14 +60,14 @@ def _normalize_schedule(schedule):
             days_of_week.append(day)
     if not days_of_week:
         days_of_week = list(valid_days)
-    hour = _as_int(schedule.get("hour"), SCHEDULE_HOUR)
-    minute = _as_int(schedule.get("minute"), SCHEDULE_MINUTE)
-    fetch_days = _as_int(schedule.get("fetch_days"), 3)
-    analyze_limit = _as_int(schedule.get("analyze_limit"), 1000)
-    fetch_retry_interval_minutes = _as_int(schedule.get("fetch_retry_interval_minutes"), 10)
-    fetch_max_retries = _as_int(schedule.get("fetch_max_retries"), 20)
+    hour = as_int(schedule.get("hour"), SCHEDULE_HOUR)
+    minute = as_int(schedule.get("minute"), SCHEDULE_MINUTE)
+    fetch_days = as_int(schedule.get("fetch_days"), 3)
+    analyze_limit = as_int(schedule.get("analyze_limit"), 1000)
+    fetch_retry_interval_minutes = as_int(schedule.get("fetch_retry_interval_minutes"), 10)
+    fetch_max_retries = as_int(schedule.get("fetch_max_retries"), 20)
     return {
-        "enabled": _as_bool(schedule.get("enabled"), True),
+        "enabled": as_bool(schedule.get("enabled"), True),
         "days_of_week": days_of_week,
         "hour": max(0, min(23, hour)),
         "minute": max(0, min(59, minute)),
@@ -81,9 +81,9 @@ def _normalize_schedule(schedule):
 def _normalize_fetch_config(fetch):
     """补齐并约束 arXiv 抓取配置。"""
     fetch = dict(fetch or {})
-    request_delay = _as_float(fetch.get("request_delay"), FETCH_REQUEST_DELAY)
-    batch_days = _as_int(fetch.get("batch_days"), FETCH_BATCH_DAYS)
-    batch_delay = _as_float(fetch.get("batch_delay"), FETCH_BATCH_DELAY)
+    request_delay = as_float(fetch.get("request_delay"), FETCH_REQUEST_DELAY)
+    batch_days = as_int(fetch.get("batch_days"), FETCH_BATCH_DAYS)
+    batch_delay = as_float(fetch.get("batch_delay"), FETCH_BATCH_DELAY)
     return {
         "request_delay": max(3.0, min(300.0, request_delay)),
         "batch_days": max(1, min(365, batch_days)),
@@ -106,9 +106,9 @@ def _normalize_webdav_backup_config(config, existing_password=None):
     password = config.get("password")
     if password in (None, "") and existing_password is not None:
         password = existing_password
-    history_days = _as_int(config.get("history_days"), 3)
+    history_days = as_int(config.get("history_days"), 3)
     return {
-        "enabled": _as_bool(config.get("enabled"), False),
+        "enabled": as_bool(config.get("enabled"), False),
         "url": str(config.get("url") or "").strip(),
         "username": str(config.get("username") or "").strip(),
         "password": str(password or ""),
@@ -150,17 +150,17 @@ def _normalize_email_report_config(config, existing_password=None):
     if security not in {"starttls", "ssl", "none"}:
         security = "starttls"
     default_port = 465 if security == "ssl" else 587
-    smtp_port = _as_int(config.get("smtp_port"), default_port)
+    smtp_port = as_int(config.get("smtp_port"), default_port)
     subject_template = str(config.get("subject_template") or "").strip()
     if not subject_template:
         subject_template = DEFAULT_SETTINGS["email_report"]["subject_template"]
     site_url = str(config.get("site_url") or "").strip().rstrip("/")
     important_score_threshold = max(
-        0, min(100, _as_int(config.get("important_score_threshold"), 80))
+        0, min(100, as_int(config.get("important_score_threshold"), 80))
     )
-    overview_limit = max(0, min(50, _as_int(config.get("overview_limit"), 20)))
+    overview_limit = max(0, min(50, as_int(config.get("overview_limit"), 20)))
     return {
-        "enabled": _as_bool(config.get("enabled"), False),
+        "enabled": as_bool(config.get("enabled"), False),
         "smtp_host": str(config.get("smtp_host") or "").strip(),
         "smtp_port": max(1, min(65535, smtp_port)),
         "security": security,
@@ -209,23 +209,23 @@ def _normalize_ai_task_config(task, task_key, active_provider, providers):
     return {
         "provider_key": provider_key,
         "model": model,
-        "temperature": max(0.0, min(2.0, _as_float(task.get("temperature"), defaults["temperature"]))),
-        "temperature_enabled": _as_bool(task.get("temperature_enabled"), defaults["temperature_enabled"]),
-        "top_p": max(0.0, min(1.0, _as_float(task.get("top_p"), defaults["top_p"]))),
-        "top_p_enabled": _as_bool(task.get("top_p_enabled"), defaults["top_p_enabled"]),
-        "presence_penalty": max(-2.0, min(2.0, _as_float(task.get("presence_penalty"), defaults["presence_penalty"]))),
-        "presence_penalty_enabled": _as_bool(
+        "temperature": max(0.0, min(2.0, as_float(task.get("temperature"), defaults["temperature"]))),
+        "temperature_enabled": as_bool(task.get("temperature_enabled"), defaults["temperature_enabled"]),
+        "top_p": max(0.0, min(1.0, as_float(task.get("top_p"), defaults["top_p"]))),
+        "top_p_enabled": as_bool(task.get("top_p_enabled"), defaults["top_p_enabled"]),
+        "presence_penalty": max(-2.0, min(2.0, as_float(task.get("presence_penalty"), defaults["presence_penalty"]))),
+        "presence_penalty_enabled": as_bool(
             task.get("presence_penalty_enabled"),
             defaults["presence_penalty_enabled"],
         ),
-        "frequency_penalty": max(-2.0, min(2.0, _as_float(task.get("frequency_penalty"), defaults["frequency_penalty"]))),
-        "frequency_penalty_enabled": _as_bool(
+        "frequency_penalty": max(-2.0, min(2.0, as_float(task.get("frequency_penalty"), defaults["frequency_penalty"]))),
+        "frequency_penalty_enabled": as_bool(
             task.get("frequency_penalty_enabled"),
             defaults["frequency_penalty_enabled"],
         ),
-        "max_tokens": max(1, min(200000, _as_int(task.get("max_tokens"), defaults["max_tokens"]))),
-        "max_tokens_enabled": _as_bool(task.get("max_tokens_enabled"), defaults["max_tokens_enabled"]),
-        "is_thinking": _as_bool(task.get("is_thinking"), defaults["is_thinking"]),
+        "max_tokens": max(1, min(200000, as_int(task.get("max_tokens"), defaults["max_tokens"]))),
+        "max_tokens_enabled": as_bool(task.get("max_tokens_enabled"), defaults["max_tokens_enabled"]),
+        "is_thinking": as_bool(task.get("is_thinking"), defaults["is_thinking"]),
         "thinking_effort": thinking_effort,
     }
 

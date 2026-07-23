@@ -1,6 +1,6 @@
 """Thinking-model detection, provider normalization, and request mapping."""
 
-from .coercion import _as_bool, _as_float, _as_int
+from source.value_coercion import as_bool, as_float, as_int
 from .defaults import (
     DEFAULT_PROVIDER_OPTIONS,
     OPENAI_REASONING_PREFIXES,
@@ -101,37 +101,37 @@ def normalize_provider_config(config, key=None):
         available_models = preset.get("models", [])
     normalized["available_models"] = [str(m) for m in available_models if str(m).strip()]
 
-    raw_is_thinking = _as_bool(config.get("is_thinking"), DEFAULT_PROVIDER_OPTIONS["is_thinking"])
+    raw_is_thinking = as_bool(config.get("is_thinking"), DEFAULT_PROVIDER_OPTIONS["is_thinking"])
     normalized["is_thinking"] = raw_is_thinking
     normalized["effective_is_thinking"] = raw_is_thinking or is_known_thinking_model({**config, **normalized})
 
-    normalized["temperature"] = _as_float(config.get("temperature"), DEFAULT_PROVIDER_OPTIONS["temperature"])
-    normalized["temperature_enabled"] = _as_bool(
+    normalized["temperature"] = as_float(config.get("temperature"), DEFAULT_PROVIDER_OPTIONS["temperature"])
+    normalized["temperature_enabled"] = as_bool(
         config.get("temperature_enabled"),
         not normalized["is_thinking"],
     )
-    normalized["top_p"] = _as_float(config.get("top_p"), DEFAULT_PROVIDER_OPTIONS["top_p"])
-    normalized["top_p_enabled"] = _as_bool(config.get("top_p_enabled"), DEFAULT_PROVIDER_OPTIONS["top_p_enabled"])
-    normalized["presence_penalty"] = _as_float(
+    normalized["top_p"] = as_float(config.get("top_p"), DEFAULT_PROVIDER_OPTIONS["top_p"])
+    normalized["top_p_enabled"] = as_bool(config.get("top_p_enabled"), DEFAULT_PROVIDER_OPTIONS["top_p_enabled"])
+    normalized["presence_penalty"] = as_float(
         config.get("presence_penalty"),
         DEFAULT_PROVIDER_OPTIONS["presence_penalty"],
     )
-    normalized["presence_penalty_enabled"] = _as_bool(
+    normalized["presence_penalty_enabled"] = as_bool(
         config.get("presence_penalty_enabled"),
         DEFAULT_PROVIDER_OPTIONS["presence_penalty_enabled"],
     )
-    normalized["frequency_penalty"] = _as_float(
+    normalized["frequency_penalty"] = as_float(
         config.get("frequency_penalty"),
         DEFAULT_PROVIDER_OPTIONS["frequency_penalty"],
     )
-    normalized["frequency_penalty_enabled"] = _as_bool(
+    normalized["frequency_penalty_enabled"] = as_bool(
         config.get("frequency_penalty_enabled"),
         DEFAULT_PROVIDER_OPTIONS["frequency_penalty_enabled"],
     )
 
-    max_tokens = _as_int(config.get("max_tokens"), DEFAULT_PROVIDER_OPTIONS["max_tokens"])
+    max_tokens = as_int(config.get("max_tokens"), DEFAULT_PROVIDER_OPTIONS["max_tokens"])
     normalized["max_tokens"] = max_tokens
-    normalized["max_tokens_enabled"] = _as_bool(
+    normalized["max_tokens_enabled"] = as_bool(
         config.get("max_tokens_enabled"),
         DEFAULT_PROVIDER_OPTIONS["max_tokens_enabled"],
     )
