@@ -13,6 +13,19 @@ logger = logging.getLogger(__name__)
 from config import DB_DIR, DB_PATH
 
 
+DB_BUSY_TIMEOUT_MS = 5000
+
+
+class _ManagedConnection(sqlite3.Connection):
+    """SQLite connection whose context manager also closes the handle."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def get_connection():
     """获取数据库连接。
     
@@ -25,8 +38,13 @@ def get_connection():
         sqlite3.Connection: 配置好的数据库连接
     """
     os.makedirs(DB_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(
+        DB_PATH,
+        timeout=DB_BUSY_TIMEOUT_MS / 1000,
+        factory=_ManagedConnection,
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")  # 写前日志模式，提升并发性能
     conn.execute("PRAGMA foreign_keys=ON")    # 启用外键约束
+    conn.execute(f"PRAGMA busy_timeout={DB_BUSY_TIMEOUT_MS}")
     return conn
