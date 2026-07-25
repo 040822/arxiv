@@ -7,6 +7,7 @@ from datetime import datetime
 
 from . import connection
 from .analysis_migrations import migrate_analysis_unique
+from .paper_identity_migration import migrate_generic_paper_identity
 from .schema import apply_baseline_schema
 from .snapshot import copy_sqlite_snapshot
 
@@ -16,6 +17,7 @@ MIGRATION_BACKUP_KEEP = 3
 MIGRATIONS = (
     (1, "baseline", apply_baseline_schema),
     (2, "analysis_unique", migrate_analysis_unique),
+    (3, "generic_paper_identity", migrate_generic_paper_identity),
 )
 
 
@@ -139,6 +141,8 @@ def run_migrations():
     for version, name, migration in pending:
         try:
             with connection.get_connection() as conn:
+                conn.execute("PRAGMA foreign_keys=OFF")
+                conn.execute("PRAGMA legacy_alter_table=ON")
                 conn.execute("BEGIN IMMEDIATE")
                 _ensure_migration_table(conn)
                 live_versions = [
@@ -156,6 +160,11 @@ def run_migrations():
                         f"migration 顺序错误: 期望 v{expected_version}，实际 v{version}"
                     )
                 migration(conn)
+                violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise MigrationError(
+                        f"migration v{version} foreign key violations: {violations[:5]}"
+                    )
                 conn.execute(
                     "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
                     (version, name),

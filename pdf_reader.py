@@ -14,13 +14,16 @@ PDF 下载与文本提取模块
 - config.py: 提供下载速率限制参数
 """
 
+import hashlib
 import os
+import tempfile
 import re
 import time
 import threading
 import logging
 import requests
 import fitz  # PyMuPDF
+from urllib.parse import urljoin, urlparse
 from config import DB_DIR, PDF_DOWNLOAD_RATE, PDF_DOWNLOAD_CAPACITY
 from settings import get_proxy_config
 
@@ -29,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 # PDF 文件缓存目录路径
 PDF_CACHE_DIR = os.path.join(DB_DIR, "pdf_cache")
+PAPER_FILES_DIR = os.path.join(DB_DIR, "paper_files")
+MAX_PDF_BYTES = 100 * 1024 * 1024
+
 
 
 class TokenBucket:
@@ -128,6 +134,126 @@ def _get_proxy_dict():
     return proxies or None
 
 
+def _safe_paper_key(paper_key):
+    key = re.sub(r"[^A-Za-z0-9._-]", "_", str(paper_key or "").strip())
+    if not key:
+        raise ValueError("论文标识不能为空")
+    return key
+
+
+def _resolve_data_path(relative_path):
+    """Resolve a stored relative path only when it remains inside data/."""
+    value = str(relative_path or "").strip()
+    if not value:
+        return None
+    candidate = os.path.realpath(os.path.join(DB_DIR, value))
+    base = os.path.realpath(DB_DIR)
+    try:
+        if os.path.commonpath([base, candidate]) == base:
+            return candidate
+    except ValueError:
+        pass
+    return None
+
+def _validate_pdf_bytes(payload):
+    if not payload.startswith(b"%PDF-"):
+        raise ValueError("上传文件不是有效的 PDF")
+    if len(payload) > MAX_PDF_BYTES:
+        raise ValueError("PDF 文件不能超过 100 MB")
+    try:
+        document = fitz.open(stream=payload, filetype="pdf")
+        if document.page_count < 1:
+            raise ValueError("PDF 文件没有页面")
+        document.close()
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"PDF 文件损坏或无法读取: {exc}") from exc
+
+
+def validate_pdf_file(pdf_path):
+    """Validate a temporary PDF before metadata extraction."""
+    with open(pdf_path, "rb") as handle:
+        payload = handle.read(MAX_PDF_BYTES + 1)
+    _validate_pdf_bytes(payload)
+    return len(payload)
+
+
+def store_uploaded_pdf(file_obj, paper_key, filename=""):
+    """Validate and persist one user-uploaded PDF outside the rebuildable cache."""
+    stream = getattr(file_obj, "stream", file_obj)
+    if hasattr(stream, "seek"):
+        stream.seek(0)
+    payload = stream.read(MAX_PDF_BYTES + 1)
+    _validate_pdf_bytes(payload)
+    os.makedirs(PAPER_FILES_DIR, exist_ok=True)
+    safe_key = _safe_paper_key(paper_key)
+    target = os.path.join(PAPER_FILES_DIR, f"{safe_key}.pdf")
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=PAPER_FILES_DIR, prefix=f".{safe_key}-", suffix=".tmp", delete=False,
+        ) as handle:
+            temp_path = handle.name
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, target)
+    except Exception:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+        raise
+    return {
+        "local_path": os.path.join("paper_files", os.path.basename(target)),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+    }
+
+
+def get_paper_pdf_path(paper_data, download=True):
+    """Resolve durable upload, generic cache, legacy cache, then remote URL."""
+    local_path = str(paper_data.get("pdf_local_path") or "").strip()
+    if local_path:
+        candidate = _resolve_data_path(local_path)
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    paper_key = str(paper_data.get("paper_key") or paper_data.get("arxiv_id") or "").strip()
+    cached = get_cached_pdf_path(paper_key) if paper_key else None
+    if cached:
+        return cached
+    legacy_key = str(paper_data.get("arxiv_id") or "").strip()
+    if legacy_key and legacy_key != paper_key:
+        cached = get_cached_pdf_path(legacy_key)
+        if cached:
+            return cached
+    pdf_url = str(paper_data.get("pdf_url") or "").strip()
+    if download and pdf_url and paper_key:
+        return download_pdf(pdf_url, paper_key)
+    return None
+
+
+def remove_paper_pdf_files(paper_data):
+    """Best-effort cleanup of durable and cached PDF files."""
+    paths = []
+    local_path = str(paper_data.get("pdf_local_path") or "").strip()
+    if local_path:
+        candidate = _resolve_data_path(local_path)
+        if candidate:
+            paths.append(candidate)
+    paper_key = str(paper_data.get("paper_key") or paper_data.get("arxiv_id") or "").strip()
+    if paper_key:
+        paths.append(os.path.join(PDF_CACHE_DIR, f"{_safe_paper_key(paper_key)}.pdf"))
+    for path in paths:
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError as exc:
+            logger.warning("Failed to remove paper PDF %s: %s", path, exc)
+
+
 def get_cached_pdf_path(arxiv_id):
     """返回本地 PDF 缓存路径；文件不存在时返回 None。"""
     _ensure_cache_dir()
@@ -171,13 +297,57 @@ def download_pdf(pdf_url, arxiv_id):
     try:
         # 设置请求头，模拟浏览器访问
         headers = {"User-Agent": "Mozilla/5.0 (compatible; ArxivPaperDB/1.0)"}
-        resp = requests.get(pdf_url, headers=headers, proxies=_get_proxy_dict(), timeout=60)
+        hostname = (urlparse(pdf_url).hostname or "").lower()
+        if hostname in {"arxiv.org", "www.arxiv.org", "export.arxiv.org"}:
+            resp = requests.get(
+                pdf_url,
+                headers=headers,
+                proxies=_get_proxy_dict(),
+                timeout=60,
+                stream=True,
+            )
+        else:
+            from source.imports import PaperImportError, validate_public_http_url
+            current_url = pdf_url
+            resp = None
+            for _ in range(6):
+                validate_public_http_url(current_url)
+                resp = requests.get(
+                    current_url,
+                    headers=headers,
+                    proxies=_get_proxy_dict(),
+                    timeout=60,
+                    allow_redirects=False,
+                    stream=True,
+                )
+                if getattr(resp, "status_code", 200) not in {301, 302, 303, 307, 308}:
+                    break
+                location = getattr(resp, "headers", {}).get("Location")
+                if not location:
+                    break
+                current_url = urljoin(current_url, location)
+            else:
+                raise PaperImportError("PDF 链接重定向次数过多")
         resp.raise_for_status()  # 如果状态码不是 2xx 则抛出异常
+        if hasattr(resp, "iter_content"):
+            content = bytearray()
+            for chunk in resp.iter_content(chunk_size=256 * 1024):
+                if chunk:
+                    content.extend(chunk)
+                if len(content) > MAX_PDF_BYTES:
+                    raise ValueError("PDF 文件不能超过 100 MB")
+            payload = bytes(content)
+        else:
+            payload = resp.content
+            if len(payload) > MAX_PDF_BYTES:
+                raise ValueError("PDF 文件不能超过 100 MB")
+        if not payload.startswith(b"%PDF-"):
+            raise ValueError("远程文件不是有效的 PDF")
         
         # 将下载内容写入缓存文件
         with open(cache_path, "wb") as f:
-            f.write(resp.content)
-        logger.info(f"Downloaded PDF: {arxiv_id} ({len(resp.content) / 1024:.0f} KB)")
+            f.write(payload)
+        logger.info(f"Downloaded PDF: {arxiv_id} ({len(payload) / 1024:.0f} KB)")
         return cache_path
     except Exception as e:
         logger.error(f"Failed to download PDF for {arxiv_id}: {e}")

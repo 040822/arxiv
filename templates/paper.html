@@ -32,12 +32,20 @@
                 {% if paper.published_date %}
                 <span class="meta-item">📅 发布日期: {{ paper.published_date }}</span>
                 {% endif %}
+                {% if paper.source_type == 'arxiv' and paper.arxiv_id %}
                 <span class="meta-item">🔗 arXiv ID: <a href="{{ paper.url }}" target="_blank" class="meta-link">{{ paper.arxiv_id }}</a></span>
+                {% elif paper.url %}
+                <span class="meta-item">🔗 <a href="{{ paper.url }}" target="_blank" class="meta-link">{{ paper.source_type | upper }} 来源页面</a></span>
+                {% else %}
+                <span class="meta-item">📄 本地导入</span>
+                {% endif %}
                 {% if paper.pdf_url %}
                 <span class="meta-item">📥 <a href="{{ paper.pdf_url }}" target="_blank" class="meta-link">下载 PDF</a></span>
                 {% endif %}
-                <span class="meta-item">💬 <a href="/paper/{{ paper.arxiv_id }}/chat" class="meta-link">讨论论文</a></span>
-                <span class="meta-item">📌 <a href="javascript:void(0)" class="meta-link" id="todo-toggle" onclick='toggleTodo({{ paper.arxiv_id | tojson }})'>加入阅读清单</a></span>
+                <span class="meta-item">💬 <a href="/paper/{{ paper.paper_key }}/chat" class="meta-link">讨论论文</a></span>
+                {% if paper.pdf_local_path %}<span class="meta-item">✅ 本地 PDF 已保存</span>{% endif %}
+                {% if paper.venue %}<span class="meta-item">🏛️ {{ paper.venue }}</span>{% endif %}
+                <span class="meta-item">📌 <a href="javascript:void(0)" class="meta-link" id="todo-toggle" onclick='toggleTodo({{ paper.paper_key | tojson }})'>加入阅读清单</a></span>
                 {% if paper.hidden %}
                 <span class="meta-item" style="color:#dc3545;">🚫 已隐藏</span>
                 {% endif %}
@@ -199,7 +207,7 @@
     <script src="/static/vendor/auto-render.min.js"></script>
     <script src="/static/rich_text.js"></script>
     <script>
-        const ARXIV_ID = {{ paper.arxiv_id | tojson }};
+        const ARXIV_ID = {{ paper.paper_key | tojson }};
         const QA_ANALYSIS = {{ (analysis.qa_analysis if analysis and analysis.qa_analysis else '') | tojson }};
 
         function renderQaAnalysis() {

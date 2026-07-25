@@ -477,6 +477,47 @@ def parse_arxiv_id(input_str):
     return None
 
 
+def lookup_paper_by_id(arxiv_id):
+    """Read one arXiv paper without inserting it into the database."""
+    arxiv_id = parse_arxiv_id(arxiv_id or "")
+    if not arxiv_id:
+        return None
+    _apply_proxy()
+    fetch_cfg = get_fetch_config()
+    try:
+        client = arxiv.Client(
+            page_size=1,
+            delay_seconds=fetch_cfg["request_delay"],
+            num_retries=3,
+        )
+        results = list(client.results(arxiv.Search(id_list=[arxiv_id])))
+        if not results:
+            return None
+        result = results[0]
+        real_id = result.entry_id.split("/abs/")[-1].split("v")[0]
+        return {
+            "paper_key": real_id,
+            "arxiv_id": real_id,
+            "source_type": "arxiv",
+            "source_id": real_id,
+            "source_url": result.entry_id,
+            "url": result.entry_id,
+            "pdf_url": result.pdf_url,
+            "title": result.title.replace("\n", " ").strip(),
+            "authors": [str(author) for author in result.authors],
+            "abstract": result.summary.replace("\n", " ").strip(),
+            "categories": [str(category) for category in result.categories],
+            "primary_category": str(result.primary_category),
+            "venue": "arXiv",
+            "published_date": result.published.strftime("%Y-%m-%d") if result.published else "",
+            "updated_date": result.updated.strftime("%Y-%m-%d") if result.updated else "",
+            "warnings": [],
+        }
+    except Exception as exc:
+        logger.error("Error looking up arXiv paper %s: %s", arxiv_id, exc)
+        return None
+
+
 def fetch_paper_by_id(arxiv_id):
     """
     根据 arXiv ID 抓取单篇论文。
@@ -531,6 +572,10 @@ def fetch_paper_by_id(arxiv_id):
         # 构建论文数据字典
         paper_data = {
             "arxiv_id": real_id,
+            "paper_key": real_id,
+            "source_type": "arxiv",
+            "source_id": real_id,
+            "ingest_mode": "manual",
             "title": result.title.replace("\n", " ").strip(),
             "authors": authors,
             "abstract": result.summary.replace("\n", " ").strip(),

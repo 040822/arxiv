@@ -192,7 +192,25 @@
     ]
   },
   {
+    "rule": "/api/paper/<paper_key>/pdf",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "rule": "/api/paper/add",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/import",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/paper/import/preview",
     "methods": [
       "POST"
     ]

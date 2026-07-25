@@ -11,6 +11,7 @@ from source.pipeline import configure_daily_job, scheduler
 from source.settings import get_session_secret
 from source.storage import init_db, interrupt_running_task_logs
 from .auth import bp as auth_bp
+from .import_api import bp as import_bp
 from .learning_api import bp as learning_bp
 from .pages import bp as pages_bp
 from .papers_api import bp as papers_bp
@@ -29,13 +30,14 @@ def build_app():
     )
     app.secret_key = os.environ.get("FLASK_SECRET_KEY") or get_session_secret()
     app.config.update(
+        MAX_CONTENT_LENGTH=101 * 1024 * 1024,
         PERMANENT_SESSION_LIFETIME=timedelta(days=180),
         SESSION_REFRESH_EACH_REQUEST=True,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
     )
     for blueprint in (
-        auth_bp, pages_bp, papers_bp, learning_bp,
+        auth_bp, pages_bp, papers_bp, import_bp, learning_bp,
         tasks_bp, settings_bp, providers_bp,
     ):
         app.register_blueprint(blueprint)

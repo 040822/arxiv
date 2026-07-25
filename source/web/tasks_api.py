@@ -205,9 +205,9 @@ def api_run():
         def analysis_progress_callback(data):
             update_progress(task_id, {**data, "phase": "analyze"})
 
-        analyzed_count = analyze_pending_papers(limit=100, concurrency=concurrency, progress_callback=analysis_progress_callback)
+        analyzed_count = analyze_pending_papers(limit=100, concurrency=concurrency, progress_callback=analysis_progress_callback, ingest_mode="feed")
 
-        dates = get_all_dates()
+        dates = get_all_dates(ingest_mode="feed")
         report_date = dates[0][0] if dates else datetime.now().strftime("%Y-%m-%d")
 
         # 阶段3：个性化推荐评分
@@ -220,6 +220,7 @@ def api_run():
             limit=1000,
             date=report_date,
             concurrency=concurrency,
+            ingest_mode="feed",
             progress_callback=recommendation_progress_callback,
         )
 
@@ -286,12 +287,12 @@ def api_generate():
         if date_param:
             report_date = date_param
         else:
-            dates = get_all_dates()
+            dates = get_all_dates(ingest_mode="feed")
             report_date = dates[0][0] if dates else datetime.now().strftime("%Y-%m-%d")
 
         recommended_count = 0
         if not skip_recommend:
-            recommended_count = recommend_pending_papers(limit=1000, date=report_date, concurrency=get_concurrency())
+            recommended_count = recommend_pending_papers(limit=1000, date=report_date, concurrency=get_concurrency(), ingest_mode="feed")
 
         ai_summary = None
         if include_ai_summary:

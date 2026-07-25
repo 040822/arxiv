@@ -118,10 +118,28 @@
 
         <!-- 添加指定论文 -->
         <div class="action-panel">
-            <h3>📄 添加指定论文</h3>
+            <h3>📄 手动导入论文</h3>
+            <p class="section-desc">支持 arXiv、OpenReview、DOI、期刊/会议论文页、PDF 直链或本地 PDF。解析结果可确认修改，不参与自动日报。</p>
             <div class="add-paper-row">
-                <input type="text" id="paper-input" class="add-paper-input" placeholder="输入 arXiv 论文编号或链接，如 2603.18336、https://arxiv.org/abs/2603.18336">
-                <button class="action-btn btn-primary" onclick="addPaper()">🔍 添加并分析</button>
+                <input type="text" id="import-source-url" class="add-paper-input" placeholder="论文页、OpenReview、DOI 或 PDF 链接">
+                <input type="file" id="import-pdf-file" accept="application/pdf,.pdf">
+                <button class="action-btn" type="button" onclick="previewPaperImport(this)">🔍 解析论文</button>
+            </div>
+            <div id="import-fields" style="display:none; margin-top:14px;">
+                <div class="form-group"><label>标题 *</label><input type="text" id="import-title"></div>
+                <div class="form-group"><label>作者（每行一位）</label><textarea id="import-authors" rows="3"></textarea></div>
+                <div class="form-group"><label>摘要</label><textarea id="import-abstract" rows="7"></textarea></div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1"><label>会议/期刊</label><input type="text" id="import-venue"></div>
+                    <div class="form-group" style="flex:1"><label>发布日期</label><input type="date" id="import-published-date"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1"><label>来源页面</label><input type="url" id="import-confirm-source-url"></div>
+                    <div class="form-group" style="flex:1"><label>PDF 直链</label><input type="url" id="import-pdf-url"></div>
+                </div>
+                <label><input type="checkbox" id="import-run-basic" checked> 基础分析</label>
+                <label style="margin-left:16px"><input type="checkbox" id="import-run-deep" checked> 深度阅读</label>
+                <button class="action-btn btn-primary" type="button" onclick="confirmPaperImport(this)" style="margin-left:16px">➕ 确认导入</button>
             </div>
             <div id="add-paper-status" class="action-status"></div>
             <div id="add-paper-progress" style="display:none;">
@@ -329,6 +347,103 @@
         }
 
         /* ---- 添加论文 ---- */
+        let currentImportDraft = null;
+
+        function importValue(id) { return document.getElementById(id).value.trim(); }
+
+        async function previewPaperImport(btn) {
+            const sourceUrl = importValue('import-source-url');
+            const file = document.getElementById('import-pdf-file').files[0];
+            const statusEl = document.getElementById('add-paper-status');
+            if (!sourceUrl && !file) { alert('请输入论文链接或选择 PDF'); return; }
+            const form = new FormData();
+            if (sourceUrl) form.append('source_url', sourceUrl);
+            if (file) form.append('pdf_file', file);
+            btn.disabled = true;
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在解析论文元数据...';
+            try {
+                const resp = await fetch('/api/paper/import/preview', {method: 'POST', body: form});
+                const data = await resp.json();
+                if (!resp.ok || data.status !== 'ok') throw new Error(data.message || '解析失败');
+                currentImportDraft = data.draft;
+                document.getElementById('import-title').value = data.draft.title || '';
+                document.getElementById('import-authors').value = (data.draft.authors || []).join('\n');
+                document.getElementById('import-abstract').value = data.draft.abstract || '';
+                document.getElementById('import-venue').value = data.draft.venue || '';
+                document.getElementById('import-published-date').value = data.draft.published_date || '';
+                document.getElementById('import-confirm-source-url').value = data.draft.source_url || sourceUrl;
+                document.getElementById('import-pdf-url').value = data.draft.pdf_url || '';
+                document.getElementById('import-fields').style.display = 'block';
+                const warnings = data.draft.warnings || [];
+                statusEl.className = warnings.length ? 'action-status warning' : 'action-status success';
+                statusEl.textContent = warnings.length ? '⚠️ ' + warnings.join('；') : '✅ 元数据已解析，请确认后导入';
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function confirmPaperImport(btn) {
+            if (!currentImportDraft) { alert('请先解析论文'); return; }
+            const title = importValue('import-title');
+            if (!title) { alert('论文标题不能为空'); return; }
+            const metadata = Object.assign({}, currentImportDraft, {
+                title,
+                authors: importValue('import-authors').split('\n').map(x => x.trim()).filter(Boolean),
+                abstract: importValue('import-abstract'),
+                venue: importValue('import-venue'),
+                published_date: importValue('import-published-date'),
+                source_url: importValue('import-confirm-source-url'),
+                pdf_url: importValue('import-pdf-url')
+            });
+            const taskId = 'import_' + Date.now();
+            const form = new FormData();
+            form.append('metadata', JSON.stringify(metadata));
+            form.append('task_id', taskId);
+            form.append('run_basic', document.getElementById('import-run-basic').checked ? 'true' : 'false');
+            form.append('run_deep', document.getElementById('import-run-deep').checked ? 'true' : 'false');
+            const file = document.getElementById('import-pdf-file').files[0];
+            if (file) form.append('pdf_file', file);
+
+            const statusEl = document.getElementById('add-paper-status');
+            const progressEl = document.getElementById('add-paper-progress');
+            const barEl = document.getElementById('add-paper-bar');
+            const detailEl = document.getElementById('add-paper-detail');
+            progressEl.style.display = 'block';
+            btn.disabled = true;
+            const eventSource = new EventSource('/api/progress/' + taskId);
+            eventSource.onmessage = event => {
+                try {
+                    const state = JSON.parse(event.data);
+                    barEl.style.width = Math.round((state.current / Math.max(state.total, 1)) * 100) + '%';
+                    detailEl.textContent = state.message || '';
+                    if (state.status === 'completed' || state.status === 'error') eventSource.close();
+                } catch (_) {}
+            };
+            eventSource.onerror = () => eventSource.close();
+            try {
+                const resp = await fetch('/api/paper/import', {method: 'POST', body: form});
+                const data = await resp.json();
+                if (!resp.ok || data.status !== 'ok') throw new Error(data.message || '导入失败');
+                statusEl.className = data.warnings?.length ? 'action-status warning' : 'action-status success';
+                statusEl.textContent = '✅ ' + data.message + (data.warnings?.length ? '；' + data.warnings.join('；') : '');
+                const link = document.createElement('a');
+                link.href = data.detail_url;
+                link.textContent = ' 查看论文';
+                statusEl.appendChild(link);
+                barEl.style.width = '100%';
+                currentImportDraft = null;
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
         async function addPaper() {
             const input = document.getElementById('paper-input').value.trim();
             if (!input) { alert('请输入论文编号或链接'); return; }

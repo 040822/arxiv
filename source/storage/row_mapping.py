@@ -12,6 +12,9 @@ PAPER_JSON_LIST_FIELDS = ("authors", "categories", "tags")
 def parse_paper_row(row):
     """Return a paper row dict with JSON list fields converted to Python lists."""
     result = dict(row)
+    result.setdefault("paper_key", result.get("arxiv_id"))
+    result.setdefault("source_type", "arxiv")
+    result["source_url"] = result.get("url") or ""
     identifier = result.get("arxiv_id") or result.get("id") or "unknown"
     for field in PAPER_JSON_LIST_FIELDS:
         if field not in result:

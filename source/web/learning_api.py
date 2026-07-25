@@ -37,7 +37,7 @@ from source.storage import (
     add_paper_quiz_question,
     add_paper_quiz_questions,
     create_paper_quiz_session,
-    get_paper_by_arxiv_id,
+    get_paper_by_key,
     get_paper_chat_messages,
     get_paper_quiz_question,
     get_paper_quiz_session_detail,
@@ -51,7 +51,7 @@ bp = Blueprint("learning_api", __name__)
 
 
 def _get_learning_paper_or_response(arxiv_id):
-    paper = get_paper_by_arxiv_id(arxiv_id)
+    paper = get_paper_by_key(arxiv_id)
     if not paper:
         return None, (jsonify({"status": "error", "message": "论文不存在"}), 404)
     return _prepare_paper_for_view(paper), None

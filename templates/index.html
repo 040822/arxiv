@@ -60,7 +60,7 @@
             <div class="paper-card">
                 <div class="paper-header">
                     <h3 class="paper-title">
-                        <a href="/paper/{{ paper.arxiv_id }}">{{ paper.title }}</a>
+                        <a href="/paper/{{ paper.paper_key }}">{{ paper.title }}</a>
                     </h3>
                     <div class="paper-meta">
                         {% if paper.published_date %}
@@ -113,16 +113,16 @@
                 {% endif %}
 
                 {% if paper.abstract %}
-                <div class="paper-abstract" id="abs-{{ paper.arxiv_id }}">
+                <div class="paper-abstract" id="abs-{{ paper.paper_key }}">
                     {% if paper.summary_cn %}
                         <span class="abstract-text">{{ paper.abstract[:300] }}{% if paper.abstract|length > 300 %}...{% endif %}</span>
                         {% if paper.abstract|length > 300 %}
-                        <a href="javascript:void(0)" class="abstract-toggle" onclick="toggleAbstract('{{ paper.arxiv_id }}', `{{ paper.abstract | e }}`)">展开</a>
+                        <a href="javascript:void(0)" class="abstract-toggle" onclick="toggleAbstract('{{ paper.paper_key }}', `{{ paper.abstract | e }}`)">展开</a>
                         {% endif %}
                     {% else %}
                         <span class="abstract-text">{{ paper.abstract }}</span>
                         {% if paper.abstract|length > 300 %}
-                        <a href="javascript:void(0)" class="abstract-toggle" onclick="toggleAbstract('{{ paper.arxiv_id }}', `{{ paper.abstract | e }}`)">收起</a>
+                        <a href="javascript:void(0)" class="abstract-toggle" onclick="toggleAbstract('{{ paper.paper_key }}', `{{ paper.abstract | e }}`)">收起</a>
                         {% endif %}
                     {% endif %}
                 </div>
@@ -145,9 +145,9 @@
                     {% if paper.pdf_url %}
                     <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
                     {% endif %}
-                    <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
-                    <a href="javascript:void(0)" class="link-todo" onclick="toggleTodo('{{ paper.arxiv_id }}', this)">📌 加入清单</a>
-                    <a href="javascript:void(0)" class="link-hide" onclick="hidePaper('{{ paper.arxiv_id }}', this)">😐 不感兴趣</a>
+                    <a href="/paper/{{ paper.paper_key }}">📖 详情</a>
+                    <a href="javascript:void(0)" class="link-todo" onclick="toggleTodo('{{ paper.paper_key }}', this)">📌 加入清单</a>
+                    <a href="javascript:void(0)" class="link-hide" onclick="hidePaper('{{ paper.paper_key }}', this)">😐 不感兴趣</a>
                 </div>
             </div>
             {% else %}

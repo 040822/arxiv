@@ -46,7 +46,7 @@ def generate_report_content(date, ai_summary=None):
                    a.recommendation_analyzed_at
             FROM papers p
             LEFT JOIN analysis a ON p.id = a.paper_id
-            WHERE p.published_date = ?
+            WHERE p.published_date = ? AND p.ingest_mode = 'feed'
             ORDER BY a.rating DESC, p.arxiv_id
         """, (date,))
         rows = cursor.fetchall()

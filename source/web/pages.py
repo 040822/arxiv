@@ -40,7 +40,7 @@ from source.storage import (
     get_analysis_by_paper_id,
     get_analyzed_count,
     get_latest_paper_quiz_sessions,
-    get_paper_by_arxiv_id,
+    get_paper_by_key,
     get_paper_count,
     get_papers_with_analysis,
     get_reading_list,
@@ -139,7 +139,7 @@ def paper_detail(arxiv_id):
 
     根据 arxiv_id 查询论文信息和分析结果，解析 authors/categories 的 JSON 字符串。
     """
-    paper = get_paper_by_arxiv_id(arxiv_id)
+    paper = get_paper_by_key(arxiv_id)
     if not paper:
         return "Paper not found", 404
 
@@ -159,7 +159,7 @@ def _prepare_paper_for_view(paper):
 @bp.route("/paper/<arxiv_id>/chat")
 def paper_chat_page(arxiv_id):
     """单篇论文学习页：自由讨论、主动问答和苏格拉底追问。"""
-    paper = get_paper_by_arxiv_id(arxiv_id)
+    paper = get_paper_by_key(arxiv_id)
     if not paper:
         return "Paper not found", 404
     paper_data = _prepare_paper_for_view(paper)
@@ -299,6 +299,7 @@ def browse():
     has_analysis = request.args.get("has_analysis", None)
     has_deep_analysis = request.args.get("has_deep_analysis", None)
     hidden = request.args.get("hidden", None)
+    source = request.args.get("source", None)
 
     # 评级范围限制在 0-5 之间
     if min_rating is not None:
@@ -310,7 +311,7 @@ def browse():
     papers, total = browse_papers(
         date=date, tag=tag, category=category,
         min_rating=min_rating, max_rating=max_rating,
-        has_analysis=has_analysis, has_deep_analysis=has_deep_analysis, hidden=hidden,
+        has_analysis=has_analysis, has_deep_analysis=has_deep_analysis, hidden=hidden, source=source,
         limit=per_page, offset=(page - 1) * per_page
     )
 
@@ -329,6 +330,7 @@ def browse():
         has_analysis=has_analysis,
         has_deep_analysis=has_deep_analysis,
         hidden=hidden,
+        source=source,
         tags=tags_with_counts,
         categories=categories_with_counts,
         dates=dates_with_counts,

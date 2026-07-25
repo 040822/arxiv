@@ -622,7 +622,7 @@ def _load_report_papers(report_date):
                    a.recommendation_analyzed_at
             FROM papers p
             LEFT JOIN analysis a ON p.id = a.paper_id
-            WHERE p.published_date = ?
+            WHERE p.published_date = ? AND p.ingest_mode = 'feed'
             ORDER BY p.arxiv_id
         """, (report_date,))
         rows = cursor.fetchall()

@@ -174,12 +174,27 @@ APScheduler（星期 + 时分）→ daily_pipeline()
 用户输入关键词 → GET /search?q=xxx → source/web/pages.py → source/storage/papers.py
   → 检查是否为 arXiv ID
   → 如果是 ID：精确匹配 arxiv_id
-  → 如果是关键词：拆分并去重，要求每个词命中 title/tags/summary_cn/abstract/qa_analysis 之一
+  → 如果是关键词：拆分并去重，要求每个词命中标题、作者、venue、来源标识、分析文本之一
   → 按字段权重累计相关分，再按评级和发布日期兜底排序
   → 后端生成安全高亮片段和最佳命中摘要，模板自动转义后展示
 ```
 
 ---
+
+### 8. 手动导入流
+
+```
+链接或 PDF → POST /api/paper/import/preview
+  → arXiv/OpenReview/Crossref/网页 citation metadata，或 AI 从 PDF 预填元数据
+  → 用户校对标题、作者、摘要、venue、日期和 PDF 地址
+  → POST /api/paper/import
+  → paper_key 通用身份 + 来源身份/PDF SHA-256 去重
+  → 上传 PDF 写入 data/paper_files/（缓存清理不会删除）
+  → 可选 basic_analysis + deep_reading
+  → 详情、聊天、练习均按 paper_key 访问
+```
+
+定时日报仅查询 `ingest_mode='feed'`；`manual` 论文只响应用户显式触发。
 
 ## 组件依赖关系
 

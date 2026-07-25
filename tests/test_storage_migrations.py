@@ -79,7 +79,11 @@ class SchemaMigrationTests(unittest.TestCase):
         finally:
             conn.close()
 
-        self.assertEqual(versions, [(1, "baseline"), (2, "analysis_unique")])
+        self.assertEqual(versions, [
+            (1, "baseline"),
+            (2, "analysis_unique"),
+            (3, "generic_paper_identity"),
+        ])
         self.assertTrue({"papers", "analysis", "task_logs", "schema_migrations"} <= tables)
         self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "migration_backups")))
 
@@ -201,10 +205,51 @@ class SchemaMigrationTests(unittest.TestCase):
         finally:
             conn.close()
 
-        self.assertEqual(versions, [(1,), (2,)])
+        self.assertEqual(versions, [(1,), (2,), (3,)])
         self.assertEqual(rows, [
             (canonical_id, '["VLA"]', "first summary", 4, "filled comment", "deep read")
         ])
+
+    def test_version_three_generalizes_paper_identity_without_breaking_foreign_keys(self):
+        database.init_db()
+        paper_id = database.insert_paper({
+            "arxiv_id": "2607.54321",
+            "title": "Legacy paper",
+            "authors": ["Alice"],
+            "abstract": "Abstract",
+            "categories": ["cs.RO"],
+            "primary_category": "cs.RO",
+            "url": "https://arxiv.org/abs/2607.54321",
+            "pdf_url": "https://arxiv.org/pdf/2607.54321",
+            "published_date": "2026-07-24",
+            "updated_date": "2026-07-24",
+        })
+        database.add_paper_chat_message(paper_id, "user", "hello")
+
+        conn = sqlite3.connect(connection.DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT paper_key, arxiv_id, source_type, ingest_mode FROM papers WHERE id = ?",
+                (paper_id,),
+            ).fetchone()
+            conn.execute("""
+                INSERT INTO papers (
+                    paper_key, arxiv_id, source_type, ingest_mode, title,
+                    authors, abstract, categories
+                ) VALUES (?, NULL, 'upload', 'manual', ?, '[]', '', '[]')
+            """, ("p_manual", "Uploaded paper"))
+            conn.commit()
+            foreign_key_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            chat_count = conn.execute(
+                "SELECT COUNT(*) FROM paper_chat_messages WHERE paper_id = ?",
+                (paper_id,),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        self.assertEqual(row, ("2607.54321", "2607.54321", "arxiv", "feed"))
+        self.assertEqual(chat_count, 1)
+        self.assertEqual(foreign_key_violations, [])
 
 
     def test_average_rating_query_is_exposed_by_storage(self):
@@ -331,7 +376,7 @@ class SchemaMigrationTests(unittest.TestCase):
         messages = []
         try:
             migrations.MIGRATIONS = original_migrations + (
-                (3, "failing_migration", fail_after_write),
+                (4, "failing_migration", fail_after_write),
             )
             for _ in range(5):
                 with self.assertRaises(RuntimeError) as raised:
@@ -352,7 +397,7 @@ class SchemaMigrationTests(unittest.TestCase):
             conn.close()
 
         backups = os.listdir(os.path.join(self.tmp.name, "migration_backups"))
-        self.assertEqual(versions, [(1,), (2,)])
+        self.assertEqual(versions, [(1,), (2,), (3,)])
         self.assertIsNone(rolled_back)
         self.assertEqual(len(backups), 3)
         self.assertTrue(all("快照:" in message for message in messages))
@@ -401,7 +446,7 @@ class SchemaMigrationTests(unittest.TestCase):
         conn = sqlite3.connect(connection.DB_PATH)
         try:
             conn.execute(
-                "INSERT INTO schema_migrations (version, name) VALUES (3, 'future')"
+                "INSERT INTO schema_migrations (version, name) VALUES (4, 'future')"
             )
             conn.commit()
         finally:

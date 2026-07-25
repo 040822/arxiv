@@ -84,11 +84,12 @@ OPENAI_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
 REQUIRED_PROMPT_FIELDS = {"title", "authors", "abstract", "tag_candidates", "rating_criteria"}
 
 
-AI_TASK_KEYS = ("basic_analysis", "deep_reading", "report_summary", "recommendation", "paper_chat", "paper_quiz")
+AI_TASK_KEYS = ("basic_analysis", "paper_import", "deep_reading", "report_summary", "recommendation", "paper_chat", "paper_quiz")
 
 
 AI_TASK_LABELS = {
     "basic_analysis": "基础分析",
+    "paper_import": "PDF 元数据提取",
     "deep_reading": "深度阅读",
     "report_summary": "报告导读",
     "recommendation": "个性化推荐",
@@ -127,6 +128,22 @@ DEFAULT_AI_TASK_OPTIONS = {
         "frequency_penalty": 0.0,
         "frequency_penalty_enabled": False,
         "max_tokens": 1200,
+        "max_tokens_enabled": True,
+        "is_thinking": False,
+        "thinking_effort": "medium",
+    },
+    "paper_import": {
+        "provider_key": "",
+        "model": "",
+        "temperature": 0.1,
+        "temperature_enabled": True,
+        "top_p": 1.0,
+        "top_p_enabled": False,
+        "presence_penalty": 0.0,
+        "presence_penalty_enabled": False,
+        "frequency_penalty": 0.0,
+        "frequency_penalty_enabled": False,
+        "max_tokens": 1000,
         "max_tokens_enabled": True,
         "is_thinking": False,
         "thinking_effort": "medium",
@@ -366,6 +383,14 @@ DEFAULT_PROMPT_PROFILES = {
     "basic_analysis": {
         "system": DEFAULT_SYSTEM_PROMPT,
         "instruction": DEFAULT_BASIC_ANALYSIS_INSTRUCTION,
+    },
+    "paper_import": {
+        "system": "你是严谨的论文元数据抽取助手，必须返回合法 JSON。",
+        "instruction": (
+            "从论文文本中提取书目信息，只返回 JSON："
+            '{"title":"","authors":[],"abstract":"","venue":"",'
+            '"published_date":"YYYY-MM-DD或空字符串"}。不确定的字段留空。'
+        ),
     },
     "deep_reading": {
         "system": DEFAULT_SYSTEM_PROMPT,

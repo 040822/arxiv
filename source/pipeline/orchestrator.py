@@ -220,6 +220,7 @@ def daily_pipeline():
             limit=analyze_limit,
             concurrency=concurrency,
             progress_callback=analysis_progress_callback,
+            ingest_mode="feed",
         )
         analysis_failures = int(analysis_progress.get("fail", 0) or 0)
         analysis_status = "warning" if analysis_failures else "success"
@@ -235,7 +236,7 @@ def daily_pipeline():
             json.dumps(analysis_progress, ensure_ascii=False),
         )
 
-        dates = get_all_dates()
+        dates = get_all_dates(ingest_mode="feed")
         report_date = dates[0][0] if dates else datetime.now().strftime("%Y-%m-%d")
 
         current_step = "recommend"
@@ -256,6 +257,7 @@ def daily_pipeline():
                 date=report_date,
                 concurrency=concurrency,
                 progress_callback=recommendation_progress_callback,
+                ingest_mode="feed",
             )
             recommendation_failures = int(recommendation_progress.get("fail", 0) or 0)
             recommendation_status = "warning" if recommendation_failures else "success"

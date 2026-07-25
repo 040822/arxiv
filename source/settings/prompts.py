@@ -177,6 +177,7 @@ def save_prompts(prompts):
 
 PROFILE_REQUIRED_PROMPT_FIELDS = {
     "basic_analysis": {"tag_candidates", "rating_criteria"},
+    "paper_import": set(),
     "deep_reading": set(),
     "report_summary": set(),
     "recommendation": set(),

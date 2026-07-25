@@ -37,10 +37,11 @@ arxiv/
 ├── app.py              # Flask 启动兼容 shim（实现位于 source/web/）
 ├── source/
 │   ├── settings/       # 值转换、默认值、归一化、思考协议、store、供应商、Prompt、运行时配置
+│   ├── imports/        # 手动论文链接/PDF 元数据预览解析与安全 URL 校验
 │   ├── storage/        # 托管连接、顺序迁移/快照、论文、分析、日志、报告、学习记录
 │   ├── reports/        # Web 日报 HTML 渲染
 │   ├── pipeline/       # 定时/手动组合流水线与 APScheduler
-│   └── web/            # Flask application assembly、Blueprint 路由、鉴权与进度
+│   └── web/            # Flask application assembly、Blueprint 路由（含 import_api）、鉴权与进度
 ├── main.py             # CLI 入口（fetch/analyze/run）
 ├── requirements.txt    # Python 依赖
 ├── README.md           # 用户文档
@@ -54,13 +55,14 @@ arxiv/
 │   ├── about.html      # 公开项目宣传页（研究闭环、优势、竞品定位）
 │   ├── vision.html     # 实验室愿景页（科研价值、竞品格局、发展路线）
 │   ├── settings.html   # 设置页（含独立的定时任务、邮件和执行日志管理）
-│   └── tasks.html      # 论文处理页（抓取、分析、报告、添加指定论文）
+│   └── tasks.html      # 论文处理页（抓取、分析、报告、两步手动导入）
 ├── static/style.css    # 全局样式
 ├── static/promo.css    # 宣传页独立样式（公开版 + 深色愿景版）
 ├── data/               # 运行时数据（不提交到git）
 │   ├── papers.db       # SQLite 数据库
 │   ├── settings.json   # 运行时配置
-│   └── pdf_cache/      # PDF 缓存
+│   ├── pdf_cache/      # 可重建 PDF 缓存
+│   └── paper_files/    # 手动上传的持久 PDF（不随缓存清理）
 ```
 
 ---
@@ -71,16 +73,24 @@ arxiv/
 ```sql
 CREATE TABLE papers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    arxiv_id TEXT UNIQUE NOT NULL,    -- 如 "2401.12345"
+    paper_key TEXT UNIQUE NOT NULL,   -- 所有来源通用的内部路由标识
+    arxiv_id TEXT UNIQUE,             -- 仅 arXiv 论文有值
+    source_type TEXT NOT NULL,        -- arxiv/openreview/doi/web/upload
+    source_id TEXT,                   -- 来源稳定标识；与 source_type 联合唯一
+    ingest_mode TEXT NOT NULL,        -- feed/manual；定时任务只处理 feed
     title TEXT NOT NULL,
-    authors TEXT NOT NULL,             -- JSON 数组
+    authors TEXT NOT NULL,            -- JSON 数组
     abstract TEXT NOT NULL,
-    categories TEXT NOT NULL,          -- JSON 数组
-    primary_category TEXT,             -- 如 "cs.RO"
-    url TEXT,                          -- arXiv 页面链接
-    pdf_url TEXT,                      -- PDF 下载链接
-    published_date TEXT,               -- "YYYY-MM-DD"
+    categories TEXT NOT NULL,         -- JSON 数组
+    primary_category TEXT,
+    url TEXT,                         -- 来源页面链接
+    pdf_url TEXT,                     -- 远程 PDF 链接
+    venue TEXT,
+    published_date TEXT,
     updated_date TEXT,
+    pdf_local_path TEXT,              -- data/ 下的持久 PDF 相对路径
+    pdf_sha256 TEXT,                  -- 非空时唯一
+    pdf_size_bytes INTEGER,
     hidden INTEGER DEFAULT 0,          -- 1=隐藏
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -346,6 +356,7 @@ APScheduler cron(day_of_week, hour, minute)
     "user_prompt": "...{title}...{authors}...{abstract}...{tag_candidates}..."
   },
   "prompt_profiles": {
+    "paper_import": {"system": "...", "instruction": "...从 PDF 提取可编辑元数据..."},
     "basic_analysis": {"system": "...", "instruction": "...{tag_candidates}..."},
     "deep_reading": {"system": "...", "instruction": "..."},
     "report_summary": {"system": "...", "instruction": "..."},
@@ -355,6 +366,7 @@ APScheduler cron(day_of_week, hour, minute)
   },
   "ai_tasks": {
     "basic_analysis": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1200},
+    "paper_import": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1000},
     "deep_reading": {"provider_key": "deepseek", "model": "deepseek-reasoner", "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 6000},
     "report_summary": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1000},
     "recommendation": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 500},
@@ -368,7 +380,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `load_settings()` / `save_settings()` — 读写JSON（含自动迁移）
 - `get_ai_config()` — 获取当前激活供应商的 API 配置
 - `get_ai_task_config(task_key)` — 获取某个 AI 功能的实际供应商、模型和参数配置
-- `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的模型路由
+- `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存 PDF 元数据提取、基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的模型路由
 - `build_chat_completion_kwargs()` — 统一构建 Chat Completions 参数（思考模型会省略采样参数）
 - LLM 客户端必须通过 `analyzer.get_openai_client()` 创建，以复用全局代理配置并禁用环境变量代理
 - `normalize_provider_config()` — 补齐供应商配置字段，兼容旧版 settings.json
@@ -420,6 +432,9 @@ APScheduler cron(day_of_week, hour, minute)
 | `/api/stats` | GET | 统计信息 |
 | `/api/paper/<id>/analysis` | PUT | 更新论文分析 |
 | `/api/paper/<id>/hide` | POST | 隐藏论文 |
+| `/api/paper/import/preview` | POST | 解析论文链接或上传 PDF，返回可编辑元数据，不入库 |
+| `/api/paper/import` | POST | 确认手动导入，可选基础分析和深度阅读 |
+| `/api/paper/<id>/pdf` | POST | 为已有论文上传或替换本地 PDF |
 | `/api/paper/<id>/unhide` | POST | 取消隐藏 |
 | `/api/paper/<id>` | DELETE | 删除论文 |
 | `/api/paper/<id>/reanalyze` | POST | 重新AI分析 |
@@ -514,11 +529,11 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 管理密码设置后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用。登录状态通过签名 cookie 持久保存 180 天，默认使用 `settings.json` 中的 `session_secret` 保证服务重启后仍有效；如果设置了 `FLASK_SECRET_KEY` 则优先使用环境变量。修改管理密码会使旧登录状态失效。`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
 
 ### 7.4 修改 Prompt
-- 新版 prompt 主要存储在 `data/settings.json` 的 `prompt_profiles` 字段，按 `basic_analysis`、`deep_reading`、`report_summary`、`recommendation`、`paper_chat`、`paper_quiz` 拆分
+- 新版 prompt 主要存储在 `data/settings.json` 的 `prompt_profiles` 字段，按 `paper_import`、`basic_analysis`、`deep_reading`、`report_summary`、`recommendation`、`paper_chat`、`paper_quiz` 拆分
 - 旧版 `prompts.system_prompt/user_prompt` 保留为兼容字段，并映射到 `deep_reading`
 - 基础分析 Prompt Profile 可使用 `{tag_candidates}`、`{rating_criteria}`，并返回 `tags`、`rating`、`summary_cn`、`value_comment`；深度阅读只描述 Q&A 输出；论文标题、作者、摘要、PDF 全文由后端作为独立 JSON message 传入
 - 修改 AI 调用逻辑时不要重新把动态论文内容拼回稳定 instruction，否则会降低 prompt cache 命中率
-- 深度阅读按质量优先调用 `get_paper_full_text(max_chars=None)`，不截断 PDF 全文；基础分析只使用摘要以降低成本
+- 深度阅读按质量优先读取完整 PDF 全文；基础分析通常只使用摘要，无摘要的手动论文可回退到 PDF 前 50000 字符
 - 深度阅读必须校验当前 Prompt 声明的所有 `### Qn:`；自动补全最多调用一次，补全后仍不完整时禁止覆盖已有 `qa_analysis`
 - 论文详情页和学习页的模型富文本统一通过 `static/rich_text.js` 的 `RichText.render()` / `RichText.renderMath()` 渲染，不要在模板中复制 Markdown 或清洗逻辑
 - 论文学习功能必须通过 `build_paper_learning_messages()` 构造消息，保持 `system → 稳定任务说明 → 稳定论文上下文 → 动态历史/用户输入` 的顺序；不要把时间戳、session id、当前问题等易变内容放进稳定论文上下文

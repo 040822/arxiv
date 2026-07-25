@@ -32,7 +32,7 @@ def get_daily_stats(date):
                    AVG(a.rating) as avg_rating
             FROM papers p
             LEFT JOIN analysis a ON p.id = a.paper_id
-            WHERE p.published_date = ?
+            WHERE p.published_date = ? AND p.ingest_mode = 'feed'
         """, (date,))
         row = cursor.fetchone()
 
@@ -46,7 +46,7 @@ def get_report_trends(report_date, interest_hash="", days=7, top_tags=5):
         cursor.execute("""
             SELECT DISTINCT published_date
             FROM papers
-            WHERE published_date IS NOT NULL AND published_date <= ?
+            WHERE published_date IS NOT NULL AND published_date <= ? AND ingest_mode = 'feed'
             ORDER BY published_date DESC
             LIMIT ?
         """, (report_date, max(1, int(days))))
@@ -73,7 +73,7 @@ def get_report_trends(report_date, interest_hash="", days=7, top_tags=5):
             SELECT p.published_date, a.tags, a.recommendation_score, a.recommendation_interest_hash
             FROM papers p
             LEFT JOIN analysis a ON p.id = a.paper_id
-            WHERE p.published_date IN ({placeholders})
+            WHERE p.published_date IN ({placeholders}) AND p.ingest_mode = 'feed'
         """, dates)
         rows = [dict(row) for row in cursor.fetchall()]
 

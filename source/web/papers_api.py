@@ -1,13 +1,6 @@
 """Flask papers_api routes."""
 
-import hashlib
-import hmac
 import logging
-import os
-import re
-import sqlite3
-import time
-from datetime import datetime
 
 from flask import (
     Blueprint, Response, current_app, jsonify, redirect, render_template,
@@ -19,6 +12,7 @@ from analyzer import (
     chat_about_paper, generate_paper_quiz, get_openai_client,
     grade_quiz_answer, socratic_reply,
 )
+from pdf_reader import remove_paper_pdf_files
 from backup import get_database_file_sizes
 from fetcher import (
     fetch_batch, fetch_by_date, fetch_latest_papers, fetch_paper_by_id,
@@ -41,6 +35,7 @@ from source.storage import (
     get_all_tags,
     get_analysis_by_paper_id,
     get_analyzed_count,
+    get_paper_by_key,
     get_paper_by_arxiv_id,
     get_paper_count,
     get_papers_with_analysis,
@@ -116,7 +111,7 @@ def api_stats():
 def api_update_paper_analysis(arxiv_id):
     """更新论文分析结果（星级修正、标签、摘要等）"""
     try:
-        paper = get_paper_by_arxiv_id(arxiv_id)
+        paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
         if not paper:
             return jsonify({"status": "error", "message": "论文不存在"}), 404
 
@@ -156,7 +151,9 @@ def api_unhide_paper(arxiv_id):
 def api_delete_paper(arxiv_id):
     """删除论文及其关联的分析数据（CASCADE 删除）"""
     try:
+        paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
         if delete_paper(arxiv_id):
+            remove_paper_pdf_files(paper or {})
             return jsonify({"status": "ok", "message": "论文已删除"})
         return jsonify({"status": "error", "message": "删除失败"}), 400
     except Exception as e:
@@ -168,10 +165,13 @@ def api_batch_delete_papers():
     """批量删除论文：接收 arxiv_ids 数组，返回实际删除数量"""
     try:
         data = request.get_json()
-        arxiv_ids = data.get("arxiv_ids", [])
+        arxiv_ids = data.get("paper_keys") or data.get("arxiv_ids", [])
         if not arxiv_ids:
             return jsonify({"status": "error", "message": "未选择论文"}), 400
+        paper_files = [get_paper_by_key(key) for key in arxiv_ids]
         deleted = batch_delete_papers(arxiv_ids)
+        for paper in paper_files:
+            remove_paper_pdf_files(paper or {})
         return jsonify({"status": "ok", "message": f"已删除 {deleted} 篇论文", "deleted": deleted})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -182,7 +182,7 @@ def api_batch_hide_papers():
     """批量隐藏论文：接收 arxiv_ids 数组，返回实际隐藏数量"""
     try:
         data = request.get_json()
-        arxiv_ids = data.get("arxiv_ids", [])
+        arxiv_ids = data.get("paper_keys") or data.get("arxiv_ids", [])
         if not arxiv_ids:
             return jsonify({"status": "error", "message": "未选择论文"}), 400
         hidden = batch_hide_papers(arxiv_ids)
@@ -196,7 +196,7 @@ def api_batch_analyze_papers():
     """批量分析论文：对选中的未分析论文执行 AI 分析"""
     try:
         data = request.get_json()
-        arxiv_ids = data.get("arxiv_ids", [])
+        arxiv_ids = data.get("paper_keys") or data.get("arxiv_ids", [])
         if not arxiv_ids:
             return jsonify({"status": "error", "message": "未选择论文"}), 400
         papers = get_unanalyzed_papers_by_ids(arxiv_ids)
@@ -213,7 +213,7 @@ def api_batch_analyze_papers():
 def api_reanalyze_paper(arxiv_id):
     """重新生成单篇论文的深度阅读 Q&A，不覆盖基础分析字段。"""
     try:
-        paper = get_paper_by_arxiv_id(arxiv_id)
+        paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
         if not paper:
             return jsonify({"status": "error", "message": "论文不存在"}), 404
 
@@ -356,7 +356,7 @@ def api_add_paper():
 @bp.route("/api/paper/<arxiv_id>/todo", methods=["POST"])
 def api_add_todo(arxiv_id):
     """将论文加入阅读清单（如已在清单中则返回提示）"""
-    paper = get_paper_by_arxiv_id(arxiv_id)
+    paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
     if not paper:
         return jsonify({"status": "error", "message": "论文不存在"}), 404
     if is_in_reading_list(paper["id"]):
@@ -369,7 +369,7 @@ def api_add_todo(arxiv_id):
 @bp.route("/api/paper/<arxiv_id>/todo/status", methods=["GET"])
 def api_todo_status(arxiv_id):
     """只读检查论文是否已在阅读清单中。"""
-    paper = get_paper_by_arxiv_id(arxiv_id)
+    paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
     if not paper:
         return jsonify({"status": "error", "message": "论文不存在"}), 404
     return jsonify({
@@ -381,7 +381,7 @@ def api_todo_status(arxiv_id):
 @bp.route("/api/paper/<arxiv_id>/todo", methods=["DELETE"])
 def api_remove_todo(arxiv_id):
     """将论文从阅读清单中移除"""
-    paper = get_paper_by_arxiv_id(arxiv_id)
+    paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
     if not paper:
         return jsonify({"status": "error", "message": "论文不存在"}), 404
     if remove_from_reading_list(paper["id"]):
@@ -392,7 +392,7 @@ def api_remove_todo(arxiv_id):
 @bp.route("/api/paper/<arxiv_id>/todo/read", methods=["POST"])
 def api_mark_read(arxiv_id):
     """将论文标记为已读"""
-    paper = get_paper_by_arxiv_id(arxiv_id)
+    paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
     if not paper:
         return jsonify({"status": "error", "message": "论文不存在"}), 404
     if mark_as_read(paper["id"]):
@@ -403,7 +403,7 @@ def api_mark_read(arxiv_id):
 @bp.route("/api/paper/<arxiv_id>/todo/unread", methods=["POST"])
 def api_mark_unread(arxiv_id):
     """将论文标记为未读"""
-    paper = get_paper_by_arxiv_id(arxiv_id)
+    paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
     if not paper:
         return jsonify({"status": "error", "message": "论文不存在"}), 404
     if mark_as_unread(paper["id"]):

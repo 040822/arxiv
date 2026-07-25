@@ -20,6 +20,7 @@ from .papers import (
     get_date_range_for_category,
     get_earliest_date,
     get_paper_by_arxiv_id,
+    get_paper_by_key,
     get_paper_count,
     get_papers_with_analysis,
     get_unanalyzed_count,
@@ -29,8 +30,10 @@ from .papers import (
     insert_paper,
     normalize_search_terms,
     paper_exists,
+    paper_source_exists,
     search_papers,
     unhide_paper,
+    update_paper_document,
 )
 from .analysis import (
     get_analysis_by_paper_id,
@@ -109,6 +112,7 @@ __all__ = [
     "get_earliest_date",
     "get_latest_paper_quiz_sessions",
     "get_paper_by_arxiv_id",
+    "get_paper_by_key",
     "get_paper_chat_messages",
     "get_paper_count",
     "get_paper_quiz_question",
@@ -139,6 +143,7 @@ __all__ = [
     "mark_as_unread",
     "normalize_search_terms",
     "paper_exists",
+    "paper_source_exists",
     "record_ai_usage",
     "remove_from_reading_list",
     "save_report",
@@ -147,5 +152,6 @@ __all__ = [
     "start_task_log",
     "unhide_paper",
     "update_analysis",
+    "update_paper_document",
     "update_recommendation_result",
 ]

@@ -47,6 +47,20 @@
                     </div>
 
                     <div class="filter-group">
+                        <label>📚 来源</label>
+                        <select name="source" onchange="this.form.submit()">
+                            <option value="">全部来源</option>
+                            <option value="manual" {% if source == 'manual' %}selected{% endif %}>手动导入</option>
+                            <option value="feed" {% if source == 'feed' %}selected{% endif %}>自动抓取</option>
+                            <option value="arxiv" {% if source == 'arxiv' %}selected{% endif %}>arXiv</option>
+                            <option value="openreview" {% if source == 'openreview' %}selected{% endif %}>OpenReview</option>
+                            <option value="doi" {% if source == 'doi' %}selected{% endif %}>DOI/期刊</option>
+                            <option value="web" {% if source == 'web' %}selected{% endif %}>期刊/会议网页</option>
+                            <option value="upload" {% if source == 'upload' %}selected{% endif %}>本地 PDF</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
                         <label>📂 分类</label>
                         <select name="category" onchange="this.form.submit()">
                             <option value="">全部分类</option>
@@ -120,9 +134,10 @@
             <main class="browse-main">
                 <div class="browse-header">
                     <span>共 <strong>{{ total }}</strong> 篇论文</span>
-                    {% if date or category or tag or min_rating is not none or max_rating is not none or has_analysis or has_deep_analysis or hidden %}
+                    {% if date or source or category or tag or min_rating is not none or max_rating is not none or has_analysis or has_deep_analysis or hidden %}
                     <div class="active-filters">
                         {% if date %}<span class="filter-tag">日期: {{ date }} <a href="/browse?{{ _remove_param('date') }}">✕</a></span>{% endif %}
+                        {% if source %}<span class="filter-tag">来源: {{ source }} <a href="/browse?{{ _remove_param('source') }}">✕</a></span>{% endif %}
                         {% if category %}<span class="filter-tag">分类: {{ category }} <a href="/browse?{{ _remove_param('category') }}">✕</a></span>{% endif %}
                         {% if tag %}<span class="filter-tag">标签: {{ tag }} <a href="/browse?{{ _remove_param('tag') }}">✕</a></span>{% endif %}
                         {% if min_rating is not none %}<span class="filter-tag">最低: {{ stars(min_rating) }} <a href="/browse?{{ _remove_param('min_rating') }}">✕</a></span>{% endif %}
@@ -154,12 +169,12 @@
                     {% for paper in papers %}
                     <div class="paper-card">
                         <div class="paper-select">
-                            <input type="checkbox" class="paper-checkbox" value="{{ paper.arxiv_id }}" onchange="updateSelectedCount()">
+                            <input type="checkbox" class="paper-checkbox" value="{{ paper.paper_key }}" onchange="updateSelectedCount()">
                         </div>
                         <div class="paper-content">
                             <div class="paper-header">
                                 <h3 class="paper-title">
-                                    <a href="/paper/{{ paper.arxiv_id }}">{{ paper.title }}</a>
+                                    <a href="/paper/{{ paper.paper_key }}">{{ paper.title }}</a>
                                 </h3>
                                 <div class="paper-meta">
                                     {% if paper.published_date %}
@@ -230,9 +245,9 @@
                                 {% if paper.pdf_url %}
                                 <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
                                 {% endif %}
-                                <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
-                                <a href="javascript:void(0)" class="link-todo" onclick="toggleTodo('{{ paper.arxiv_id }}', this)">📌 加入清单</a>
-                                <a href="javascript:void(0)" class="link-hide" onclick="hidePaper('{{ paper.arxiv_id }}', this)">😐 不感兴趣</a>
+                                <a href="/paper/{{ paper.paper_key }}">📖 详情</a>
+                                <a href="javascript:void(0)" class="link-todo" onclick="toggleTodo('{{ paper.paper_key }}', this)">📌 加入清单</a>
+                                <a href="javascript:void(0)" class="link-hide" onclick="hidePaper('{{ paper.paper_key }}', this)">😐 不感兴趣</a>
                             </div>
                         </div>
                     </div>

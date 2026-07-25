@@ -1566,7 +1566,7 @@ class ProviderEndpointTests(unittest.TestCase):
 
         with patch.object(web_tasks_api, "start_task_log", return_value=1), \
              patch.object(web_tasks_api, "finish_task_log"), \
-             patch.object(web_tasks_api, "get_all_dates", return_value=[("2026-01-01",)]), \
+             patch.object(web_tasks_api, "get_all_dates", return_value=[("2026-01-01",)]) as get_dates, \
              patch.object(web_tasks_api, "get_concurrency", return_value=2), \
              patch.object(web_tasks_api, "recommend_pending_papers", return_value=1) as recommend, \
              patch.object(web_tasks_api, "generate_report_ai_summary") as ai_summary, \
@@ -1576,7 +1576,8 @@ class ProviderEndpointTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         ai_summary.assert_not_called()
-        recommend.assert_called_once_with(limit=1000, date="2026-01-01", concurrency=2)
+        get_dates.assert_called_once_with(ingest_mode="feed")
+        recommend.assert_called_once_with(limit=1000, date="2026-01-01", concurrency=2, ingest_mode="feed")
         report_content.assert_called_once_with("2026-01-01", ai_summary=None)
         save_report.assert_called_once()
 
@@ -3599,7 +3600,7 @@ class TemplateSafetyTests(unittest.TestCase):
         with open("templates/paper.html", "r", encoding="utf-8") as f:
             html = f.read()
 
-        self.assertIn("onclick='toggleTodo({{ paper.arxiv_id | tojson }})'", html)
+        self.assertIn("onclick='toggleTodo({{ paper.paper_key | tojson }})'", html)
         self.assertIn("onclick='removeTag({{ t.strip() | tojson }})'", html)
         self.assertIn("onclick='removeTag({{ t | tojson }})'", html)
         self.assertNotIn('onclick="toggleTodo({{ paper.arxiv_id | tojson }})"', html)

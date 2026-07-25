@@ -193,6 +193,7 @@
                                     <label>Prompt Profile</label>
                                     <select id="prompt-profile-select" onchange="switchPromptProfile()">
                                         <option value="basic_analysis">基础分析</option>
+                                        <option value="paper_import">PDF 元数据提取</option>
                                         <option value="deep_reading" selected>深度阅读</option>
                                         <option value="report_summary">报告导读</option>
                                         <option value="recommendation">个性化推荐</option>
@@ -723,6 +724,7 @@
         /* ---- AI Task Routing ---- */
         const AI_TASK_META = {
             basic_analysis: {title: '基础分析', desc: '批量/自动分析使用，生成标签、中文摘要、简评和 AI 初评。用户仍可在详情页手动修正星级。建议廉价模型，默认不使用思考。'},
+            paper_import: {title: 'PDF 元数据提取', desc: '上传 PDF 时预填标题、作者、摘要、会议和日期。建议使用响应快、支持长文本的模型。'},
             deep_reading: {title: '深度阅读', desc: '单篇生成/刷新 Q&A 深度阅读使用，不覆盖基础分析字段。可使用高智能模型和 high 思考。'},
             report_summary: {title: '报告导读', desc: '仅在任务页勾选“生成 AI 导读”时调用。建议廉价模型。'},
             recommendation: {title: '个性化推荐', desc: '根据研究兴趣计算 0-100 推荐评分和推荐理由。独立于基础分析模型，可单独配置廉价模型。'},

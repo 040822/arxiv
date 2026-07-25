@@ -45,8 +45,9 @@ def run_manual_pipeline(progress_callback):
             limit=100,
             concurrency=concurrency,
             progress_callback=analysis_progress_callback,
+            ingest_mode="feed",
         )
-        dates = get_all_dates()
+        dates = get_all_dates(ingest_mode="feed")
         report_date = dates[0][0] if dates else datetime.now().strftime("%Y-%m-%d")
 
         progress_callback({
@@ -63,6 +64,7 @@ def run_manual_pipeline(progress_callback):
             limit=1000,
             date=report_date,
             concurrency=concurrency,
+            ingest_mode="feed",
             progress_callback=recommendation_progress_callback,
         )
 

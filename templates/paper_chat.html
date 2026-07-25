@@ -18,7 +18,7 @@
         </header>
 
         <nav class="nav-bar">
-            <a href="/paper/{{ paper.arxiv_id }}" class="nav-link">← 返回论文详情</a>
+            <a href="/paper/{{ paper.paper_key }}" class="nav-link">← 返回论文详情</a>
             <a href="/" class="nav-link">📅 每日论文</a>
             <a href="/reading-list" class="nav-link">📌 阅读清单</a>
         </nav>
@@ -26,14 +26,16 @@
         <article class="paper-detail learning-page">
             <div class="learning-hero">
                 <div class="learning-breadcrumb">
-                    <a href="/paper/{{ paper.arxiv_id }}" class="meta-link">论文详情</a>
+                    <a href="/paper/{{ paper.paper_key }}" class="meta-link">论文详情</a>
                     <span class="bc-sep">›</span>
                     <span>学习</span>
                 </div>
                 <h1>{{ paper.title }}</h1>
                 <div class="detail-meta">
-                    <span class="meta-item">🔗 <a href="{{ paper.url }}" target="_blank" class="meta-link">{{ paper.arxiv_id }}</a></span>
+                    {% if paper.url %}<span class="meta-item">🔗 <a href="{{ paper.url }}" target="_blank" class="meta-link">{{ paper.arxiv_id or (paper.source_type | upper) }}</a></span>{% endif %}
                     {% if paper.pdf_url %}<span class="meta-item">📥 <a href="{{ paper.pdf_url }}" target="_blank" class="meta-link">PDF</a></span>{% endif %}
+                    {% if paper.pdf_local_path %}<span class="meta-item">✅ 本地 PDF</span>{% endif %}
+                    {% if paper.venue %}<span class="meta-item">🏛️ {{ paper.venue }}</span>{% endif %}
                     {% if analysis and analysis.rating is not none %}<span class="meta-item rating">{% for i in range(5) %}{% if i < analysis.rating %}★{% else %}☆{% endif %}{% endfor %}</span>{% endif %}
                 </div>
             </div>
@@ -109,7 +111,7 @@
     <script src="/static/rich_text.js"></script>
 
     <script>
-        const ARXIV_ID = {{ paper.arxiv_id | tojson }};
+        const ARXIV_ID = {{ paper.paper_key | tojson }};
         let activeQuizSession = null;
         let activeSocraticSession = null;
 

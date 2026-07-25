@@ -52,7 +52,7 @@
             <div class="paper-card">
                 <div class="paper-header">
                     <h3 class="paper-title">
-                        <a href="/paper/{{ paper.arxiv_id }}">{{ render_highlight(paper.title_highlight) }}</a>
+                        <a href="/paper/{{ paper.paper_key }}">{{ render_highlight(paper.title_highlight) }}</a>
                     </h3>
                     <div class="paper-meta">
                         {% if paper.published_date %}
@@ -91,7 +91,7 @@
                     {% if paper.pdf_url %}
                     <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
                     {% endif %}
-                    <a href="/paper/{{ paper.arxiv_id }}">📖 详情</a>
+                    <a href="/paper/{{ paper.paper_key }}">📖 详情</a>
                 </div>
             </div>
             {% else %}

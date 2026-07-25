@@ -280,21 +280,20 @@ POST /api/paper/<arxiv_id>/reanalyze
 
 下载 PDF，生成/刷新 Q&A 深度阅读；不会覆盖已有标签、AI 评级/人工修正、中文摘要和简评。后端会检查当前深度阅读 Prompt 声明的全部 Q 编号；遇到截断或缺题时最多自动补全一次。补全后仍不完整时返回 `status: "warning"`、`missing_questions`、`continuation_used` 和 `finish_reason`，并保留原有 `qa_analysis`。
 
-### 添加指定论文
+### 手动导入论文
 
 ```
-POST /api/paper/add
+POST /api/paper/import/preview
+POST /api/paper/import
 ```
 
-Body (JSON)：
-```json
-{
-    "input": "2603.18336",
-    "task_id": "add_123"
-}
-```
+预览接口接受 multipart：`source_url` 可为 arXiv、OpenReview、DOI、期刊/会议页面或 PDF 直链，`pdf_file` 可为本地 PDF。预览只返回可编辑的 `draft`，不会写入数据库；PDF 元数据可由独立的 `paper_import` AI 任务预填。
 
-支持 arXiv ID、PDF 链接、摘要页面链接。自动获取论文信息，先做基础分析，再补充 Q&A 深度阅读。若深度阅读补全后仍不完整，基础分析仍会保存，响应包含 `deep_reading_incomplete: true`，不完整 Q&A 不入库。
+确认接口接受 `metadata` JSON 字符串、可选的同一 `pdf_file`，以及 `run_basic`、`run_deep`。`metadata` 至少包含 `title`，成功响应返回通用 `paper_key` 与 `detail_url`。
+
+`POST /api/paper/<paper_key>/pdf` 可为已有论文上传或替换 PDF。上传和远程 PDF 上限均为 100 MB，服务端链接抓取拒绝本机及私有网络地址。
+
+手动导入不参加定时分析、推荐和日报，但可主动触发全部 AI 学习能力。旧的 `POST /api/paper/add` arXiv 单篇接口继续保留兼容。
 
 ### 批量操作
 
@@ -307,12 +306,14 @@ POST /api/papers/batch-analyze   # 批量分析（基础模式）
 Body (JSON)：
 ```json
 {
-    "arxiv_ids": ["2603.18336", "2603.12345"]
+    "paper_keys": ["2603.18336", "p_0123456789abcdef"]
 }
 ```
 
 ---
 
+
+`arxiv_ids` 仍作为兼容字段接受。
 ## 阅读清单 API
 
 ### 添加到清单

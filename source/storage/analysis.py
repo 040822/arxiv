@@ -161,7 +161,7 @@ def update_analysis(paper_id, data):
     return True
 
 
-def get_papers_for_recommendation(limit=200, date=None, interest_hash=""):
+def get_papers_for_recommendation(limit=200, date=None, interest_hash="", ingest_mode=None):
     """
     获取需要计算个性化推荐分的论文。
 
@@ -186,6 +186,9 @@ def get_papers_for_recommendation(limit=200, date=None, interest_hash=""):
         if date:
             where += " AND p.published_date = ?"
             params.append(date)
+        if ingest_mode:
+            where += " AND p.ingest_mode = ?"
+            params.append(ingest_mode)
         params.append(limit)
         cursor.execute("""
             SELECT p.*, a.tags, a.summary_cn, a.summary_en, a.rating, a.value_comment, a.qa_analysis,

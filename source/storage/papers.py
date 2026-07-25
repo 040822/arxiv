@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sqlite3
+import uuid
 from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
@@ -68,43 +69,92 @@ def paper_exists(arxiv_id):
     return exists
 
 
+def get_paper_by_key(paper_key):
+    """Return a paper by its stable site key, with arXiv compatibility."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM papers WHERE paper_key = ? OR arxiv_id = ? LIMIT 1",
+            (paper_key, paper_key),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_paper_document(paper_key, document_info):
+    """Attach durable PDF metadata to an existing paper."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE papers
+            SET pdf_local_path = ?, pdf_sha256 = ?, pdf_size_bytes = ?
+            WHERE paper_key = ? OR arxiv_id = ?
+            """,
+            (document_info.get("local_path"), document_info.get("sha256"),
+             document_info.get("size_bytes"), paper_key, paper_key),
+        )
+        return cursor.rowcount > 0
+
+
+def paper_source_exists(source_type, source_id):
+    """Return whether a normalized external source identity is already stored."""
+    if not source_id:
+        return False
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM papers WHERE source_type = ? AND source_id = ?",
+            (source_type, source_id),
+        ).fetchone()
+    return row is not None
+
+
 def insert_paper(paper_data):
-    """插入新论文到数据库。
+    """插入来自订阅抓取或手动导入的新论文。
     
     参数：
         paper_data (dict): 论文数据字典，包含以下字段：
-            - arxiv_id: arXiv 论文编号
+            - paper_key: 可选的站内稳定标识；省略时自动生成
+            - arxiv_id: 可选，仅 arXiv 论文使用
+            - source_type/source_id: 来源类型及其稳定标识
+            - ingest_mode: feed 或 manual
             - title: 论文标题
             - authors: 作者列表（Python 列表，会自动转为 JSON）
             - abstract: 摘要
             - categories: 分类列表（Python 列表，会自动转为 JSON）
             - primary_category: 主分类
-            - url: arXiv 页面链接
-            - pdf_url: PDF 下载链接
+            - url: 论文来源页面链接
+            - pdf_url: 可选的远程 PDF 链接
+            - venue: 可选的期刊或会议信息
             - published_date: 发布日期
             - updated_date: 更新日期
             
     返回：
         int or None: 成功返回论文 ID，失败返回 None
     """
+    arxiv_id = str(paper_data.get("arxiv_id") or "").strip() or None
+    paper_key = str(paper_data.get("paper_key") or arxiv_id or f"p_{uuid.uuid4().hex}").strip()
+    source_type = str(paper_data.get("source_type") or ("arxiv" if arxiv_id else "upload")).strip()
+    source_id = str(paper_data.get("source_id") or (arxiv_id or "")).strip() or None
+    ingest_mode = str(paper_data.get("ingest_mode") or "feed").strip()
     with get_connection() as conn:
         cursor = conn.cursor()
         try:
             cursor.execute("""
-                INSERT INTO papers (arxiv_id, title, authors, abstract, categories,
-                                  primary_category, url, pdf_url, published_date, updated_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO papers (
+                    paper_key, arxiv_id, source_type, source_id, ingest_mode,
+                    title, authors, abstract, categories, primary_category,
+                    url, pdf_url, venue, published_date, updated_date,
+                    pdf_local_path, pdf_sha256, pdf_size_bytes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                paper_data["arxiv_id"],
-                paper_data["title"],
-                json.dumps(paper_data["authors"], ensure_ascii=False),
-                paper_data["abstract"],
-                json.dumps(paper_data["categories"], ensure_ascii=False),
-                paper_data["primary_category"],
-                paper_data["url"],
-                paper_data["pdf_url"],
-                paper_data["published_date"],
-                paper_data["updated_date"],
+                paper_key, arxiv_id, source_type, source_id, ingest_mode,
+                str(paper_data.get("title") or "").strip(),
+                json.dumps(paper_data.get("authors") or [], ensure_ascii=False),
+                str(paper_data.get("abstract") or "").strip(),
+                json.dumps(paper_data.get("categories") or [], ensure_ascii=False),
+                paper_data.get("primary_category"), paper_data.get("url"),
+                paper_data.get("pdf_url"), paper_data.get("venue"),
+                paper_data.get("published_date"), paper_data.get("updated_date"),
+                paper_data.get("pdf_local_path"), paper_data.get("pdf_sha256"),
+                paper_data.get("pdf_size_bytes"),
             ))
             paper_id = cursor.lastrowid
 
@@ -209,7 +259,8 @@ def get_papers_with_analysis(date=None, tag=None, min_rating=None, limit=100, of
 
 
 def browse_papers(date=None, tag=None, min_rating=None, max_rating=None,
-                  category=None, has_analysis=None, has_deep_analysis=None, hidden=None, limit=20, offset=0):
+                  category=None, has_analysis=None, has_deep_analysis=None,
+                  hidden=None, source=None, limit=20, offset=0):
     """高级论文浏览接口，支持多维度筛选和分页。
     
     与 get_papers_with_analysis 相比，本函数提供更多筛选维度：
@@ -251,6 +302,14 @@ def browse_papers(date=None, tag=None, min_rating=None, max_rating=None,
         else:
             base_query += " AND (p.hidden IS NULL OR p.hidden = 0)"
 
+
+        if source == "manual":
+            base_query += " AND p.ingest_mode = 'manual'"
+        elif source == "feed":
+            base_query += " AND p.ingest_mode = 'feed'"
+        elif source in {"arxiv", "openreview", "doi", "web", "upload"}:
+            base_query += " AND p.source_type = ?"
+            params.append(source)
         # 按日期筛选
         if date:
             base_query += " AND p.published_date = ?"
@@ -322,6 +381,7 @@ def get_all_categories():
         cursor.execute("""
             SELECT primary_category, COUNT(*) as cnt
             FROM papers
+            WHERE primary_category IS NOT NULL AND TRIM(primary_category) != ''
             GROUP BY primary_category
             ORDER BY cnt DESC
         """)
@@ -330,24 +390,23 @@ def get_all_categories():
     return [(row["primary_category"], row["cnt"]) for row in rows]
 
 
-def get_all_dates():
-    """获取所有发布日期及其论文数量。
-    
-    用于日期筛选器和统计图表。
-    
-    返回：
-        list: 元组列表 [(日期, 数量), ...]，按日期降序排列
-    """
+def get_all_dates(ingest_mode=None):
+    """获取非空发布日期及数量，可按导入模式筛选。"""
     with get_connection() as conn:
         cursor = conn.cursor()
+        where = "WHERE published_date IS NOT NULL AND TRIM(published_date) != ''"
+        params = []
+        if ingest_mode:
+            where += " AND ingest_mode = ?"
+            params.append(ingest_mode)
         cursor.execute("""
             SELECT published_date, COUNT(*) as cnt
             FROM papers
+        """ + where + """
             GROUP BY published_date
             ORDER BY published_date DESC
-        """)
+        """, params)
         rows = cursor.fetchall()
-
     return [(row["published_date"], row["cnt"]) for row in rows]
 
 
@@ -477,29 +536,24 @@ def get_unanalyzed_count():
     return count
 
 
-def get_unanalyzed_papers(limit=100):
-    """获取未分析的论文列表。
-    
-    用于批量分析任务，按发布日期降序获取待分析论文。
-    
-    参数：
-        limit (int): 最大返回数量，默认 100
-        
-    返回：
-        list: 论文数据字典列表
-    """
+def get_unanalyzed_papers(limit=100, ingest_mode=None):
+    """获取未完成基础分析的论文，可按导入模式筛选。"""
     with get_connection() as conn:
         cursor = conn.cursor()
+        where = _basic_analysis_missing_condition("a")
+        params = []
+        if ingest_mode:
+            where += " AND p.ingest_mode = ?"
+            params.append(ingest_mode)
+        params.append(limit)
         cursor.execute(f"""
             SELECT p.* FROM papers p
             LEFT JOIN analysis a ON p.id = a.paper_id
-            WHERE {_basic_analysis_missing_condition("a")}
+            WHERE {where}
             ORDER BY p.published_date DESC
             LIMIT ?
-        """, (limit,))
+        """, params)
         rows = cursor.fetchall()
-
-
     return [parse_paper_row(row) for row in rows]
 
 
@@ -546,6 +600,10 @@ def search_papers(keyword, limit=50):
             search_fields = (
                 ("p.title", 5),
                 ("a.tags", 4),
+                ("p.authors", 4),
+                ("p.venue", 3),
+                ("p.source_id", 4),
+                ("p.paper_key", 4),
                 ("a.summary_cn", 3),
                 ("p.abstract", 2),
                 ("a.qa_analysis", 1),
@@ -600,7 +658,10 @@ def hide_paper(arxiv_id):
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE papers SET hidden = 1 WHERE arxiv_id = ?", (arxiv_id,))
+        cursor.execute(
+            "UPDATE papers SET hidden = 1 WHERE paper_key = ? OR arxiv_id = ?",
+            (arxiv_id, arxiv_id),
+        )
         affected = cursor.rowcount
 
     return affected > 0
@@ -617,7 +678,10 @@ def unhide_paper(arxiv_id):
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE papers SET hidden = 0 WHERE arxiv_id = ?", (arxiv_id,))
+        cursor.execute(
+            "UPDATE papers SET hidden = 0 WHERE paper_key = ? OR arxiv_id = ?",
+            (arxiv_id, arxiv_id),
+        )
         affected = cursor.rowcount
 
     return affected > 0
@@ -636,7 +700,10 @@ def delete_paper(arxiv_id):
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM papers WHERE arxiv_id = ?", (arxiv_id,))
+        cursor.execute(
+            "DELETE FROM papers WHERE paper_key = ? OR arxiv_id = ?",
+            (arxiv_id, arxiv_id),
+        )
         affected = cursor.rowcount
 
     return affected > 0
@@ -657,7 +724,10 @@ def batch_delete_papers(arxiv_ids):
         cursor = conn.cursor()
         # 使用参数化 IN 子句批量删除
         placeholders = ",".join(["?"] * len(arxiv_ids))
-        cursor.execute(f"DELETE FROM papers WHERE arxiv_id IN ({placeholders})", arxiv_ids)
+        cursor.execute(
+            f"DELETE FROM papers WHERE paper_key IN ({placeholders}) OR arxiv_id IN ({placeholders})",
+            list(arxiv_ids) + list(arxiv_ids),
+        )
         affected = cursor.rowcount
 
     return affected
@@ -678,7 +748,10 @@ def batch_hide_papers(arxiv_ids):
         cursor = conn.cursor()
         # 使用参数化 IN 子句批量更新
         placeholders = ",".join(["?"] * len(arxiv_ids))
-        cursor.execute(f"UPDATE papers SET hidden = 1 WHERE arxiv_id IN ({placeholders})", arxiv_ids)
+        cursor.execute(
+            f"UPDATE papers SET hidden = 1 WHERE paper_key IN ({placeholders}) OR arxiv_id IN ({placeholders})",
+            list(arxiv_ids) + list(arxiv_ids),
+        )
         affected = cursor.rowcount
 
     return affected
@@ -704,8 +777,9 @@ def get_unanalyzed_papers_by_ids(arxiv_ids):
         cursor.execute(f"""
             SELECT p.* FROM papers p
             LEFT JOIN analysis a ON p.id = a.paper_id
-            WHERE p.arxiv_id IN ({placeholders}) AND {_basic_analysis_missing_condition("a")}
-        """, arxiv_ids)
+            WHERE (p.paper_key IN ({placeholders}) OR p.arxiv_id IN ({placeholders}))
+              AND {_basic_analysis_missing_condition("a")}
+        """, list(arxiv_ids) + list(arxiv_ids))
         rows = cursor.fetchall()
 
     return [parse_paper_row(row) for row in rows]

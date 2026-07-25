@@ -29,7 +29,10 @@ from database import (
     get_connection, insert_analysis, update_analysis, get_unanalyzed_papers, record_ai_usage,
     get_papers_for_recommendation, update_recommendation_result
 )
-from pdf_reader import get_paper_full_text, get_cached_pdf_path, download_pdf, extract_text_from_pdf
+from pdf_reader import (
+    download_pdf, extract_text_from_pdf, get_cached_pdf_path,
+    get_paper_full_text, get_paper_pdf_path,
+)
 from source.value_coercion import as_int
 
 # 模块级日志记录器
@@ -265,29 +268,28 @@ def _paper_context_payload(paper_data, text_info):
 
 def get_learning_paper_text(paper_data):
     """获取论文学习上下文：优先复用本地 PDF 缓存，失败时回退摘要。"""
+    paper_key = paper_data.get("paper_key") or paper_data.get("arxiv_id", "")
     arxiv_id = paper_data.get("arxiv_id", "")
-    pdf_url = paper_data.get("pdf_url", "")
     try:
-        cached_path = get_cached_pdf_path(arxiv_id) if arxiv_id else None
+        if paper_data.get("pdf_local_path") or not arxiv_id:
+            pdf_path = get_paper_pdf_path(paper_data, download=True)
+            used_pdf_cache = bool(pdf_path and not paper_data.get("pdf_local_path"))
+        else:
+            pdf_path = get_cached_pdf_path(arxiv_id)
+            used_pdf_cache = bool(pdf_path)
+            if not pdf_path and paper_data.get("pdf_url"):
+                pdf_path = download_pdf(paper_data.get("pdf_url"), arxiv_id)
     except Exception as e:
-        logger.warning(f"Failed to inspect PDF cache for {arxiv_id}: {e}")
-        cached_path = None
-    used_pdf_cache = bool(cached_path)
-    pdf_path = cached_path
-
-    if not pdf_path and pdf_url and arxiv_id:
-        try:
-            pdf_path = download_pdf(pdf_url, arxiv_id)
-        except Exception as e:
-            logger.warning(f"Failed to download learning PDF for {arxiv_id}: {e}")
-            pdf_path = None
+        logger.warning(f"Failed to resolve learning PDF for {paper_key}: {e}")
+        pdf_path = None
+        used_pdf_cache = False
 
     paper_text = ""
     if pdf_path:
         try:
             paper_text = extract_text_from_pdf(pdf_path) or ""
         except Exception as e:
-            logger.warning(f"Failed to extract learning PDF text for {arxiv_id}: {e}")
+            logger.warning(f"Failed to extract learning PDF text for {paper_key}: {e}")
             paper_text = ""
 
     used_pdf_full_text = bool(paper_text)
@@ -431,6 +433,30 @@ def _call_ai_raw(messages, paper_data, task_key, cfg=None, client=None):
     return content, usage
 
 
+def extract_paper_import_metadata(paper_text):
+    """Extract editable bibliographic metadata from an uploaded PDF."""
+    text = str(paper_text or "").strip()
+    if not text:
+        return None, "PDF 未提取到可读文本"
+    messages = _build_task_messages("paper_import", {"paper_text": text[:50000]})
+    result, error = _call_ai(messages, {"id": None, "arxiv_id": "paper-import"}, "paper_import")
+    if error or not isinstance(result, dict):
+        return None, error or "模型未返回元数据"
+    authors = result.get("authors")
+    if isinstance(authors, str):
+        authors = [item.strip() for item in authors.split(",") if item.strip()]
+    if not isinstance(authors, list):
+        authors = []
+    return {
+        "title": str(result.get("title") or "").strip(),
+        "authors": [str(item).strip() for item in authors if str(item).strip()],
+        "abstract": str(result.get("abstract") or "").strip(),
+        "venue": str(result.get("venue") or "").strip(),
+        "published_date": str(result.get("published_date") or "").strip(),
+    }, None
+
+
+
 # ============================================================
 # 分析模式：基础分析与深度阅读
 # ============================================================
@@ -450,11 +476,21 @@ def analyze_paper_basic(paper_data):
     Returns:
         tuple: (paper_data, result, error) — 原始论文数据透传
     """
+    abstract = str(paper_data.get("abstract") or "").strip()
+    paper_text = ""
+    if not abstract:
+        try:
+            pdf_path = get_paper_pdf_path(paper_data, download=True)
+            if pdf_path:
+                paper_text = (extract_text_from_pdf(pdf_path) or "")[:50000]
+        except Exception as exc:
+            logger.warning("Basic analysis PDF fallback failed: %s", exc)
     payload = {
         "arxiv_id": paper_data.get("arxiv_id", ""),
         "title": paper_data.get("title", ""),
         "authors": _authors_text(paper_data),
-        "abstract": paper_data.get("abstract", ""),
+        "abstract": abstract,
+        "paper_text": paper_text,
     }
     messages = _build_task_messages("basic_analysis", payload)
     result, error = _call_ai(messages, paper_data, "basic_analysis")
@@ -478,11 +514,28 @@ def analyze_paper_full(paper_data):
         tuple: (paper_data, result, error) — 原始论文数据透传
     """
     # 尝试下载 PDF 并提取全文
-    pdf_url = paper_data.get("pdf_url", "")
-    arxiv_id = paper_data.get("arxiv_id", "")
     full_text = None
-    if pdf_url and arxiv_id:
-        full_text = get_paper_full_text(pdf_url, arxiv_id, max_chars=None)
+    try:
+        source_type = str(paper_data.get("source_type") or "")
+        is_arxiv = source_type == "arxiv" or (
+            not source_type and bool(paper_data.get("arxiv_id"))
+        )
+        pdf_path = None
+        if paper_data.get("pdf_local_path") or not is_arxiv:
+            pdf_path = get_paper_pdf_path(paper_data, download=False)
+        if pdf_path:
+            full_text = extract_text_from_pdf(pdf_path)
+        elif paper_data.get("pdf_url"):
+            full_text = get_paper_full_text(
+                paper_data.get("pdf_url"),
+                paper_data.get("paper_key") or paper_data.get("arxiv_id", ""),
+                max_chars=None,
+            )
+    except Exception as exc:
+        logger.warning(
+            "Failed to resolve full text for %s: %s",
+            paper_data.get("paper_key") or paper_data.get("arxiv_id"), exc,
+        )
 
     # 优先使用 PDF 全文，提取失败时回退到摘要
     if full_text:
@@ -873,7 +926,7 @@ def _get_report_summary_context(report_date, limit=30):
                    a.recommendation_score, a.recommendation_interest_hash
             FROM papers p
             LEFT JOIN analysis a ON p.id = a.paper_id
-            WHERE p.published_date = ?
+            WHERE p.published_date = ? AND p.ingest_mode = 'feed'
             ORDER BY
                 CASE
                     WHEN ? <> ''
@@ -1120,7 +1173,7 @@ def recommend_papers(papers, research_interests, interest_hash, concurrency=None
     return success_count
 
 
-def recommend_pending_papers(limit=200, date=None, concurrency=None, progress_callback=None):
+def recommend_pending_papers(limit=200, date=None, concurrency=None, progress_callback=None, ingest_mode=None):
     """按当前研究兴趣为缺失或过期的论文补齐个性化推荐分。"""
     cfg = get_personalization_config()
     research_interests = cfg.get("research_interests", "")
@@ -1129,11 +1182,16 @@ def recommend_pending_papers(limit=200, date=None, concurrency=None, progress_ca
         if progress_callback:
             progress_callback({"current": 0, "total": 0, "status": "completed", "message": "未设置研究兴趣，跳过推荐评分"})
         return 0
-    papers = get_papers_for_recommendation(limit=limit, date=date, interest_hash=interest_hash)
+    papers = get_papers_for_recommendation(
+        limit=limit,
+        date=date,
+        interest_hash=interest_hash,
+        ingest_mode=ingest_mode,
+    )
     return recommend_papers(papers, research_interests, interest_hash, concurrency=concurrency, progress_callback=progress_callback)
 
 
-def analyze_pending_papers(limit=50, concurrency=None, progress_callback=None):
+def analyze_pending_papers(limit=50, concurrency=None, progress_callback=None, ingest_mode=None):
     """
     批量分析未处理的论文：从数据库获取指定数量后调用 analyze_papers()。
 
@@ -1145,5 +1203,5 @@ def analyze_pending_papers(limit=50, concurrency=None, progress_callback=None):
     Returns:
         int: 成功新增分析的论文数量
     """
-    papers = get_unanalyzed_papers(limit=limit)
+    papers = get_unanalyzed_papers(limit=limit, ingest_mode=ingest_mode)
     return analyze_papers(papers, concurrency=concurrency, progress_callback=progress_callback)
