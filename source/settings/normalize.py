@@ -194,14 +194,10 @@ def _normalize_ai_task_config(task, task_key, active_provider, providers):
     """补齐并约束单个 AI 任务的模型和参数配置。"""
     task = dict(task or {})
     defaults = DEFAULT_AI_TASK_OPTIONS.get(task_key, DEFAULT_AI_TASK_OPTIONS["basic_analysis"])
-    provider_key = _select_provider_key(
-        task.get("provider_key") or defaults.get("provider_key"),
-        active_provider,
-        providers,
-    )
+    provider_key = str(task.get("provider_key", defaults.get("provider_key", "")) or "").strip()
     provider = normalize_provider_config((providers or {}).get(provider_key, {}), provider_key)
 
-    model = str(task.get("model") or defaults.get("model") or provider.get("model", "")).strip()
+    model = str(task.get("model", defaults.get("model", "")) or "").strip()
     thinking_effort = str(task.get("thinking_effort", defaults.get("thinking_effort", "medium"))).lower()
     if thinking_effort not in THINKING_EFFORTS:
         thinking_effort = defaults.get("thinking_effort", "medium")

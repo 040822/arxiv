@@ -30,19 +30,18 @@ from source.pipeline import (
     pipeline_lock, scheduler,
 )
 from source.reports import generate_report_content
-from source.value_coercion import as_float, as_int
 from source.settings import (
+    AI_TASK_LABELS,
     add_provider,
     build_chat_completion_kwargs,
-    get_ai_config,
-    get_ai_task_config,
     get_all_providers,
     get_provider_presets,
     get_thinking_protocol,
+    is_known_thinking_model,
     load_settings,
-    normalize_provider_config,
+    normalize_provider_connection,
     remove_provider,
-    switch_provider,
+    resolve_ai_task_config,
     update_provider,
 )
 
@@ -54,67 +53,12 @@ logger = logging.getLogger(__name__)
 bp = Blueprint("providers_api", __name__)
 
 
-@bp.route("/api/network/test-llm", methods=["POST"])
-def api_network_test_llm():
-    """测试基础分析任务路由的 LLM chat/completions 连接。"""
-    cfg = {}
-    started = time.time()
-    try:
-        cfg = get_ai_task_config("basic_analysis")
-        if not cfg.get("api_key"):
-            return jsonify({
-                "status": "error",
-                "message": "基础分析模型路由缺少 API Key",
-                "provider_key": cfg.get("provider_key", ""),
-                "model": cfg.get("model", ""),
-                "duration_ms": 0,
-            }), 400
-
-        client = get_openai_client(cfg)
-        kwargs = build_chat_completion_kwargs(
-            cfg,
-            [{"role": "user", "content": "Hello, reply with 'ok' only."}],
-            token_limit_override=10,
-        )
-        response = client.chat.completions.create(**kwargs)
-        reply = (response.choices[0].message.content or "").strip()
-        duration_ms = int((time.time() - started) * 1000)
-        return jsonify({
-            "status": "ok",
-            "message": f"基础分析 LLM 连接成功：{reply or 'ok'}",
-            "provider_key": cfg.get("provider_key", ""),
-            "model": cfg.get("model", ""),
-            "duration_ms": duration_ms,
-        })
-    except Exception as e:
-        duration_ms = int((time.time() - started) * 1000)
-        return jsonify({
-            "status": "error",
-            "message": f"基础分析 LLM 连接失败: {str(e)}",
-            "provider_key": cfg.get("provider_key", ""),
-            "model": cfg.get("model", ""),
-            "duration_ms": duration_ms,
-        }), 500
-
-
-def _request_bool(data, key, default=False):
-    """解析前端传来的布尔字段，保留显式 false。"""
-    if key not in data:
-        return default
-    value = data.get(key)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in ("1", "true", "yes", "on")
-    return bool(value)
-
-
 def _provider_config_from_request(data, key="", partial=False):
-    """从请求 JSON 中提取供应商配置字段。"""
+    """从请求 JSON 中提取连接级供应商配置字段。"""
     data = data or {}
     config = {}
 
-    string_fields = ("name", "base_url", "model", "thinking_effort")
+    string_fields = ("name", "base_url")
     for field in string_fields:
         if field in data or not partial:
             config[field] = data.get(field, key if field == "name" else "")
@@ -125,46 +69,15 @@ def _provider_config_from_request(data, key="", partial=False):
     elif not partial:
         config["api_key"] = ""
 
-    float_fields = {
-        "temperature": 0.3,
-        "top_p": 1.0,
-        "presence_penalty": 0.0,
-        "frequency_penalty": 0.0,
-    }
-    for field, default in float_fields.items():
-        if field in data or not partial:
-            config[field] = as_float(data.get(field, default), default)
-
-    if "max_tokens" in data or not partial:
-        config["max_tokens"] = as_int(data.get("max_tokens", 8192), 8192)
-
-    bool_fields = (
-        "temperature_enabled",
-        "top_p_enabled",
-        "presence_penalty_enabled",
-        "frequency_penalty_enabled",
-        "max_tokens_enabled",
-        "is_thinking",
-    )
-    defaults = {
-        "temperature_enabled": True,
-        "top_p_enabled": False,
-        "presence_penalty_enabled": False,
-        "frequency_penalty_enabled": False,
-        "max_tokens_enabled": False,
-        "is_thinking": False,
-    }
-    for field in bool_fields:
-        if field in data or not partial:
-            config[field] = _request_bool(data, field, defaults[field])
-
     if "available_models" in data:
         models = data.get("available_models") or []
-        config["available_models"] = [str(m).strip() for m in models if str(m).strip()]
+        config["available_models"] = list(dict.fromkeys(
+            str(model).strip() for model in models if str(model).strip()
+        ))
     elif not partial:
         config["available_models"] = []
 
-    return normalize_provider_config(config, key) if not partial else config
+    return normalize_provider_connection(config, key) if not partial else config
 
 
 def _extract_model_ids(model_page):
@@ -203,6 +116,78 @@ def _get_reasoning_tokens(response):
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+@bp.route("/api/settings/ai-tasks/<task_key>/test", methods=["POST"])
+def api_test_ai_task_route(task_key):
+    """使用当前未保存的功能路由草稿发送短请求，并返回思考能力提示。"""
+    started = time.time()
+    cfg = {}
+    task_name = AI_TASK_LABELS.get(task_key, task_key)
+    try:
+        data = request.get_json() or {}
+        draft = data.get("config")
+        if not isinstance(draft, dict):
+            return jsonify({"status": "error", "message": "缺少功能路由配置"}), 400
+        cfg = resolve_ai_task_config(task_key, draft)
+        if not cfg.get("api_key"):
+            return jsonify({
+                "status": "error",
+                "message": "所选供应商缺少 API Key",
+                "task_key": task_key,
+                "task_name": task_name,
+                "provider_key": cfg.get("provider_key", ""),
+                "model": cfg.get("model", ""),
+                "duration_ms": 0,
+            }), 400
+
+        client = get_openai_client(cfg)
+        configured_limit = cfg.get("max_tokens") if cfg.get("max_tokens_enabled") else 256
+        test_limit = max(1, min(int(configured_limit or 256), 256))
+        kwargs = build_chat_completion_kwargs(
+            cfg,
+            [{"role": "user", "content": "Hello, reply with 'ok' only."}],
+            token_limit_override=test_limit,
+        )
+        response = client.chat.completions.create(**kwargs)
+        choices = _get_nested_value(response, "choices") or []
+        message = _get_nested_value(choices[0], "message") if choices else None
+        reply = str(_get_nested_value(message, "content") or "").strip()
+        has_reasoning = _has_reasoning_content(message)
+        reasoning_tokens = _get_reasoning_tokens(response)
+        protocol = get_thinking_protocol(cfg)
+        heuristic = is_known_thinking_model(cfg) or bool(cfg.get("is_thinking"))
+        detected = bool(has_reasoning or reasoning_tokens > 0 or heuristic)
+        confidence = "high" if (has_reasoning or reasoning_tokens > 0) else ("medium" if heuristic else "low")
+        duration_ms = int((time.time() - started) * 1000)
+        return jsonify({
+            "status": "ok",
+            "message": f"{task_name}路由连接成功：{reply or 'ok'}",
+            "task_key": task_key,
+            "task_name": task_name,
+            "provider_key": cfg.get("provider_key", ""),
+            "model": cfg.get("model", ""),
+            "duration_ms": duration_ms,
+            "thinking_detection": {
+                "detected": detected,
+                "confidence": confidence,
+                "protocol": protocol,
+                "reasoning_tokens": reasoning_tokens,
+            },
+        })
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        duration_ms = int((time.time() - started) * 1000)
+        return jsonify({
+            "status": "error",
+            "message": f"路由连接失败: {exc}",
+            "task_key": task_key,
+            "task_name": task_name,
+            "provider_key": cfg.get("provider_key", ""),
+            "model": cfg.get("model", ""),
+            "duration_ms": duration_ms,
+        }), 500
 
 
 @bp.route("/api/providers/presets", methods=["GET"])
@@ -246,7 +231,6 @@ def api_list_providers():
     """
     settings = load_settings()
     providers = settings.get("providers", {})
-    active = settings.get("active_provider", "")
     result = {}
     for k, v in providers.items():
         item = v.copy()
@@ -257,9 +241,8 @@ def api_list_providers():
         else:
             item["api_key_masked"] = ""
         item.pop("api_key", None)
-        item["is_active"] = (k == active)
         result[k] = item
-    return jsonify({"active_provider": active, "providers": result})
+    return jsonify({"providers": result})
 
 
 @bp.route("/api/providers", methods=["POST"])
@@ -294,90 +277,15 @@ def api_update_provider(key):
 @bp.route("/api/providers/<key>", methods=["DELETE"])
 def api_delete_provider(key):
     """删除指定的 AI 供应商配置"""
-    if remove_provider(key):
+    result = remove_provider(key)
+    if result.get("removed"):
         return jsonify({"status": "ok", "message": "已删除"})
-    return jsonify({"status": "error", "message": "删除失败"}), 400
-
-
-@bp.route("/api/providers/<key>/activate", methods=["POST"])
-def api_activate_provider(key):
-    """切换当前激活的 AI 供应商"""
-    if switch_provider(key):
-        return jsonify({"status": "ok", "message": f"已切换到 {key}"})
-    return jsonify({"status": "error", "message": "切换失败，供应商不存在"}), 404
-
-
-@bp.route("/api/test_connection", methods=["POST"])
-def api_test_connection():
-    """测试当前激活的 AI 供应商连接：发送简单请求验证 API 可用性"""
-    try:
-        cfg = get_ai_config()
-        if not cfg["api_key"]:
-            return jsonify({"status": "error", "message": "请先配置 API Key"}), 400
-        client = get_openai_client(cfg)
-        kwargs = build_chat_completion_kwargs(
-            cfg,
-            [{"role": "user", "content": "Hello, reply with 'ok' only."}],
-            token_limit_override=10,
-        )
-        response = client.chat.completions.create(**kwargs)
-        reply = (response.choices[0].message.content or "").strip()
-        return jsonify({"status": "ok", "message": f"连接成功！模型回复: {reply}"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": f"连接失败: {str(e)}"}), 500
-
-
-@bp.route("/api/detect_thinking", methods=["POST"])
-def api_detect_thinking():
-    """
-    检测当前模型是否支持思考模式（reasoning）
-
-    使用当前供应商对应的思考协议发送请求，并结合响应字段、usage 和模型名启发式判断。
-    """
-    try:
-        cfg = get_ai_config()
-        if not cfg["api_key"]:
-            return jsonify({"status": "error", "message": "请先配置 API Key"}), 400
-        client = get_openai_client(cfg)
-        kwargs = build_chat_completion_kwargs(
-            cfg,
-            [{"role": "user", "content": "What is 1+1? Reply with just the number."}],
-            token_limit_override=50,
-            force_thinking=True,
-        )
-        response = client.chat.completions.create(**kwargs)
-        msg = response.choices[0].message
-        has_reasoning = _has_reasoning_content(msg)
-        reasoning_tokens = _get_reasoning_tokens(response)
-        protocol = get_thinking_protocol({**cfg, "is_thinking": True})
-        model_heuristic = bool(cfg.get("effective_is_thinking")) or protocol in {
-            "openai_reasoning",
-            "deepseek_v4",
-            "deepseek_legacy",
-            "qwen_compatible",
-        }
-        is_thinking = has_reasoning or reasoning_tokens > 0 or model_heuristic
-        confidence = "high" if (has_reasoning or reasoning_tokens > 0) else ("medium" if model_heuristic else "low")
-
-        settings = load_settings()
-        active = settings.get("active_provider", "")
-        if active:
-            update_provider(active, {
-                "is_thinking": is_thinking,
-                "thinking_effort": cfg.get("thinking_effort", "medium") or "medium",
-            })
-
-        if is_thinking:
-            message = f"该模型支持思考模式（{protocol}，置信度 {confidence}），已保存检测结果"
-        else:
-            message = "该模型未返回思考内容，也未命中已知思考模型规则，已保存检测结果"
+    if result.get("references"):
+        labels = [AI_TASK_LABELS.get(task_key, task_key) for task_key in result["references"]]
         return jsonify({
-            "status": "ok",
-            "is_thinking": is_thinking,
-            "confidence": confidence,
-            "thinking_protocol": protocol,
-            "reasoning_tokens": reasoning_tokens,
-            "message": message,
-        })
-    except Exception as e:
-        return jsonify({"status": "error", "message": f"检测失败: {str(e)}"}), 500
+            "status": "error",
+            "message": "该供应商仍被功能模型路由使用，请先修改功能模型路由",
+            "references": labels,
+        }), 409
+    status = 404 if result.get("not_found") else 500
+    return jsonify({"status": "error", "message": "删除失败，供应商不存在"}), status

@@ -509,7 +509,6 @@ GET  /api/providers              # 列出所有供应商
 POST /api/providers              # 添加供应商
 PUT  /api/providers/<key>        # 更新供应商
 DELETE /api/providers/<key>      # 删除供应商
-POST /api/providers/<key>/activate  # 切换供应商
 GET  /api/providers/presets      # 获取预设供应商
 POST /api/providers/models       # 从供应商 /models 接口获取模型列表
 ```
@@ -526,22 +525,34 @@ POST /api/providers/models       # 从供应商 /models 接口获取模型列表
 
 `provider_key` 可选；传入后会优先复用已保存的 API Key/Base URL，并在成功获取后保存 `available_models`。
 
-供应商配置支持 `max_tokens_enabled`、`temperature_enabled`、`top_p_enabled`、`presence_penalty_enabled`、`frequency_penalty_enabled`、`is_thinking`、`thinking_effort` 等字段。未启用的参数不会发送给模型；思考模式下采样参数会被后端自动省略。
+供应商配置只保存 `name`、`api_key`、`base_url`、`available_models`。模型、输出长度、采样参数与思考模式均保存在功能模型路由。删除仍被任一功能路由引用的供应商会返回 HTTP 409 和引用功能列表。
 
 `GET /api/providers` 只返回 `api_key_masked`，不会返回完整 `api_key`。
 
 ### 测试连接
 
 ```
-POST /api/test_connection        # 测试 AI API 连接
-POST /api/detect_thinking        # 检测是否为思考模型
 POST /api/test_proxy             # 测试 arXiv 代理连接
-POST /api/network/test-llm       # 测试基础分析 LLM 路由连接
+POST /api/settings/ai-tasks/<task_key>/test  # 测试指定功能模型路由
 ```
 
-`POST /api/detect_thinking` 返回 `is_thinking`、`confidence`、`thinking_protocol`，并会把检测结果保存到当前激活供应商。
+功能路由测试 Body 使用当前未保存草稿：
 
-`POST /api/network/test-llm` 使用 `basic_analysis` 任务路由发送极短 chat 请求，返回 `status/message/provider_key/model/duration_ms`。LLM 客户端复用 `/api/settings/proxy` 全局代理配置；代理关闭时不会读取系统代理环境变量。
+```json
+{
+  "config": {
+    "provider_key": "deepseek",
+    "model": "deepseek-chat",
+    "is_thinking": false,
+    "temperature_enabled": true,
+    "temperature": 0.2,
+    "max_tokens_enabled": true,
+    "max_tokens": 1200
+  }
+}
+```
+
+它发送短 chat 请求并返回 `task_key/task_name/provider_key/model/duration_ms/thinking_detection`，因此“测试当前连接”具体测试的是 URL 中指定功能的完整路由，而不是抽象的供应商连接。模型列表刷新则只验证供应商连接。路由测试复用全局代理配置且不会自动保存草稿；检测到思考能力仅作为界面提示。
 
 ### Prompt 管理
 
@@ -646,6 +657,7 @@ POST 支持部分更新，缺失字段沿用当前配置；保存后立即重建
 
 `GET/POST /api/settings/ai-tasks` 的任务 key 固定为：
 
+- `paper_import`：上传 PDF 预览时提取可编辑元数据，不入库、不执行基础分析
 - `basic_analysis`：批量/自动基础分析，建议廉价模型
 - `deep_reading`：单篇 Q&A 深度阅读，默认可启用 high 思考，不覆盖基础分析字段
 - `report_summary`：报告 AI 导读，只在生成报告时显式启用

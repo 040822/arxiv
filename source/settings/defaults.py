@@ -117,8 +117,8 @@ DEFAULT_PROVIDER_OPTIONS = {
 
 DEFAULT_AI_TASK_OPTIONS = {
     "basic_analysis": {
-        "provider_key": "",
-        "model": "",
+        "provider_key": "deepseek",
+        "model": "deepseek-chat",
         "temperature": 0.2,
         "temperature_enabled": True,
         "top_p": 1.0,
@@ -133,8 +133,8 @@ DEFAULT_AI_TASK_OPTIONS = {
         "thinking_effort": "medium",
     },
     "paper_import": {
-        "provider_key": "",
-        "model": "",
+        "provider_key": "deepseek",
+        "model": "deepseek-chat",
         "temperature": 0.1,
         "temperature_enabled": True,
         "top_p": 1.0,
@@ -149,8 +149,8 @@ DEFAULT_AI_TASK_OPTIONS = {
         "thinking_effort": "medium",
     },
     "deep_reading": {
-        "provider_key": "",
-        "model": "",
+        "provider_key": "deepseek",
+        "model": "deepseek-reasoner",
         "temperature": 0.2,
         "temperature_enabled": False,
         "top_p": 1.0,
@@ -165,8 +165,8 @@ DEFAULT_AI_TASK_OPTIONS = {
         "thinking_effort": "high",
     },
     "report_summary": {
-        "provider_key": "",
-        "model": "",
+        "provider_key": "deepseek",
+        "model": "deepseek-chat",
         "temperature": 0.3,
         "temperature_enabled": True,
         "top_p": 1.0,
@@ -181,8 +181,8 @@ DEFAULT_AI_TASK_OPTIONS = {
         "thinking_effort": "medium",
     },
     "recommendation": {
-        "provider_key": "",
-        "model": "",
+        "provider_key": "deepseek",
+        "model": "deepseek-chat",
         "temperature": 0.2,
         "temperature_enabled": True,
         "top_p": 1.0,
@@ -197,9 +197,9 @@ DEFAULT_AI_TASK_OPTIONS = {
         "thinking_effort": "medium",
     },
     "paper_chat": {
-        "provider_key": "",
-        "model": "",
-        "temperature": 0.2,
+        "provider_key": "deepseek",
+        "model": "deepseek-reasoner",
+        "temperature": 0.4,
         "temperature_enabled": False,
         "top_p": 1.0,
         "top_p_enabled": False,
@@ -213,9 +213,9 @@ DEFAULT_AI_TASK_OPTIONS = {
         "thinking_effort": "high",
     },
     "paper_quiz": {
-        "provider_key": "",
-        "model": "",
-        "temperature": 0.2,
+        "provider_key": "deepseek",
+        "model": "deepseek-reasoner",
+        "temperature": 0.3,
         "temperature_enabled": False,
         "top_p": 1.0,
         "top_p_enabled": False,
@@ -416,7 +416,7 @@ DEFAULT_PROMPT_PROFILES = {
 
 
 DEFAULT_SETTINGS = {
-    "active_provider": "deepseek",
+    "settings_schema_version": 2,
     "concurrency": 5,
     "per_page": 20,
     "session_secret": "",
@@ -468,19 +468,6 @@ DEFAULT_SETTINGS = {
             "name": "DeepSeek",
             "api_key": "",
             "base_url": "https://api.deepseek.com",
-            "model": "deepseek-chat",
-            "temperature": 0.3,
-            "max_tokens": 8192,
-            "max_tokens_enabled": False,
-            "temperature_enabled": True,
-            "top_p": 1.0,
-            "top_p_enabled": False,
-            "presence_penalty": 0.0,
-            "presence_penalty_enabled": False,
-            "frequency_penalty": 0.0,
-            "frequency_penalty_enabled": False,
-            "is_thinking": False,
-            "thinking_effort": "medium",
             "available_models": ["deepseek-chat", "deepseek-reasoner"],
         }
     },

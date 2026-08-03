@@ -57,7 +57,7 @@ pip install -r requirements.txt
 
 ### 2. 配置 API
 
-启动 Web 服务后进入 `http://localhost:5000/settings`，在「AI 设置」中添加 OpenAI 兼容供应商，填写 API Key、Base URL 和模型名称。基础分析、深度阅读、论文对话、论文问答练习等功能可分别配置模型路由。
+启动 Web 服务后进入 `http://localhost:5000/settings`：先在「模型供应商」中填写 OpenAI 兼容 API Key 和 Base URL、刷新模型列表，再在「功能模型路由」中分别为 PDF 元数据提取、基础分析、深度阅读、论文对话和论文问答练习等功能选择供应商、模型与推理参数。
 
 运行时配置保存在 `data/settings.json`，该文件包含 API Key，已被 `.gitignore` 排除，请不要提交到 GitHub。`config.py` 中的 API 相关变量只作为首次默认值或环境变量 fallback。
 

@@ -121,6 +121,118 @@ class ProviderRequestBuilderTests(unittest.TestCase):
 
 
 class AiTaskSettingsTests(unittest.TestCase):
+    def test_legacy_provider_inference_fields_migrate_to_explicit_task_routes(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings_store.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "active_provider": "legacy",
+                        "providers": {
+                            "legacy": {
+                                "name": "Legacy",
+                                "api_key": "sk-legacy",
+                                "base_url": "https://api.example.com/v1",
+                            "model": "legacy-model",
+                            "temperature": 0.9,
+                            "temperature_enabled": True,
+                            "max_tokens": 4321,
+                            "max_tokens_enabled": True,
+                            "is_thinking": True,
+                            "thinking_effort": "high",
+                                "available_models": ["legacy-model", "other-model"],
+                            }
+                        },
+                    }, f)
+
+                loaded = settings.load_settings()
+
+            self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["provider_key"], "legacy")
+            self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["model"], "legacy-model")
+            self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["temperature"], 0.9)
+            self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["max_tokens"], 4321)
+            self.assertTrue(loaded["ai_tasks"]["basic_analysis"]["is_thinking"])
+            self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["thinking_effort"], "high")
+            self.assertNotIn("active_provider", loaded)
+            self.assertEqual(set(loaded["providers"]["legacy"]), {
+                "name", "api_key", "base_url", "available_models",
+            })
+        finally:
+            settings.DB_DIR = original_dir
+            settings_store.SETTINGS_PATH = original_path
+
+    def test_ai_task_routes_reject_missing_provider_references(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings_store.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                tasks = {
+                    key: {**value, "provider_key": "demo", "model": "demo-model"}
+                    for key, value in settings.DEFAULT_AI_TASK_OPTIONS.items()
+                }
+                tasks["paper_import"]["provider_key"] = "missing"
+                with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "settings_schema_version": 2,
+                        "providers": {
+                            "demo": {
+                                "name": "Demo",
+                                "api_key": "sk-demo",
+                                "base_url": "https://api.example.com/v1",
+                                "available_models": ["demo-model"],
+                            }
+                        },
+                        "ai_tasks": tasks,
+                    }, f)
+
+                with self.assertRaisesRegex(ValueError, "PDF 元数据提取.*供应商不存在"):
+                    settings.save_ai_tasks(tasks)
+        finally:
+            settings.DB_DIR = original_dir
+            settings_store.SETTINGS_PATH = original_path
+
+    def test_current_schema_load_preserves_invalid_routes_for_validation(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings_store.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "settings_schema_version": 2,
+                        "providers": {
+                            "demo": {
+                                "name": "Demo",
+                                "api_key": "sk-demo",
+                                "base_url": "https://api.example.com/v1",
+                                "available_models": ["demo-model"],
+                            }
+                        },
+                        "ai_tasks": {
+                            "paper_import": {"provider_key": "missing", "model": ""},
+                        },
+                    }, f)
+
+                loaded = settings.load_settings()
+
+            self.assertEqual(loaded["ai_tasks"]["paper_import"]["provider_key"], "missing")
+            self.assertEqual(loaded["ai_tasks"]["paper_import"]["model"], "")
+        finally:
+            settings.DB_DIR = original_dir
+            settings_store.SETTINGS_PATH = original_path
+
     def test_legacy_settings_get_default_task_routes_and_profiles(self):
         import settings
 
@@ -781,6 +893,121 @@ class ProviderEndpointTests(unittest.TestCase):
         DummyOpenAI.last_init_kwargs = None
         DummyHttpxClient.last_kwargs = None
 
+    def test_provider_create_persists_connection_fields_only(self):
+        web_providers_api = self.web_providers_api
+        web_providers_api.request = FakeRequest({
+            "key": "demo",
+            "name": "Demo",
+            "api_key": "sk-test",
+            "base_url": "https://api.example.com/v1",
+            "available_models": ["model-b", "model-a", "model-a"],
+            "model": "legacy-default",
+            "temperature": 0.9,
+            "is_thinking": True,
+        })
+
+        with patch.object(web_providers_api, "add_provider", return_value=True) as add_provider:
+            result = web_providers_api.api_add_provider()
+
+        self.assertEqual(result["status"], "ok")
+        add_provider.assert_called_once_with("demo", {
+            "name": "Demo",
+            "api_key": "sk-test",
+            "base_url": "https://api.example.com/v1",
+            "available_models": ["model-b", "model-a"],
+        })
+
+    def test_provider_delete_is_blocked_when_task_routes_reference_it(self):
+        web_providers_api = self.web_providers_api
+        with patch.object(web_providers_api, "remove_provider", return_value={
+            "removed": False,
+            "references": ["basic_analysis", "paper_import"],
+        }):
+            result, status = web_providers_api.api_delete_provider("demo")
+
+        self.assertEqual(status, 409)
+        self.assertEqual(result["references"], ["基础分析", "PDF 元数据提取"])
+        self.assertIn("先修改功能模型路由", result["message"])
+
+    def test_ai_task_route_test_uses_unsaved_draft_and_reports_thinking(self):
+        web_providers_api = self.web_providers_api
+        draft = {
+            "provider_key": "demo",
+            "model": "reasoning-model-v2",
+            "is_thinking": True,
+            "thinking_effort": "high",
+            "temperature_enabled": False,
+            "top_p_enabled": False,
+            "presence_penalty_enabled": False,
+            "frequency_penalty_enabled": False,
+            "max_tokens_enabled": True,
+            "max_tokens": 4000,
+        }
+        cfg = {
+            **draft,
+            "task_key": "paper_chat",
+            "provider_key": "demo",
+            "provider_name": "Demo",
+            "api_key": "sk-demo",
+            "base_url": "https://api.example.com/v1",
+        }
+        web_providers_api.request = FakeRequest({"config": draft})
+        response = types.SimpleNamespace(
+            choices=[types.SimpleNamespace(message=types.SimpleNamespace(
+                content="ok", reasoning_content="reasoning",
+            ))],
+            usage=types.SimpleNamespace(
+                completion_tokens_details=types.SimpleNamespace(reasoning_tokens=12),
+            ),
+        )
+        fake_client = types.SimpleNamespace(chat=types.SimpleNamespace(
+            completions=types.SimpleNamespace(create=lambda **kwargs: response),
+        ))
+
+        with patch.object(web_providers_api, "resolve_ai_task_config", return_value=cfg) as resolve, \
+                patch.object(web_providers_api, "get_openai_client", return_value=fake_client):
+            result = web_providers_api.api_test_ai_task_route("paper_chat")
+
+        resolve.assert_called_once_with("paper_chat", draft)
+        self.assertEqual(result["task_name"], "论文对话")
+        self.assertEqual(result["provider_key"], "demo")
+        self.assertEqual(result["model"], "reasoning-model-v2")
+        self.assertTrue(result["thinking_detection"]["detected"])
+        self.assertEqual(result["thinking_detection"]["confidence"], "high")
+        self.assertGreaterEqual(result["duration_ms"], 0)
+
+    def test_ai_task_route_test_does_not_infer_thinking_from_base_url_alone(self):
+        web_providers_api = self.web_providers_api
+        draft = {
+            "provider_key": "deepseek",
+            "model": "deepseek-chat",
+            "is_thinking": False,
+            "temperature_enabled": True,
+            "temperature": 0.2,
+        }
+        cfg = {
+            **draft,
+            "task_key": "basic_analysis",
+            "provider_name": "DeepSeek",
+            "api_key": "sk-demo",
+            "base_url": "https://api.deepseek.com",
+        }
+        web_providers_api.request = FakeRequest({"config": draft})
+        response = types.SimpleNamespace(
+            choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="ok"))],
+            usage=types.SimpleNamespace(completion_tokens_details=None),
+        )
+        fake_client = types.SimpleNamespace(chat=types.SimpleNamespace(
+            completions=types.SimpleNamespace(create=lambda **kwargs: response),
+        ))
+
+        with patch.object(web_providers_api, "resolve_ai_task_config", return_value=cfg), \
+                patch.object(web_providers_api, "get_openai_client", return_value=fake_client):
+            result = web_providers_api.api_test_ai_task_route("basic_analysis")
+
+        self.assertFalse(result["thinking_detection"]["detected"])
+        self.assertEqual(result["thinking_detection"]["confidence"], "low")
+
     def test_provider_models_endpoint_returns_sorted_models(self):
         web_providers_api = self.web_providers_api
         web_providers_api.request = FakeRequest({
@@ -832,39 +1059,6 @@ class ProviderEndpointTests(unittest.TestCase):
         self.assertEqual(result["status"], "error")
         self.assertIn("boom", result["message"])
 
-    def test_detect_thinking_uses_provider_specific_request_and_saves_result(self):
-        web_providers_api = self.web_providers_api
-        message = types.SimpleNamespace(content="2", reasoning_content="thinking")
-        choice = types.SimpleNamespace(message=message)
-        DummyOpenAI.chat_response = types.SimpleNamespace(
-            choices=[choice],
-            usage=types.SimpleNamespace(
-                completion_tokens_details=types.SimpleNamespace(reasoning_tokens=12)
-            ),
-        )
-        cfg = {
-            "api_key": "sk-test",
-            "base_url": "https://api.deepseek.com",
-            "model": "deepseek-v4-pro",
-            "is_thinking": False,
-            "thinking_effort": "high",
-        }
-
-        with patch.object(web_providers_api, "get_ai_config", return_value=cfg), \
-             patch.object(web_providers_api, "load_settings", return_value={"active_provider": "deepseek"}), \
-             patch.object(web_providers_api, "update_provider") as update_provider:
-            result = web_providers_api.api_detect_thinking()
-
-        self.assertEqual(result["status"], "ok")
-        self.assertTrue(result["is_thinking"])
-        self.assertEqual(result["thinking_protocol"], "deepseek_v4")
-        self.assertEqual(DummyOpenAI.last_chat_kwargs["extra_body"], {"thinking": {"type": "enabled"}})
-        self.assertNotIn("temperature", DummyOpenAI.last_chat_kwargs)
-        update_provider.assert_called_once_with(
-            "deepseek",
-            {"is_thinking": True, "thinking_effort": "high"},
-        )
-
     def test_openai_client_uses_matching_proxy_and_ignores_env(self):
         import analyzer
 
@@ -897,37 +1091,6 @@ class ProviderEndpointTests(unittest.TestCase):
 
         self.assertNotIn("proxy", DummyHttpxClient.last_kwargs)
         self.assertFalse(DummyHttpxClient.last_kwargs["trust_env"])
-
-    def test_network_llm_test_uses_basic_analysis_route(self):
-        web_providers_api = self.web_providers_api
-        message = types.SimpleNamespace(content="ok")
-        fake_client = types.SimpleNamespace(
-            chat=types.SimpleNamespace(
-                completions=types.SimpleNamespace(
-                    create=lambda **kwargs: types.SimpleNamespace(
-                        choices=[types.SimpleNamespace(message=message)]
-                    )
-                )
-            )
-        )
-        cfg = {
-            "provider_key": "deepseek",
-            "api_key": "sk-test",
-            "base_url": "https://api.deepseek.com",
-            "model": "deepseek-chat",
-            "max_tokens_enabled": True,
-            "max_tokens": 100,
-        }
-
-        with patch.object(web_providers_api, "get_ai_task_config", return_value=cfg), \
-                patch.object(web_providers_api, "get_openai_client", return_value=fake_client) as get_client:
-            result = web_providers_api.api_network_test_llm()
-
-        self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["provider_key"], "deepseek")
-        self.assertEqual(result["model"], "deepseek-chat")
-        self.assertGreaterEqual(result["duration_ms"], 0)
-        get_client.assert_called_once_with(cfg)
 
     def test_provider_list_does_not_return_plain_api_key(self):
         web_providers_api = self.web_providers_api
@@ -3487,6 +3650,19 @@ class EmailReportTests(unittest.TestCase):
 
 
 class TemplateSafetyTests(unittest.TestCase):
+    def test_settings_separates_provider_connections_from_task_inference_options(self):
+        with open("templates/settings.html", "r", encoding="utf-8") as f:
+            html = f.read()
+
+        self.assertIn("验证连接并刷新模型列表", html)
+        self.assertIn("taskModelListId", html)
+        self.assertIn("onTaskProviderChange", html)
+        self.assertIn("testAiTaskRoute", html)
+        self.assertIn("/api/settings/ai-tasks/${taskKey}/test", html)
+        self.assertNotIn('id="add-model"', html)
+        self.assertNotIn('id="add-temperature"', html)
+        self.assertNotIn("activateProvider(", html)
+
     def test_paper_pages_share_sanitized_markdown_and_math_renderer(self):
         with open("templates/paper.html", "r", encoding="utf-8") as f:
             paper = f.read()
@@ -3636,8 +3812,8 @@ class TemplateSafetyTests(unittest.TestCase):
         self.assertIn("switchTab('network'", html)
         self.assertIn("id=\"tab-network\"", html)
         self.assertIn("testProxy()", html)
-        self.assertIn("testLlmConnection()", html)
-        self.assertIn("/api/network/test-llm", html)
+        self.assertNotIn("testLlmConnection()", html)
+        self.assertNotIn("/api/network/test-llm", html)
 
 
 class ScheduleRetryTests(unittest.TestCase):

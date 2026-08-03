@@ -66,7 +66,18 @@ from .progress import get_progress, update_progress
 
 logger = logging.getLogger(__name__)
 from source.value_coercion import as_int
-from .providers_api import _request_bool
+
+
+def _request_bool(data, key, default=False):
+    """解析前端传来的布尔字段，保留显式 false。"""
+    if key not in data:
+        return default
+    value = data.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
 
 
 bp = Blueprint("settings_api", __name__)
@@ -123,6 +134,8 @@ def api_save_ai_tasks():
         if save_ai_tasks(tasks):
             return jsonify({"status": "ok", "message": "AI 功能模型路由已保存", "tasks": get_ai_tasks()})
         return jsonify({"status": "error", "message": "保存失败"}), 500
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

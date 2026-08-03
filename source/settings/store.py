@@ -72,6 +72,7 @@ from .thinking import (
     _is_qwen_like_base_url,
     get_thinking_protocol,
     is_known_thinking_model,
+    normalize_provider_connection,
     normalize_provider_config,
     _normalize_effort,
     _map_openai_effort,
@@ -83,6 +84,7 @@ from .thinking import (
 
 
 SETTINGS_PATH = os.path.join(DB_DIR, "settings.json")
+SETTINGS_SCHEMA_VERSION = 2
 
 
 def _ensure_dir():
@@ -134,6 +136,62 @@ def _migrate_old_settings(data):
     return migrated
 
 
+def _migrate_provider_task_routes(data):
+    """Move legacy provider inference defaults into explicit task routes."""
+    migrated = dict(data or {})
+    providers = dict(migrated.get("providers") or {})
+    active_provider = str(migrated.get("active_provider") or "").strip()
+    if active_provider not in providers:
+        active_provider = next(iter(providers), "")
+
+    raw_tasks = dict(migrated.get("ai_tasks") or {})
+    current_schema = int(migrated.get("settings_schema_version") or 0) >= SETTINGS_SCHEMA_VERSION
+    tasks = {}
+    for task_key in AI_TASK_KEYS:
+        raw_task = dict(raw_tasks.get(task_key) or {})
+        if current_schema:
+            task = {**DEFAULT_AI_TASK_OPTIONS[task_key], **raw_task}
+            provider_key = str(
+                raw_task.get("provider_key", DEFAULT_AI_TASK_OPTIONS[task_key].get("provider_key", "")) or ""
+            ).strip()
+            model = str(
+                raw_task.get("model", DEFAULT_AI_TASK_OPTIONS[task_key].get("model", "")) or ""
+            ).strip()
+        else:
+            provider_key = str(raw_task.get("provider_key") or "").strip()
+            if provider_key not in providers:
+                provider_key = active_provider
+            provider = dict(providers.get(provider_key) or {})
+            inherited_options = {
+                field: provider[field]
+                for field in DEFAULT_PROVIDER_OPTIONS
+                if field != "available_models" and field in provider
+            }
+            task = {
+                **DEFAULT_AI_TASK_OPTIONS[task_key],
+                **inherited_options,
+                **raw_task,
+            }
+            models = provider.get("available_models")
+            if not isinstance(models, list):
+                models = PROVIDER_PRESETS.get(provider_key, {}).get("models", [])
+            model = str(raw_task.get("model") or provider.get("model") or "").strip()
+            if not model:
+                model = next((str(item).strip() for item in models if str(item).strip()), "")
+        task["provider_key"] = provider_key
+        task["model"] = model
+        tasks[task_key] = task
+
+    migrated["providers"] = {
+        key: normalize_provider_connection(config, key)
+        for key, config in providers.items()
+    }
+    migrated["ai_tasks"] = tasks
+    migrated["settings_schema_version"] = SETTINGS_SCHEMA_VERSION
+    migrated.pop("active_provider", None)
+    return migrated
+
+
 def load_settings():
     """
     加载运行时配置。
@@ -166,7 +224,7 @@ def load_settings():
         with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
             saved = json.load(f)
         # 执行旧版格式迁移
-        migrated = _migrate_old_settings(saved)
+        migrated = _migrate_provider_task_routes(_migrate_old_settings(saved))
         merged = _deep_merge(DEFAULT_SETTINGS, migrated)
         merged["personalization"] = _normalize_personalization_config(merged.get("personalization", {}))
         merged["webdav_backup"] = _normalize_webdav_backup_config(merged.get("webdav_backup", {}))
@@ -174,12 +232,12 @@ def load_settings():
         merged["schedule"] = _normalize_schedule(merged.get("schedule", {}))
         merged["fetch"] = _normalize_fetch_config(merged.get("fetch", {}))
         merged["providers"] = {
-            key: normalize_provider_config(config, key)
+            key: normalize_provider_connection(config, key)
             for key, config in merged.get("providers", {}).items()
         }
         merged["ai_tasks"] = _normalize_ai_tasks(
             migrated.get("ai_tasks", {}),
-            merged.get("active_provider", ""),
+            "",
             merged.get("providers", {}),
         )
         merged["prompt_profiles"] = _normalize_prompt_profiles(
@@ -206,6 +264,13 @@ def save_settings(settings):
     """
     _ensure_dir()
     try:
+        settings = dict(settings or {})
+        settings["settings_schema_version"] = SETTINGS_SCHEMA_VERSION
+        settings.pop("active_provider", None)
+        settings["providers"] = {
+            key: normalize_provider_connection(config, key)
+            for key, config in dict(settings.get("providers") or {}).items()
+        }
         with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
         return True

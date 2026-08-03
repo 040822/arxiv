@@ -60,12 +60,6 @@
     ]
   },
   {
-    "rule": "/api/detect_thinking",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
     "rule": "/api/email-report/test",
     "methods": [
       "POST"
@@ -79,12 +73,6 @@
   },
   {
     "rule": "/api/generate",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "rule": "/api/network/test-llm",
     "methods": [
       "POST"
     ]
@@ -282,12 +270,6 @@
     ]
   },
   {
-    "rule": "/api/providers/<key>/activate",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
     "rule": "/api/providers/models",
     "methods": [
       "POST"
@@ -325,6 +307,12 @@
   },
   {
     "rule": "/api/settings/ai-tasks",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/settings/ai-tasks/<task_key>/test",
     "methods": [
       "POST"
     ]
@@ -453,12 +441,6 @@
     "rule": "/api/tasks/stats",
     "methods": [
       "GET"
-    ]
-  },
-  {
-    "rule": "/api/test_connection",
-    "methods": [
-      "POST"
     ]
   },
   {

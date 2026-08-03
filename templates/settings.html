@@ -56,8 +56,9 @@
                         <div class="settings-group-body">
                             <div class="settings-section">
                                 <h3>📋 已配置的供应商</h3>
-                                <p class="section-desc">点击「激活」切换当前使用的供应商，AI 分析将使用激活的供应商</p>
+                                <p class="section-desc">供应商只保存连接凭据和可用模型列表；实际模型与推理参数在「功能模型路由」中设置。</p>
                                 <div id="provider-list" class="provider-list"></div>
+                                <div id="provider-status" class="action-status"></div>
                             </div>
 
                             <div class="settings-section">
@@ -74,45 +75,9 @@
                                         <div class="form-group"><label>显示名称</label><input type="text" id="add-name" placeholder="例如: DeepSeek"></div>
                                         <div class="form-group"><label>API Key</label><div class="input-group"><input type="password" id="add-api-key" placeholder="输入 API Key" onchange="scheduleModelFetch()"><button class="btn-small" onclick="togglePwd('add-api-key')">👁</button></div></div>
                                         <div class="form-group"><label>Base URL</label><input type="text" id="add-base-url" placeholder="https://api.deepseek.com" onchange="scheduleModelFetch()"></div>
-                                        <div class="form-group">
-                                            <label>模型</label>
-                                            <div class="input-group">
-                                                <select id="add-model-select" onchange="selectModelFromList()"><option value="">-- 从模型列表选择 --</option></select>
-                                                <button class="btn-small" onclick="fetchModelsForForm()">刷新模型</button>
-                                                <input type="text" id="add-model" placeholder="或手动输入模型名称">
-                                            </div>
-                                            <div id="model-list-status" class="field-hint"></div>
-                                        </div>
-                                        <div class="form-row">
-                                            <div class="form-group">
-                                                <label><input type="checkbox" id="add-max-tokens-enabled" onchange="toggleMaxTokensField()" style="margin-right:6px;">限制输出长度</label>
-                                                <input type="number" id="add-max-tokens" min="100" max="200000" step="100" value="8192" disabled>
-                                            </div>
-                                            <div class="form-group">
-                                                <label><input type="checkbox" id="add-is-thinking" onchange="toggleThinkingFields()" style="margin-right:6px;">🧠 思考模型</label>
-                                                <div id="thinking-fields" style="display:none;">
-                                                    <select id="add-thinking-effort">
-                                                        <option value="auto">自动</option>
-                                                        <option value="low">低</option>
-                                                        <option value="medium" selected>中</option>
-                                                        <option value="high">高</option>
-                                                        <option value="max">最高</option>
-                                                    </select>
-                                                    <p class="section-desc">思考模式下将不发送 temperature/top_p/presence/frequency 等采样参数</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="advanced-box" id="sampling-section">
-                                            <h5>高级采样参数</h5>
-                                            <div class="form-row">
-                                                <div class="form-group"><label><input type="checkbox" id="add-temperature-enabled" onchange="toggleSamplingField('temperature')" checked> Temperature</label><input type="number" id="add-temperature" min="0" max="2" step="0.1" value="0.3"></div>
-                                                <div class="form-group"><label><input type="checkbox" id="add-top-p-enabled" onchange="toggleSamplingField('top-p')"> Top P</label><input type="number" id="add-top-p" min="0" max="1" step="0.05" value="1" disabled></div>
-                                            </div>
-                                            <div class="form-row">
-                                                <div class="form-group"><label><input type="checkbox" id="add-presence-penalty-enabled" onchange="toggleSamplingField('presence-penalty')"> Presence Penalty</label><input type="number" id="add-presence-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
-                                                <div class="form-group"><label><input type="checkbox" id="add-frequency-penalty-enabled" onchange="toggleSamplingField('frequency-penalty')"> Frequency Penalty</label><input type="number" id="add-frequency-penalty" min="-2" max="2" step="0.1" value="0" disabled></div>
-                                            </div>
-                                        </div>
+                                        <div class="settings-actions"><button class="action-btn" type="button" onclick="fetchModelsForForm()">🔗 验证连接并刷新模型列表</button></div>
+                                        <div id="model-list-status" class="field-hint"></div>
+                                        <div id="provider-model-preview" class="field-hint"></div>
                                         <div class="settings-actions"><button class="action-btn btn-primary" onclick="submitAdd()">💾 保存供应商</button><button class="action-btn" onclick="cancelAdd()">取消</button></div>
                                     </div>
                                 </div>
@@ -148,14 +113,6 @@
                                 <div id="concurrency-status" class="action-status"></div>
                             </div>
 
-                            <div class="settings-section">
-                                <h3>🔗 测试当前连接</h3>
-                                <div class="settings-actions">
-                                    <button class="action-btn btn-primary" onclick="testConnection()">🔗 测试连接</button>
-                                    <button class="action-btn" onclick="detectThinking()">🧠 检测是否为思考模型</button>
-                                </div>
-                                <div id="test-status" class="action-status"></div>
-                            </div>
                         </div>
                     </div>
 
@@ -278,10 +235,9 @@
 
                     <div class="settings-section">
                         <h3>连接测试</h3>
-                        <p class="section-desc">使用当前代理配置测试关键外网链路。LLM 测试使用「基础分析」任务路由。</p>
+                        <p class="section-desc">使用当前代理配置测试 arXiv 外网链路；LLM 连接请在对应功能模型路由中测试。</p>
                         <div class="settings-actions">
                             <button class="action-btn" onclick="testProxy()">🔗 测试 arXiv 连接</button>
-                            <button class="action-btn" onclick="testLlmConnection()">🤖 测试基础分析 LLM</button>
                         </div>
                         <div id="network-test-status" class="action-status"></div>
                     </div>
@@ -577,6 +533,7 @@
         let aiUsageState = { days: 7, selectedModel: '' };
         let currentPromptProfile = 'deep_reading';
         let modelFetchTimer = null;
+        let providerFormModels = [];
         let providerFormMode = 'add';
         let recommendationEventSource = null;
         let currentTaskLogPage = 1;
@@ -585,11 +542,6 @@
 
         function escapeHtml(value) {
             return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-        }
-
-        function parseNumber(id, fallback) {
-            const value = parseFloat(document.getElementById(id).value);
-            return Number.isNaN(value) ? fallback : value;
         }
 
         function jsString(value) {
@@ -723,17 +675,21 @@
 
         /* ---- AI Task Routing ---- */
         const AI_TASK_META = {
-            basic_analysis: {title: '基础分析', desc: '批量/自动分析使用，生成标签、中文摘要、简评和 AI 初评。用户仍可在详情页手动修正星级。建议廉价模型，默认不使用思考。'},
-            paper_import: {title: 'PDF 元数据提取', desc: '上传 PDF 时预填标题、作者、摘要、会议和日期。建议使用响应快、支持长文本的模型。'},
-            deep_reading: {title: '深度阅读', desc: '单篇生成/刷新 Q&A 深度阅读使用，不覆盖基础分析字段。可使用高智能模型和 high 思考。'},
-            report_summary: {title: '报告导读', desc: '仅在任务页勾选“生成 AI 导读”时调用。建议廉价模型。'},
-            recommendation: {title: '个性化推荐', desc: '根据研究兴趣计算 0-100 推荐评分和推荐理由。独立于基础分析模型，可单独配置廉价模型。'},
-            paper_chat: {title: '论文对话', desc: '单篇论文自由讨论使用，会把稳定 PDF 全文上下文放在前缀以提升缓存命中。建议高智能/长上下文模型。'},
-            paper_quiz: {title: '论文问答练习', desc: '生成练习题、评分反馈和苏格拉底追问使用。建议高智能模型，可与论文对话分开配置。'},
+            basic_analysis: {title: '基础分析', temperature: 0.2, desc: '批量/自动分析使用，生成标签、中文摘要、简评和 AI 初评。用户仍可在详情页手动修正星级。建议廉价模型，默认不使用思考。'},
+            paper_import: {title: 'PDF 元数据提取', temperature: 0.1, desc: '上传 PDF 时预填标题、作者、摘要、会议和日期。建议使用响应快、支持长文本的模型。'},
+            deep_reading: {title: '深度阅读', temperature: 0.2, desc: '单篇生成/刷新 Q&A 深度阅读使用，不覆盖基础分析字段。可使用高智能模型和 high 思考。'},
+            report_summary: {title: '报告导读', temperature: 0.3, desc: '仅在任务页勾选“生成 AI 导读”时调用。建议廉价模型。'},
+            recommendation: {title: '个性化推荐', temperature: 0.2, desc: '根据研究兴趣计算 0-100 推荐评分和推荐理由。独立于基础分析模型，可单独配置廉价模型。'},
+            paper_chat: {title: '论文对话', temperature: 0.4, desc: '单篇论文自由讨论使用，会把稳定 PDF 全文上下文放在前缀以提升缓存命中。建议高智能/长上下文模型。'},
+            paper_quiz: {title: '论文问答练习', temperature: 0.3, desc: '生成练习题、评分反馈和苏格拉底追问使用。建议高智能模型，可与论文对话分开配置。'},
         };
 
         function taskFieldId(taskKey, name) {
             return `task-${taskKey}-${name}`;
+        }
+
+        function taskModelListId(taskKey) {
+            return taskFieldId(taskKey, 'model-list');
         }
 
         function toggleAiTaskRoutes() {
@@ -753,19 +709,40 @@
             return html;
         }
 
+        function taskModelOptions(providerKey) {
+            const provider = (providerData.providers || {})[providerKey] || {};
+            return Array.from(new Set((provider.available_models || [])
+                .map(model => String(model).trim()).filter(Boolean)))
+                .sort((a, b) => a.localeCompare(b));
+        }
+
+        function renderTaskModelList(taskKey, providerKey) {
+            const list = document.getElementById(taskModelListId(taskKey));
+            if (!list) return;
+            list.innerHTML = taskModelOptions(providerKey)
+                .map(model => `<option value="${escapeHtml(model)}"></option>`).join('');
+        }
+
+        function onTaskProviderChange(taskKey) {
+            const providerKey = document.getElementById(taskFieldId(taskKey, 'provider')).value;
+            renderTaskModelList(taskKey, providerKey);
+            const statusEl = document.getElementById(taskFieldId(taskKey, 'status'));
+            if (statusEl) statusEl.textContent = '';
+        }
+
         function renderAiTasks(tasks) {
             const box = document.getElementById('ai-task-routes');
             let html = '';
             for (const taskKey of Object.keys(AI_TASK_META)) {
                 const meta = AI_TASK_META[taskKey];
                 const cfg = tasks[taskKey] || {};
-                const providerKey = cfg.provider_key || providerData.active_provider || '';
+                const providerKey = cfg.provider_key || '';
                 html += `<div class="advanced-box" style="margin-bottom:14px;">
                     <h5>${escapeHtml(meta.title)}</h5>
                     <p class="section-desc">${escapeHtml(meta.desc)}</p>
                     <div class="form-row">
-                        <div class="form-group"><label>供应商</label><select id="${taskFieldId(taskKey, 'provider')}">${providerSelectHtml(providerKey)}</select></div>
-                        <div class="form-group"><label>模型</label><input type="text" id="${taskFieldId(taskKey, 'model')}" value="${escapeHtml(cfg.model || '')}" placeholder="模型名称"></div>
+                        <div class="form-group"><label>供应商</label><select id="${taskFieldId(taskKey, 'provider')}" onchange="onTaskProviderChange('${taskKey}')">${providerSelectHtml(providerKey)}</select></div>
+                        <div class="form-group"><label>模型</label><input type="text" list="${taskModelListId(taskKey)}" id="${taskFieldId(taskKey, 'model')}" value="${escapeHtml(cfg.model || '')}" placeholder="选择或输入模型 ID"><datalist id="${taskModelListId(taskKey)}"></datalist><div class="field-hint">可从供应商模型列表选择，也可输入列表外模型。</div></div>
                     </div>
                     <div class="form-row">
                         <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'max-tokens-enabled')}" onchange="toggleTaskMaxTokens('${taskKey}')" ${cfg.max_tokens_enabled ? 'checked' : ''}> 限制输出长度</label><input type="number" id="${taskFieldId(taskKey, 'max-tokens')}" min="1" max="200000" step="100" value="${escapeHtml(cfg.max_tokens || 1000)}"></div>
@@ -775,16 +752,22 @@
                         <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'temperature-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'temperature')" ${cfg.temperature_enabled ? 'checked' : ''}> Temperature</label><input type="number" id="${taskFieldId(taskKey, 'temperature')}" min="0" max="2" step="0.1" value="${escapeHtml(cfg.temperature ?? 0.3)}"></div>
                         <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'top-p-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'top-p')" ${cfg.top_p_enabled ? 'checked' : ''}> Top P</label><input type="number" id="${taskFieldId(taskKey, 'top-p')}" min="0" max="1" step="0.05" value="${escapeHtml(cfg.top_p ?? 1)}"></div>
                     </div>
+                    <p class="field-hint">非思考模型推荐：Temperature ${escapeHtml(meta.temperature)}；Top P 保持 1.0 且不发送。通常只调整其中一个。</p>
                     <div class="form-row">
-                        <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'presence-penalty-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'presence-penalty')" ${cfg.presence_penalty_enabled ? 'checked' : ''}> Presence Penalty</label><input type="number" id="${taskFieldId(taskKey, 'presence-penalty')}" min="-2" max="2" step="0.1" value="${escapeHtml(cfg.presence_penalty ?? 0)}"></div>
-                        <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'frequency-penalty-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'frequency-penalty')" ${cfg.frequency_penalty_enabled ? 'checked' : ''}> Frequency Penalty</label><input type="number" id="${taskFieldId(taskKey, 'frequency-penalty')}" min="-2" max="2" step="0.1" value="${escapeHtml(cfg.frequency_penalty ?? 0)}"></div>
+                        <div class="form-group"><label title="按 token 是否已出现施加惩罚，正值鼓励引入新内容"><input type="checkbox" id="${taskFieldId(taskKey, 'presence-penalty-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'presence-penalty')" ${cfg.presence_penalty_enabled ? 'checked' : ''}> Presence Penalty</label><input type="number" id="${taskFieldId(taskKey, 'presence-penalty')}" min="-2" max="2" step="0.1" value="${escapeHtml(cfg.presence_penalty ?? 0)}"></div>
+                        <div class="form-group"><label title="按 token 出现次数累积惩罚，正值减少重复措辞"><input type="checkbox" id="${taskFieldId(taskKey, 'frequency-penalty-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'frequency-penalty')" ${cfg.frequency_penalty_enabled ? 'checked' : ''}> Frequency Penalty</label><input type="number" id="${taskFieldId(taskKey, 'frequency-penalty')}" min="-2" max="2" step="0.1" value="${escapeHtml(cfg.frequency_penalty ?? 0)}"></div>
                     </div>
+                    <p class="field-hint">Penalty 参数默认关闭；部分兼容供应商会忽略它们。</p>
+                    <div id="${taskFieldId(taskKey, 'sampling-warning')}" class="field-hint"></div>
+                    <div class="settings-actions"><button class="action-btn" type="button" onclick="refreshTaskModels('${taskKey}')">刷新模型列表</button><button class="action-btn" type="button" onclick="testAiTaskRoute('${taskKey}', this)">测试此路由</button></div>
+                    <div id="${taskFieldId(taskKey, 'status')}" class="action-status"></div>
                 </div>`;
             }
             box.innerHTML = html;
             for (const [taskKey, cfg] of Object.entries(tasks)) {
                 const effortEl = document.getElementById(taskFieldId(taskKey, 'thinking-effort'));
                 if (effortEl) effortEl.value = cfg.thinking_effort || 'medium';
+                onTaskProviderChange(taskKey);
                 toggleTaskMaxTokens(taskKey);
                 toggleTaskThinking(taskKey);
             }
@@ -799,6 +782,15 @@
             const thinking = document.getElementById(taskFieldId(taskKey, 'thinking')).checked;
             const enabled = document.getElementById(taskFieldId(taskKey, `${name}-enabled`)).checked;
             document.getElementById(taskFieldId(taskKey, name)).disabled = thinking || !enabled;
+            updateTaskSamplingWarning(taskKey);
+        }
+
+        function updateTaskSamplingWarning(taskKey) {
+            const warning = document.getElementById(taskFieldId(taskKey, 'sampling-warning'));
+            if (!warning) return;
+            const temperature = document.getElementById(taskFieldId(taskKey, 'temperature-enabled')).checked;
+            const topP = document.getElementById(taskFieldId(taskKey, 'top-p-enabled')).checked;
+            warning.textContent = temperature && topP ? '⚠️ 不建议同时启用 Temperature 和 Top P。' : '';
         }
 
         function toggleTaskThinking(taskKey) {
@@ -826,6 +818,63 @@
                 frequency_penalty_enabled: document.getElementById(taskFieldId(taskKey, 'frequency-penalty-enabled')).checked,
                 frequency_penalty: parseFloat(document.getElementById(taskFieldId(taskKey, 'frequency-penalty')).value) || 0,
             };
+        }
+
+        async function refreshTaskModels(taskKey) {
+            const providerKey = document.getElementById(taskFieldId(taskKey, 'provider')).value;
+            const statusEl = document.getElementById(taskFieldId(taskKey, 'status'));
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在验证供应商并刷新模型列表...';
+            try {
+                const resp = await fetch('/api/providers/models', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({provider_key: providerKey})});
+                const result = await resp.json();
+                if (result.status !== 'ok') throw new Error(result.message || '刷新失败');
+                if (providerData.providers[providerKey]) providerData.providers[providerKey].available_models = result.models || [];
+                for (const key of Object.keys(AI_TASK_META)) {
+                    const providerEl = document.getElementById(taskFieldId(key, 'provider'));
+                    if (providerEl && providerEl.value === providerKey) renderTaskModelList(key, providerKey);
+                }
+                statusEl.className = 'action-status success';
+                statusEl.textContent = `✅ 已获取 ${result.count || 0} 个模型`;
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            }
+        }
+
+        async function testAiTaskRoute(taskKey, button) {
+            const statusEl = document.getElementById(taskFieldId(taskKey, 'status'));
+            const original = button.textContent;
+            button.disabled = true;
+            button.textContent = '测试中...';
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在测试当前未保存配置...';
+            try {
+                const config = readTaskConfig(taskKey);
+                const resp = await fetch(`/api/settings/ai-tasks/${taskKey}/test`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({config})});
+                const result = await resp.json();
+                if (result.status !== 'ok') throw new Error(result.message || '测试失败');
+                const detection = result.thinking_detection || {};
+                let thinkingHint = '';
+                if (detection.detected) {
+                    const thinkingEl = document.getElementById(taskFieldId(taskKey, 'thinking'));
+                    if (!thinkingEl.checked) {
+                        thinkingEl.checked = true;
+                        toggleTaskThinking(taskKey);
+                        thinkingHint = '；已在当前表单勾选思考模型，请保存后生效';
+                    } else {
+                        thinkingHint = `；检测到思考模式（${detection.confidence || 'unknown'}）`;
+                    }
+                }
+                statusEl.className = 'action-status success';
+                statusEl.textContent = `✅ ${result.task_name || AI_TASK_META[taskKey].title} · ${result.provider_key}/${result.model} · ${result.duration_ms}ms${thinkingHint}`;
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            } finally {
+                button.disabled = false;
+                button.textContent = original;
+            }
         }
 
         async function saveAiTasks() {
@@ -1098,28 +1147,23 @@
         function renderProviderList() {
             const list = document.getElementById('provider-list');
             const providers = providerData.providers || {};
-            const active = providerData.active_provider || '';
             if (Object.keys(providers).length === 0) { list.innerHTML = '<div class="empty-state"><p>尚未配置，请在下方添加</p></div>'; return; }
             let html = '';
             for (const [key, prov] of Object.entries(providers)) {
-                const isActive = key === active;
-                const thinking = !!(prov.is_thinking || prov.effective_is_thinking);
-                const effort = prov.thinking_effort || 'medium';
-                html += `<div class="provider-item ${isActive ? 'active' : ''}">
+                const modelCount = (prov.available_models || []).length;
+                html += `<div class="provider-item">
                     <div class="provider-item-header">
-                        <div class="provider-item-info"><span class="provider-item-name">${escapeHtml(prov.name)}</span>${isActive ? '<span class="active-badge">✅ 当前使用</span>' : ''}</div>
+                        <div class="provider-item-info"><span class="provider-item-name">${escapeHtml(prov.name)}</span></div>
                         <div class="provider-item-actions">
-                            ${isActive ? '<span class="status-text">已激活</span>' : `<button class="btn-sm btn-activate" onclick="activateProvider('${jsString(key)}')">激活</button>`}
+                            <button class="btn-sm" onclick="refreshProviderModels('${jsString(key)}')">验证并刷新</button>
                             <button class="btn-sm btn-edit" onclick="editProvider('${jsString(key)}')">编辑</button>
-                            ${!isActive ? `<button class="btn-sm btn-delete" onclick="deleteProvider('${jsString(key)}')">删除</button>` : ''}
+                            <button class="btn-sm btn-delete" onclick="deleteProvider('${jsString(key)}')">删除</button>
                         </div>
                     </div>
                     <div class="provider-item-detail">
                         <span>Base URL: ${escapeHtml(prov.base_url)}</span>
-                        <span>模型: ${escapeHtml(prov.model)}</span>
+                        <span>可用模型: ${modelCount} 个</span>
                         <span>API Key: ${escapeHtml(prov.api_key_masked || '未设置')}</span>
-                        ${thinking ? `<span class="thinking-badge">🧠 思考模型 · ${escapeHtml(effort)}</span>` : ''}
-                        ${prov.max_tokens_enabled ? `<span>限制输出: ${prov.max_tokens}</span>` : ''}
                     </div>
                 </div>`;
             }
@@ -1148,45 +1192,12 @@
             setAddProviderSection(body.style.display === 'none');
         }
 
-        function getModelOptionsFromSelect() {
-            return Array.from(document.getElementById('add-model-select').options)
-                .map(opt => opt.value)
-                .filter(v => v);
-        }
-
-        function populateModelOptions(models, selected) {
-            const select = document.getElementById('add-model-select');
-            const unique = Array.from(new Set((models || []).filter(v => String(v).trim()).map(v => String(v).trim()))).sort((a, b) => a.localeCompare(b));
-            let html = '<option value="">-- 从模型列表选择 --</option>';
-            if (selected && !unique.includes(selected)) unique.unshift(selected);
-            for (const model of unique) html += `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`;
-            select.innerHTML = html;
-            select.value = selected || '';
-        }
-
-        function selectModelFromList() {
-            const val = document.getElementById('add-model-select').value;
-            if (val) document.getElementById('add-model').value = val;
-        }
-
-        function toggleMaxTokensField() {
-            document.getElementById('add-max-tokens').disabled = !document.getElementById('add-max-tokens-enabled').checked;
-        }
-
-        function toggleSamplingField(name) {
-            const thinking = document.getElementById('add-is-thinking').checked;
-            const checkbox = document.getElementById(`add-${name}-enabled`);
-            const input = document.getElementById(`add-${name}`);
-            input.disabled = thinking || !checkbox.checked;
-        }
-
-        function toggleThinkingFields() {
-            const thinking = document.getElementById('add-is-thinking').checked;
-            document.getElementById('thinking-fields').style.display = thinking ? 'block' : 'none';
-            for (const name of ['temperature', 'top-p', 'presence-penalty', 'frequency-penalty']) {
-                document.getElementById(`add-${name}-enabled`).disabled = thinking;
-                toggleSamplingField(name);
-            }
+        function renderProviderModelPreview() {
+            const preview = document.getElementById('provider-model-preview');
+            const models = providerFormModels.slice(0, 8);
+            preview.textContent = providerFormModels.length
+                ? `已缓存 ${providerFormModels.length} 个模型：${models.join('、')}${providerFormModels.length > models.length ? '…' : ''}`
+                : '尚未获取模型列表；仍可先保存供应商，之后再刷新。';
         }
 
         function scheduleModelFetch() {
@@ -1216,32 +1227,15 @@
                 const resp = await fetch('/api/providers/models', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                 const result = await resp.json();
                 if (result.status === 'ok') {
-                    const current = document.getElementById('add-model').value.trim();
-                    populateModelOptions(result.models || [], current);
-                    statusEl.textContent = `已获取 ${result.count || 0} 个模型；也可以继续手动输入`;
+                    providerFormModels = result.models || [];
+                    renderProviderModelPreview();
+                    statusEl.textContent = `连接成功，已获取 ${result.count || 0} 个模型`;
                 } else if (!silent) {
-                    statusEl.textContent = result.message || '获取模型列表失败，可手动输入模型名称';
+                    statusEl.textContent = result.message || '连接验证失败';
                 }
             } catch (e) {
                 if (!silent) statusEl.textContent = '获取模型列表失败：' + e.message;
             }
-        }
-
-        function resetProviderAdvancedFields(prov = {}) {
-            document.getElementById('add-max-tokens-enabled').checked = !!prov.max_tokens_enabled;
-            document.getElementById('add-max-tokens').value = prov.max_tokens ?? 8192;
-            document.getElementById('add-temperature-enabled').checked = prov.temperature_enabled ?? !prov.is_thinking;
-            document.getElementById('add-temperature').value = prov.temperature ?? 0.3;
-            document.getElementById('add-top-p-enabled').checked = !!prov.top_p_enabled;
-            document.getElementById('add-top-p').value = prov.top_p ?? 1;
-            document.getElementById('add-presence-penalty-enabled').checked = !!prov.presence_penalty_enabled;
-            document.getElementById('add-presence-penalty').value = prov.presence_penalty ?? 0;
-            document.getElementById('add-frequency-penalty-enabled').checked = !!prov.frequency_penalty_enabled;
-            document.getElementById('add-frequency-penalty').value = prov.frequency_penalty ?? 0;
-            document.getElementById('add-is-thinking').checked = !!prov.is_thinking;
-            document.getElementById('add-thinking-effort').value = prov.thinking_effort || 'medium';
-            toggleMaxTokensField();
-            toggleThinkingFields();
         }
 
         function showAddForm(presetKey) {
@@ -1254,17 +1248,9 @@
             document.getElementById('add-api-key').value = '';
             document.getElementById('add-api-key').placeholder = '输入 API Key';
             document.getElementById('add-base-url').value = preset.base_url || '';
-            document.getElementById('add-model').value = (preset.models && preset.models[0]) || '';
-            populateModelOptions(preset.models || [], document.getElementById('add-model').value);
+            providerFormModels = (preset.models || []).slice();
             document.getElementById('model-list-status').textContent = '';
-            resetProviderAdvancedFields({
-                max_tokens: 8192,
-                max_tokens_enabled: false,
-                temperature: 0.3,
-                temperature_enabled: true,
-                thinking_effort: 'medium',
-                is_thinking: false,
-            });
+            renderProviderModelPreview();
             document.getElementById('add-form-title').textContent = `添加供应商: ${preset.name || presetKey}`;
             document.getElementById('add-form').style.display = 'block';
             document.getElementById('add-form').scrollIntoView({behavior: 'smooth'});
@@ -1277,44 +1263,22 @@
         }
 
         async function submitAdd() {
-            const statusEl = document.getElementById('test-status');
+            const statusEl = document.getElementById('provider-status');
             const isEdit = providerFormMode === 'edit';
             const data = {
                 key: document.getElementById('add-key').value.trim(),
                 name: document.getElementById('add-name').value.trim(),
                 api_key: document.getElementById('add-api-key').value.trim(),
                 base_url: document.getElementById('add-base-url').value.trim(),
-                model: document.getElementById('add-model').value.trim(),
-                available_models: getModelOptionsFromSelect(),
-                max_tokens_enabled: document.getElementById('add-max-tokens-enabled').checked,
-                max_tokens: parseInt(document.getElementById('add-max-tokens').value) || 8192,
-                is_thinking: document.getElementById('add-is-thinking').checked,
-                thinking_effort: document.getElementById('add-thinking-effort').value || 'medium',
-                temperature_enabled: document.getElementById('add-temperature-enabled').checked,
-                temperature: parseNumber('add-temperature', 0.3),
-                top_p_enabled: document.getElementById('add-top-p-enabled').checked,
-                top_p: parseNumber('add-top-p', 1),
-                presence_penalty_enabled: document.getElementById('add-presence-penalty-enabled').checked,
-                presence_penalty: parseNumber('add-presence-penalty', 0),
-                frequency_penalty_enabled: document.getElementById('add-frequency-penalty-enabled').checked,
-                frequency_penalty: parseNumber('add-frequency-penalty', 0),
+                available_models: providerFormModels,
             };
             if (!data.key) { alert('供应商ID不能为空'); return; }
             if (!data.base_url) { alert('Base URL 不能为空'); return; }
-            if (!data.model) { alert('模型名称不能为空'); return; }
             if (!isEdit && !data.api_key) { alert('API Key 不能为空'); return; }
             try {
                 const resp = await fetch(isEdit ? `/api/providers/${data.key}` : '/api/providers', { method: isEdit ? 'PUT' : 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
                 const result = await resp.json();
                 if (result.status === 'ok') { statusEl.className = 'action-status success'; statusEl.textContent = '✅ ' + result.message; cancelAdd(); await init(); }
-                else { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + result.message; }
-            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
-        }
-
-        async function activateProvider(key) {
-            const statusEl = document.getElementById('test-status');
-            try { const resp = await fetch(`/api/providers/${key}/activate`, {method: 'POST'}); const result = await resp.json();
-                if (result.status === 'ok') { statusEl.className = 'action-status success'; statusEl.textContent = '✅ ' + result.message; await init(); }
                 else { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + result.message; }
             } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
         }
@@ -1328,22 +1292,36 @@
             document.getElementById('add-name').value = prov.name || key;
             document.getElementById('add-api-key').value = ''; document.getElementById('add-api-key').placeholder = '留空则保持原值不变';
             document.getElementById('add-base-url').value = prov.base_url || '';
-            document.getElementById('add-model').value = prov.model || '';
-            const models = (prov.available_models && prov.available_models.length > 0) ? prov.available_models : (preset.models || []);
-            populateModelOptions(models, prov.model || '');
+            providerFormModels = (prov.available_models && prov.available_models.length > 0) ? prov.available_models.slice() : (preset.models || []).slice();
             document.getElementById('model-list-status').textContent = '';
-            resetProviderAdvancedFields(prov);
+            renderProviderModelPreview();
             document.getElementById('add-form-title').textContent = `编辑供应商: ${prov.name || key}`;
             document.getElementById('add-form').style.display = 'block'; document.getElementById('add-form').scrollIntoView({behavior: 'smooth'});
         }
 
         async function deleteProvider(key) {
             if (!confirm(`确定删除供应商「${key}」？`)) return;
-            const statusEl = document.getElementById('test-status');
+            const statusEl = document.getElementById('provider-status');
             try { const resp = await fetch(`/api/providers/${key}`, {method: 'DELETE'}); const result = await resp.json();
                 if (result.status === 'ok') { statusEl.className = 'action-status success'; statusEl.textContent = '✅ ' + result.message; await init(); }
                 else { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + result.message; }
             } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
+        }
+
+        async function refreshProviderModels(key) {
+            const statusEl = document.getElementById('provider-status');
+            statusEl.className = 'action-status info';
+            statusEl.textContent = '正在验证连接并刷新模型列表...';
+            try {
+                const resp = await fetch('/api/providers/models', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({provider_key: key})});
+                const result = await resp.json();
+                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
+                statusEl.textContent = `${result.status === 'ok' ? '✅' : '❌'} ${result.status === 'ok' ? `连接成功，已获取 ${result.count || 0} 个模型` : result.message}`;
+                if (result.status === 'ok') await init();
+            } catch (e) {
+                statusEl.className = 'action-status error';
+                statusEl.textContent = '❌ ' + e.message;
+            }
         }
 
         function togglePwd(id) { const el = document.getElementById(id); el.type = el.type === 'password' ? 'text' : 'password'; }
@@ -1354,26 +1332,6 @@
             } finally {
                 window.location.href = '/login';
             }
-        }
-
-        async function testConnection() {
-            const statusEl = document.getElementById('test-status'); statusEl.className = 'action-status info'; statusEl.textContent = '⏳ 正在测试...';
-            try { const resp = await fetch('/api/test_connection', {method: 'POST'}); const result = await resp.json();
-                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
-            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
-        }
-
-        async function detectThinking() {
-            const statusEl = document.getElementById('test-status'); statusEl.className = 'action-status info'; statusEl.textContent = '⏳ 正在检测...';
-            try { const resp = await fetch('/api/detect_thinking', {method: 'POST'}); const result = await resp.json();
-                if (result.status === 'ok') {
-                    statusEl.className = 'action-status success';
-                    statusEl.textContent = result.message;
-                    await init();
-                } else {
-                    statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + result.message;
-                }
-            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
         }
 
         async function saveConcurrency() {
@@ -1474,23 +1432,6 @@
             try { const resp = await fetch('/api/test_proxy', {method: 'POST'}); const result = await resp.json();
                 statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
             } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
-        }
-
-        async function testLlmConnection() {
-            const statusEl = document.getElementById('network-test-status');
-            statusEl.className = 'action-status info';
-            statusEl.textContent = '⏳ 正在测试基础分析 LLM...';
-            try {
-                const resp = await fetch('/api/network/test-llm', {method: 'POST'});
-                const result = await resp.json();
-                const meta = [result.provider_key, result.model].filter(Boolean).join(' / ');
-                const duration = result.duration_ms !== undefined ? `（${result.duration_ms}ms）` : '';
-                statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
-                statusEl.textContent = `${result.status === 'ok' ? '✅' : '❌'} ${result.message || '测试失败'}${meta ? ' - ' + meta : ''}${duration}`;
-            } catch (e) {
-                statusEl.className = 'action-status error';
-                statusEl.textContent = '❌ ' + e.message;
-            }
         }
 
         /* ---- Fetch Config Management ---- */

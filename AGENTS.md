@@ -299,7 +299,7 @@ APScheduler cron(day_of_week, hour, minute)
 ### 5.2 data/settings.json（运行时，Web界面可改）
 ```json
 {
-  "active_provider": "deepseek",
+  "settings_schema_version": 2,
   "concurrency": 5,
   "admin_password": "sha256...",
   "session_secret": "随机生成的 Flask session 签名密钥",
@@ -341,13 +341,6 @@ APScheduler cron(day_of_week, hour, minute)
       "name": "DeepSeek",
       "api_key": "sk-xxx",
       "base_url": "https://api.deepseek.com",
-      "model": "deepseek-chat",
-      "temperature": 0.3,
-      "temperature_enabled": true,
-      "max_tokens": 8192,
-      "max_tokens_enabled": false,
-      "is_thinking": false,
-      "thinking_effort": "medium",
       "available_models": ["deepseek-chat", "deepseek-reasoner"]
     }
   },
@@ -378,12 +371,13 @@ APScheduler cron(day_of_week, hour, minute)
 
 **source/settings 公共函数（根 settings.py 兼容导出）:**
 - `load_settings()` / `save_settings()` — 读写JSON（含自动迁移）
-- `get_ai_config()` — 获取当前激活供应商的 API 配置
+- `get_ai_config()` — 兼容接口，返回 `basic_analysis` 功能路由的实际调用配置
 - `get_ai_task_config(task_key)` — 获取某个 AI 功能的实际供应商、模型和参数配置
+- `resolve_ai_task_config(task_key, task_config)` — 将已保存或未保存的功能路由草稿与供应商连接凭据合并并校验
 - `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存 PDF 元数据提取、基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的模型路由
 - `build_chat_completion_kwargs()` — 统一构建 Chat Completions 参数（思考模型会省略采样参数）
 - LLM 客户端必须通过 `analyzer.get_openai_client()` 创建，以复用全局代理配置并禁用环境变量代理
-- `normalize_provider_config()` — 补齐供应商配置字段，兼容旧版 settings.json
+- `normalize_provider_connection()` — 归一化供应商连接字段；`normalize_provider_config()` 仅用于合并后的实际调用配置
 - `get_prompt_profile()` / `get_prompt_profiles()` — 获取任务级 Prompt Profile；`get_prompts()` 保留旧接口兼容
 - `get_concurrency()` — 获取并发数
 - `get_per_page()` — 获取每页论文数
@@ -393,7 +387,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `get_personalization_config()` / `save_personalization_config()` — 个性化推荐研究兴趣
 - `get_webdav_backup_config()` / `save_webdav_backup_config()` — WebDAV 云备份配置；GET 给前端时必须脱敏密码
 - `get_email_report_config()` / `save_email_report_config()` / `update_email_report_status()` — 每日报告邮件配置，含 `important_score_threshold`（重点精读推荐分阈值，默认 80，0-100）与 `overview_limit`（速览上限，默认 20，0-50）；GET 给前端时必须脱敏 SMTP 密码；`last_sent_report_date` 只记录自动任务成功发送的日报日期
-- `add/remove/switch/update_provider()` — 供应商 CRUD
+- `add/remove/update_provider()` — 供应商连接 CRUD；被功能路由引用时禁止删除
 - `get/set/verify/has_admin_password()` — 管理密码
 - `get_session_secret()` — 获取/生成持久 Flask session 签名密钥
 
@@ -460,14 +454,11 @@ APScheduler cron(day_of_week, hour, minute)
 | `/api/auth/logout` | POST | 退出登录 |
 | `/api/providers` | GET/POST | 供应商列表/添加 |
 | `/api/providers/<key>` | PUT/DELETE | 更新/删除供应商 |
-| `/api/providers/<key>/activate` | POST | 切换供应商 |
 | `/api/providers/presets` | GET | 预设供应商列表 |
 | `/api/providers/models` | POST | 从供应商 API 自动获取模型列表 |
-| `/api/test_connection` | POST | 测试API连接 |
-| `/api/detect_thinking` | POST | 检测是否为思考模型 |
-| `/api/network/test-llm` | POST | 测试基础分析任务路由的 LLM 连接 |
 | `/api/prompts` | GET/POST | 读取/保存Prompt |
 | `/api/settings/ai-tasks` | GET/POST | 读取/保存 AI 功能模型路由 |
+| `/api/settings/ai-tasks/<task_key>/test` | POST | 使用未保存草稿测试指定功能路由，并返回思考能力提示 |
 | `/api/settings/ai-usage` | GET | 查看近期 LLM token 用量 |
 | `/api/settings/personalization` | GET/POST | 读取/保存研究兴趣 |
 | `/api/recommendations/recalculate` | POST | 手动重算个性化推荐评分 |
@@ -518,11 +509,7 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 }
 ```
 
-供应商运行时配置还支持：
-- `available_models` — 自动拉取或预设的模型列表
-- `max_tokens_enabled` — 是否发送输出长度限制；默认 `false`
-- `temperature_enabled/top_p_enabled/presence_penalty_enabled/frequency_penalty_enabled` — 采样参数开关
-- `is_thinking` / `thinking_effort` — 思考模型开关与强度档位（auto/low/medium/high/max）
+供应商运行时配置只保存 `name`、`api_key`、`base_url` 和 `available_models`。模型、输出长度、采样参数以及思考模式全部保存在 `ai_tasks` 的具体功能路由中；旧版供应商推理字段会在读取时迁移到显式任务路由。
 
 调用模型时必须通过 `build_chat_completion_kwargs()` 构建参数，不要在业务代码中直接固定传 `temperature` 或 `max_tokens`。
 

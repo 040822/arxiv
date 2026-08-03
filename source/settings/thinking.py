@@ -146,6 +146,23 @@ def normalize_provider_config(config, key=None):
     return normalized
 
 
+def normalize_provider_connection(config, key=None):
+    """Normalize the connection-only fields persisted for one provider."""
+    config = dict(config or {})
+    preset = PROVIDER_PRESETS.get(key or "", {})
+    available_models = config.get("available_models")
+    if not isinstance(available_models, list):
+        available_models = preset.get("models", [])
+    return {
+        "name": str(config.get("name") or preset.get("name") or key or "").strip(),
+        "api_key": str(config.get("api_key") or ""),
+        "base_url": str(config.get("base_url") or preset.get("base_url") or "").strip(),
+        "available_models": list(dict.fromkeys(
+            str(model).strip() for model in available_models if str(model).strip()
+        )),
+    }
+
+
 def _normalize_effort(effort):
     effort = str(effort or DEFAULT_PROVIDER_OPTIONS["thinking_effort"]).lower()
     return effort if effort in THINKING_EFFORTS else DEFAULT_PROVIDER_OPTIONS["thinking_effort"]

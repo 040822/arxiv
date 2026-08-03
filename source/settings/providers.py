@@ -72,6 +72,7 @@ from .thinking import (
     _is_qwen_like_base_url,
     get_thinking_protocol,
     is_known_thinking_model,
+    normalize_provider_connection,
     normalize_provider_config,
     _normalize_effort,
     _map_openai_effort,
@@ -82,23 +83,6 @@ from .thinking import (
 )
 
 from .store import load_settings, save_settings
-
-
-def get_active_provider():
-    """
-    获取当前激活供应商的完整配置。
-
-    从 settings 中读取 active_provider 键名，然后从 providers 字典中
-    取出对应的供应商配置。
-
-    返回:
-        dict: 当前激活供应商的配置字典，包含 name/api_key/base_url/model 等字段。
-              如果激活的供应商不存在，返回空字典。
-    """
-    settings = load_settings()
-    active = settings.get("active_provider", "deepseek")
-    providers = settings.get("providers", {})
-    return providers.get(active, {})
 
 
 def get_ai_config():
@@ -117,8 +101,7 @@ def get_ai_config():
             - max_tokens/max_tokens_enabled: 可选最大生成 token 数
             - is_thinking/thinking_effort: 思考模式配置
     """
-    prov = get_active_provider()
-    return normalize_provider_config(prov)
+    return get_ai_task_config("basic_analysis")
 
 
 def get_ai_tasks():
@@ -126,7 +109,7 @@ def get_ai_tasks():
     settings = load_settings()
     return _normalize_ai_tasks(
         settings.get("ai_tasks", {}),
-        settings.get("active_provider", ""),
+        "",
         settings.get("providers", {}),
     )
 
@@ -134,11 +117,23 @@ def get_ai_tasks():
 def save_ai_tasks(ai_tasks):
     """保存任务级模型与参数配置。"""
     settings = load_settings()
-    settings["ai_tasks"] = _normalize_ai_tasks(
+    normalized = _normalize_ai_tasks(
         ai_tasks,
-        settings.get("active_provider", ""),
+        "",
         settings.get("providers", {}),
     )
+    providers = settings.get("providers", {})
+    errors = []
+    for task_key in AI_TASK_KEYS:
+        task = normalized[task_key]
+        provider_key = str(task.get("provider_key") or "").strip()
+        if provider_key not in providers:
+            errors.append(f"{AI_TASK_LABELS[task_key]}引用的供应商不存在: {provider_key or '未设置'}")
+        if not str(task.get("model") or "").strip():
+            errors.append(f"{AI_TASK_LABELS[task_key]}未设置模型")
+    if errors:
+        raise ValueError("；".join(errors))
+    settings["ai_tasks"] = normalized
     return save_settings(settings)
 
 
@@ -149,27 +144,35 @@ def get_ai_task_config(task_key):
     任务配置只保存 provider_key/model/参数开关；这里会与供应商 API Key/Base URL 合并，
     返回值可直接传给 OpenAI 客户端和 build_chat_completion_kwargs()。
     """
+    return resolve_ai_task_config(task_key)
+
+
+def resolve_ai_task_config(task_key, task_config=None):
+    """Resolve a saved or draft task route against stored provider credentials."""
     settings = load_settings()
     if task_key not in AI_TASK_KEYS:
-        task_key = "basic_analysis"
-    tasks = _normalize_ai_tasks(
-        settings.get("ai_tasks", {}),
-        settings.get("active_provider", ""),
+        raise ValueError(f"未知功能模型路由: {task_key}")
+    raw_task = (
+        settings.get("ai_tasks", {}).get(task_key, {})
+        if task_config is None else task_config
+    )
+    task = _normalize_ai_task_config(
+        raw_task,
+        task_key,
+        "",
         settings.get("providers", {}),
     )
-    task = tasks[task_key]
-    provider_key = _select_provider_key(
-        task.get("provider_key"),
-        settings.get("active_provider", ""),
-        settings.get("providers", {}),
-    )
-    provider = normalize_provider_config(settings.get("providers", {}).get(provider_key, {}), provider_key)
+    provider_key = str(task.get("provider_key") or "").strip()
+    providers = settings.get("providers", {})
+    if provider_key not in providers:
+        raise ValueError(f"{AI_TASK_LABELS[task_key]}引用的供应商不存在: {provider_key or '未设置'}")
+    if not str(task.get("model") or "").strip():
+        raise ValueError(f"{AI_TASK_LABELS[task_key]}未设置模型")
+    provider = normalize_provider_connection(providers[provider_key], provider_key)
     merged = {**provider, **task}
     merged["provider_key"] = provider_key
     merged["provider_name"] = provider.get("name", provider_key)
     merged["task_key"] = task_key
-    if not merged.get("model"):
-        merged["model"] = provider.get("model", "")
     return normalize_provider_config(merged, provider_key) | {
         "provider_key": provider_key,
         "provider_name": provider.get("name", provider_key),
@@ -212,52 +215,27 @@ def add_provider(key, config):
         bool: 保存是否成功
     """
     settings = load_settings()
-    settings["providers"][key] = normalize_provider_config(config, key)
+    settings["providers"][key] = normalize_provider_connection(config, key)
     return save_settings(settings)
 
 
 def remove_provider(key):
-    """
-    删除指定供应商。
-
-    如果删除的是当前激活的供应商，会自动切换到剩余供应商中的第一个。
-    如果没有任何剩余供应商，active_provider 设为空字符串。
-
-    参数:
-        key: 要删除的供应商标识
-
-    返回:
-        bool: 删除是否成功（供应商不存在时返回 False）
-    """
+    """删除未被功能路由引用的供应商，并返回结构化结果。"""
     settings = load_settings()
-    if key in settings["providers"]:
-        del settings["providers"][key]
-        # 如果删除的是当前激活供应商，自动切换到第一个剩余供应商
-        if settings["active_provider"] == key:
-            remaining = list(settings["providers"].keys())
-            settings["active_provider"] = remaining[0] if remaining else ""
-        return save_settings(settings)
-    return False
-
-
-def switch_provider(key):
-    """
-    切换当前激活的供应商。
-
-    切换后，AI 分析将使用新供应商的 API 配置。
-    供应商必须已存在于 providers 中。
-
-    参数:
-        key: 要切换到的供应商标识
-
-    返回:
-        bool: 切换是否成功（供应商不存在时返回 False）
-    """
-    settings = load_settings()
-    if key in settings["providers"]:
-        settings["active_provider"] = key
-        return save_settings(settings)
-    return False
+    if key not in settings["providers"]:
+        return {"removed": False, "references": [], "not_found": True}
+    references = [
+        task_key for task_key, task in settings.get("ai_tasks", {}).items()
+        if task.get("provider_key") == key
+    ]
+    if references:
+        return {"removed": False, "references": references, "not_found": False}
+    del settings["providers"][key]
+    return {
+        "removed": bool(save_settings(settings)),
+        "references": [],
+        "not_found": False,
+    }
 
 
 def update_provider(key, config):
@@ -277,6 +255,6 @@ def update_provider(key, config):
     settings = load_settings()
     if key in settings["providers"]:
         settings["providers"][key].update(config)
-        settings["providers"][key] = normalize_provider_config(settings["providers"][key], key)
+        settings["providers"][key] = normalize_provider_connection(settings["providers"][key], key)
         return save_settings(settings)
     return False
