@@ -97,7 +97,7 @@ def get_ai_config():
             - api_key: API 密钥
             - base_url: API 端点地址
             - model: 模型名称
-            - temperature/top_p/presence_penalty/frequency_penalty: 采样参数
+            - temperature: 非思考模型可选的采样参数
             - max_tokens/max_tokens_enabled: 可选最大生成 token 数
             - is_thinking/thinking_effort: 思考模式配置
     """

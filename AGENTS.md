@@ -299,7 +299,7 @@ APScheduler cron(day_of_week, hour, minute)
 ### 5.2 data/settings.json（运行时，Web界面可改）
 ```json
 {
-  "settings_schema_version": 2,
+  "settings_schema_version": 3,
   "concurrency": 5,
   "admin_password": "sha256...",
   "session_secret": "随机生成的 Flask session 签名密钥",
@@ -358,13 +358,13 @@ APScheduler cron(day_of_week, hour, minute)
     "paper_quiz": {"system": "...", "instruction": "...主动回忆/评分/追问..."}
   },
   "ai_tasks": {
-    "basic_analysis": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1200},
-    "paper_import": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1000},
-    "deep_reading": {"provider_key": "deepseek", "model": "deepseek-reasoner", "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 6000},
-    "report_summary": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1000},
-    "recommendation": {"provider_key": "deepseek", "model": "deepseek-chat", "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 500},
-    "paper_chat": {"provider_key": "deepseek", "model": "deepseek-reasoner", "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 4000},
-    "paper_quiz": {"provider_key": "deepseek", "model": "deepseek-reasoner", "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 3000}
+    "basic_analysis": {"provider_key": "deepseek", "model": "deepseek-chat", "temperature_enabled": true, "temperature": 0.2, "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1200},
+    "paper_import": {"provider_key": "deepseek", "model": "deepseek-chat", "temperature_enabled": true, "temperature": 0.1, "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1000},
+    "deep_reading": {"provider_key": "deepseek", "model": "deepseek-reasoner", "temperature_enabled": false, "temperature": 0.2, "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 6000},
+    "report_summary": {"provider_key": "deepseek", "model": "deepseek-chat", "temperature_enabled": true, "temperature": 0.3, "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 1000},
+    "recommendation": {"provider_key": "deepseek", "model": "deepseek-chat", "temperature_enabled": true, "temperature": 0.2, "is_thinking": false, "max_tokens_enabled": true, "max_tokens": 500},
+    "paper_chat": {"provider_key": "deepseek", "model": "deepseek-reasoner", "temperature_enabled": false, "temperature": 0.4, "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 4000},
+    "paper_quiz": {"provider_key": "deepseek", "model": "deepseek-reasoner", "temperature_enabled": false, "temperature": 0.3, "is_thinking": true, "thinking_effort": "high", "max_tokens_enabled": true, "max_tokens": 3000}
   }
 }
 ```
@@ -375,7 +375,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `get_ai_task_config(task_key)` — 获取某个 AI 功能的实际供应商、模型和参数配置
 - `resolve_ai_task_config(task_key, task_config)` — 将已保存或未保存的功能路由草稿与供应商连接凭据合并并校验
 - `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存 PDF 元数据提取、基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的模型路由
-- `build_chat_completion_kwargs()` — 统一构建 Chat Completions 参数（思考模型会省略采样参数）
+- `build_chat_completion_kwargs()` — 统一构建 Chat Completions 参数；功能路由只支持可选 Temperature 和输出长度，未启用 Temperature 或使用思考模型时不发送 Temperature，其他采样参数不发送并交给模型采用默认行为
 - LLM 客户端必须通过 `analyzer.get_openai_client()` 创建，以复用全局代理配置并禁用环境变量代理
 - `normalize_provider_connection()` — 归一化供应商连接字段；`normalize_provider_config()` 仅用于合并后的实际调用配置
 - `get_prompt_profile()` / `get_prompt_profiles()` — 获取任务级 Prompt Profile；`get_prompts()` 保留旧接口兼容
@@ -509,9 +509,9 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 }
 ```
 
-供应商运行时配置只保存 `name`、`api_key`、`base_url` 和 `available_models`。模型、输出长度、采样参数以及思考模式全部保存在 `ai_tasks` 的具体功能路由中；旧版供应商推理字段会在读取时迁移到显式任务路由。
+供应商运行时配置只保存 `name`、`api_key`、`base_url` 和 `available_models`。模型、输出长度、Temperature 采样控制以及思考模式全部保存在 `ai_tasks` 的具体功能路由中；未启用 Temperature 时不发送该参数，其他采样参数不发送并采用模型默认行为。旧版供应商推理字段会在读取时迁移到显式任务路由。
 
-调用模型时必须通过 `build_chat_completion_kwargs()` 构建参数，不要在业务代码中直接固定传 `temperature` 或 `max_tokens`。
+调用模型时必须通过 `build_chat_completion_kwargs()` 构建参数，不要在业务代码中直接固定传 `temperature` 或 `max_tokens`；保持可选参数的省略语义，让模型在未配置采样控制时使用自身默认值。
 
 管理密码设置后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用。登录状态通过签名 cookie 持久保存 180 天，默认使用 `settings.json` 中的 `session_secret` 保证服务重启后仍有效；如果设置了 `FLASK_SECRET_KEY` 则优先使用环境变量。修改管理密码会使旧登录状态失效。`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
 

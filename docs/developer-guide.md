@@ -245,9 +245,9 @@ CREATE TABLE paper_quiz_attempts (
 
 | 配置项 | 说明 |
 |--------|------|
-| `settings_schema_version` | 设置结构版本；当前为 2 |
+| `settings_schema_version` | 设置结构版本；当前为 3 |
 | `providers` | 仅保存供应商连接（名称、API Key、Base URL、模型列表缓存） |
-| `ai_tasks` | PDF 元数据提取、基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的供应商/模型/参数路由 |
+| `ai_tasks` | PDF 元数据提取、基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的供应商/模型/Temperature/输出长度路由 |
 | `prompt_profiles` | 按 AI 功能拆分的稳定 system/instruction prompt |
 | `personalization` | 个性化推荐配置，当前包含 `research_interests` |
 | `webdav_backup` | WebDAV 云同步备份配置，包含地址、账号、远端目录、历史保留天数和最近备份状态 |
@@ -264,7 +264,7 @@ CREATE TABLE paper_quiz_attempts (
 
 > `source/settings/store.py` 通过递归 deep merge 保留新增顶层字段，不再需要顶层白名单；需要归一化、迁移或密码保留语义的字段仍须显式处理并补测试。
 
-AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成；测试未保存的路由草稿使用 `resolve_ai_task_config()`。OpenAI 兼容客户端统一通过 `analyzer.get_openai_client()` 创建以复用全局代理并禁用环境变量代理。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要把模型或推理参数写回供应商连接。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
+AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成；测试未保存的路由草稿使用 `resolve_ai_task_config()`。OpenAI 兼容客户端统一通过 `analyzer.get_openai_client()` 创建以复用全局代理并禁用环境变量代理。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要把模型或推理参数写回供应商连接。路由只保留可选 Temperature 控制和输出长度；未启用 Temperature 或使用思考模型时省略该参数，其他采样参数不发送并采用模型默认行为。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
 
 设置管理密码后，写接口和敏感设置读取接口需要登录；管理登录默认通过签名 cookie 持久保存 180 天，修改管理密码后旧登录状态失效。供应商列表接口只能返回脱敏后的 `api_key_masked`。
 

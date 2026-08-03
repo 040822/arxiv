@@ -110,24 +110,6 @@ def normalize_provider_config(config, key=None):
         config.get("temperature_enabled"),
         not normalized["is_thinking"],
     )
-    normalized["top_p"] = as_float(config.get("top_p"), DEFAULT_PROVIDER_OPTIONS["top_p"])
-    normalized["top_p_enabled"] = as_bool(config.get("top_p_enabled"), DEFAULT_PROVIDER_OPTIONS["top_p_enabled"])
-    normalized["presence_penalty"] = as_float(
-        config.get("presence_penalty"),
-        DEFAULT_PROVIDER_OPTIONS["presence_penalty"],
-    )
-    normalized["presence_penalty_enabled"] = as_bool(
-        config.get("presence_penalty_enabled"),
-        DEFAULT_PROVIDER_OPTIONS["presence_penalty_enabled"],
-    )
-    normalized["frequency_penalty"] = as_float(
-        config.get("frequency_penalty"),
-        DEFAULT_PROVIDER_OPTIONS["frequency_penalty"],
-    )
-    normalized["frequency_penalty_enabled"] = as_bool(
-        config.get("frequency_penalty_enabled"),
-        DEFAULT_PROVIDER_OPTIONS["frequency_penalty_enabled"],
-    )
 
     max_tokens = as_int(config.get("max_tokens"), DEFAULT_PROVIDER_OPTIONS["max_tokens"])
     normalized["max_tokens"] = max_tokens
@@ -203,7 +185,7 @@ def build_chat_completion_kwargs(provider, messages, token_limit_override=None, 
     统一构建 OpenAI 兼容 Chat Completions 请求参数。
 
     - 普通模型只发送显式启用的采样参数和 token 上限。
-    - 思考模型省略 temperature/top_p/presence_penalty/frequency_penalty。
+    - 思考模型省略所有采样参数。
     - 不同供应商的思考参数在这里做协议映射。
     """
     cfg = normalize_provider_config(provider)
@@ -239,12 +221,6 @@ def build_chat_completion_kwargs(provider, messages, token_limit_override=None, 
             extra_body["thinking"] = {"type": "disabled"}
         if cfg.get("temperature_enabled"):
             kwargs["temperature"] = cfg.get("temperature", DEFAULT_PROVIDER_OPTIONS["temperature"])
-        if cfg.get("top_p_enabled"):
-            kwargs["top_p"] = cfg.get("top_p", DEFAULT_PROVIDER_OPTIONS["top_p"])
-        if cfg.get("presence_penalty_enabled"):
-            kwargs["presence_penalty"] = cfg.get("presence_penalty", DEFAULT_PROVIDER_OPTIONS["presence_penalty"])
-        if cfg.get("frequency_penalty_enabled"):
-            kwargs["frequency_penalty"] = cfg.get("frequency_penalty", DEFAULT_PROVIDER_OPTIONS["frequency_penalty"])
 
     token_limit = token_limit_override
     if token_limit is None and cfg.get("max_tokens_enabled"):

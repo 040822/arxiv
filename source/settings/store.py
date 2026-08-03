@@ -84,7 +84,19 @@ from .thinking import (
 
 
 SETTINGS_PATH = os.path.join(DB_DIR, "settings.json")
-SETTINGS_SCHEMA_VERSION = 2
+SETTINGS_SCHEMA_VERSION = 3
+# Schema v2 already stored explicit provider/model task routes. Keep this
+# milestone separate from the current settings version so upgrading to v3
+# cannot accidentally re-infer those routes from the active provider.
+TASK_ROUTE_SCHEMA_VERSION = 2
+LEGACY_SAMPLING_FIELDS = frozenset({
+    "top_p",
+    "top_p_enabled",
+    "presence_penalty",
+    "presence_penalty_enabled",
+    "frequency_penalty",
+    "frequency_penalty_enabled",
+})
 
 
 def _ensure_dir():
@@ -104,6 +116,34 @@ def _deep_merge(defaults, overrides):
         else:
             merged[key] = json.loads(json.dumps(value))
     return merged
+
+
+def _drop_legacy_sampling_fields(config):
+    """Discard removed sampling controls from an incoming task route."""
+    return {
+        key: value
+        for key, value in dict(config or {}).items()
+        if key not in LEGACY_SAMPLING_FIELDS
+    }
+
+
+def _has_legacy_sampling_fields(data):
+    """Return whether removed sampling controls remain at a persisted config level."""
+    if not isinstance(data, dict):
+        return False
+    if any(field in data for field in LEGACY_SAMPLING_FIELDS):
+        return True
+    for section in ("providers", "ai_tasks"):
+        configs = data.get(section)
+        if not isinstance(configs, dict):
+            continue
+        if any(
+            isinstance(config, dict)
+            and any(field in config for field in LEGACY_SAMPLING_FIELDS)
+            for config in configs.values()
+        ):
+            return True
+    return False
 
 
 def _migrate_old_settings(data):
@@ -138,17 +178,17 @@ def _migrate_old_settings(data):
 
 def _migrate_provider_task_routes(data):
     """Move legacy provider inference defaults into explicit task routes."""
-    migrated = dict(data or {})
+    migrated = _drop_legacy_sampling_fields(data)
     providers = dict(migrated.get("providers") or {})
     active_provider = str(migrated.get("active_provider") or "").strip()
     if active_provider not in providers:
         active_provider = next(iter(providers), "")
 
     raw_tasks = dict(migrated.get("ai_tasks") or {})
-    current_schema = int(migrated.get("settings_schema_version") or 0) >= SETTINGS_SCHEMA_VERSION
+    current_schema = int(migrated.get("settings_schema_version") or 0) >= TASK_ROUTE_SCHEMA_VERSION
     tasks = {}
     for task_key in AI_TASK_KEYS:
-        raw_task = dict(raw_tasks.get(task_key) or {})
+        raw_task = _drop_legacy_sampling_fields(raw_tasks.get(task_key))
         if current_schema:
             task = {**DEFAULT_AI_TASK_OPTIONS[task_key], **raw_task}
             provider_key = str(
@@ -244,6 +284,12 @@ def load_settings():
             migrated.get("prompt_profiles", {}),
             migrated.get("prompts", {}),
         )
+        needs_persist = (
+            saved.get("settings_schema_version") != SETTINGS_SCHEMA_VERSION
+            or _has_legacy_sampling_fields(saved)
+        )
+        if needs_persist:
+            save_settings(merged)
         return merged
     except Exception as e:
         logger.error(f"Failed to load settings: {e}")
@@ -271,6 +317,11 @@ def save_settings(settings):
             key: normalize_provider_connection(config, key)
             for key, config in dict(settings.get("providers") or {}).items()
         }
+        settings["ai_tasks"] = _normalize_ai_tasks(
+            settings.get("ai_tasks", {}),
+            "",
+            settings.get("providers", {}),
+        )
         with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
         return True

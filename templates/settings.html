@@ -750,15 +750,8 @@
                     </div>
                     <div class="form-row">
                         <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'temperature-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'temperature')" ${cfg.temperature_enabled ? 'checked' : ''}> Temperature</label><input type="number" id="${taskFieldId(taskKey, 'temperature')}" min="0" max="2" step="0.1" value="${escapeHtml(cfg.temperature ?? 0.3)}"></div>
-                        <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'top-p-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'top-p')" ${cfg.top_p_enabled ? 'checked' : ''}> Top P</label><input type="number" id="${taskFieldId(taskKey, 'top-p')}" min="0" max="1" step="0.05" value="${escapeHtml(cfg.top_p ?? 1)}"></div>
                     </div>
-                    <p class="field-hint">非思考模型推荐：Temperature ${escapeHtml(meta.temperature)}；Top P 保持 1.0 且不发送。通常只调整其中一个。</p>
-                    <div class="form-row">
-                        <div class="form-group"><label title="按 token 是否已出现施加惩罚，正值鼓励引入新内容"><input type="checkbox" id="${taskFieldId(taskKey, 'presence-penalty-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'presence-penalty')" ${cfg.presence_penalty_enabled ? 'checked' : ''}> Presence Penalty</label><input type="number" id="${taskFieldId(taskKey, 'presence-penalty')}" min="-2" max="2" step="0.1" value="${escapeHtml(cfg.presence_penalty ?? 0)}"></div>
-                        <div class="form-group"><label title="按 token 出现次数累积惩罚，正值减少重复措辞"><input type="checkbox" id="${taskFieldId(taskKey, 'frequency-penalty-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'frequency-penalty')" ${cfg.frequency_penalty_enabled ? 'checked' : ''}> Frequency Penalty</label><input type="number" id="${taskFieldId(taskKey, 'frequency-penalty')}" min="-2" max="2" step="0.1" value="${escapeHtml(cfg.frequency_penalty ?? 0)}"></div>
-                    </div>
-                    <p class="field-hint">Penalty 参数默认关闭；部分兼容供应商会忽略它们。</p>
-                    <div id="${taskFieldId(taskKey, 'sampling-warning')}" class="field-hint"></div>
+                    <p class="field-hint">非思考模型推荐：Temperature ${escapeHtml(meta.temperature)}；其他采样行为采用模型默认。</p>
                     <div class="settings-actions"><button class="action-btn" type="button" onclick="refreshTaskModels('${taskKey}')">刷新模型列表</button><button class="action-btn" type="button" onclick="testAiTaskRoute('${taskKey}', this)">测试此路由</button></div>
                     <div id="${taskFieldId(taskKey, 'status')}" class="action-status"></div>
                 </div>`;
@@ -782,23 +775,12 @@
             const thinking = document.getElementById(taskFieldId(taskKey, 'thinking')).checked;
             const enabled = document.getElementById(taskFieldId(taskKey, `${name}-enabled`)).checked;
             document.getElementById(taskFieldId(taskKey, name)).disabled = thinking || !enabled;
-            updateTaskSamplingWarning(taskKey);
-        }
-
-        function updateTaskSamplingWarning(taskKey) {
-            const warning = document.getElementById(taskFieldId(taskKey, 'sampling-warning'));
-            if (!warning) return;
-            const temperature = document.getElementById(taskFieldId(taskKey, 'temperature-enabled')).checked;
-            const topP = document.getElementById(taskFieldId(taskKey, 'top-p-enabled')).checked;
-            warning.textContent = temperature && topP ? '⚠️ 不建议同时启用 Temperature 和 Top P。' : '';
         }
 
         function toggleTaskThinking(taskKey) {
             const thinking = document.getElementById(taskFieldId(taskKey, 'thinking')).checked;
-            for (const name of ['temperature', 'top-p', 'presence-penalty', 'frequency-penalty']) {
-                document.getElementById(taskFieldId(taskKey, `${name}-enabled`)).disabled = thinking;
-                toggleTaskSampling(taskKey, name);
-            }
+            document.getElementById(taskFieldId(taskKey, 'temperature-enabled')).disabled = thinking;
+            toggleTaskSampling(taskKey, 'temperature');
         }
 
         function readTaskConfig(taskKey) {
@@ -811,12 +793,6 @@
                 thinking_effort: document.getElementById(taskFieldId(taskKey, 'thinking-effort')).value,
                 temperature_enabled: document.getElementById(taskFieldId(taskKey, 'temperature-enabled')).checked,
                 temperature: parseFloat(document.getElementById(taskFieldId(taskKey, 'temperature')).value) || 0,
-                top_p_enabled: document.getElementById(taskFieldId(taskKey, 'top-p-enabled')).checked,
-                top_p: parseFloat(document.getElementById(taskFieldId(taskKey, 'top-p')).value) || 1,
-                presence_penalty_enabled: document.getElementById(taskFieldId(taskKey, 'presence-penalty-enabled')).checked,
-                presence_penalty: parseFloat(document.getElementById(taskFieldId(taskKey, 'presence-penalty')).value) || 0,
-                frequency_penalty_enabled: document.getElementById(taskFieldId(taskKey, 'frequency-penalty-enabled')).checked,
-                frequency_penalty: parseFloat(document.getElementById(taskFieldId(taskKey, 'frequency-penalty')).value) || 0,
             };
         }
 

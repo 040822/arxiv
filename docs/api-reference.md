@@ -525,7 +525,7 @@ POST /api/providers/models       # 从供应商 /models 接口获取模型列表
 
 `provider_key` 可选；传入后会优先复用已保存的 API Key/Base URL，并在成功获取后保存 `available_models`。
 
-供应商配置只保存 `name`、`api_key`、`base_url`、`available_models`。模型、输出长度、采样参数与思考模式均保存在功能模型路由。删除仍被任一功能路由引用的供应商会返回 HTTP 409 和引用功能列表。
+供应商配置只保存 `name`、`api_key`、`base_url`、`available_models`。模型、输出长度、Temperature 采样控制与思考模式均保存在功能模型路由。未启用 Temperature 时不发送该参数，其他采样参数不发送并采用模型默认行为。删除仍被任一功能路由引用的供应商会返回 HTTP 409 和引用功能列表。
 
 `GET /api/providers` 只返回 `api_key_masked`，不会返回完整 `api_key`。
 
@@ -665,7 +665,7 @@ POST 支持部分更新，缺失字段沿用当前配置；保存后立即重建
 - `paper_chat`：单篇论文自由讨论，复用稳定论文全文上下文
 - `paper_quiz`：主动问答练习、答案评分和苏格拉底追问，复用稳定论文全文上下文
 
-每个任务支持独立的 `provider_key`、`model`、`is_thinking`、`thinking_effort`、`max_tokens_enabled/max_tokens`、`temperature/top_p/presence_penalty/frequency_penalty` 及其启用开关。
+每个任务支持独立的 `provider_key`、`model`、`is_thinking`、`thinking_effort`、`temperature_enabled/temperature` 和 `max_tokens_enabled/max_tokens`。Temperature 未启用时省略该请求参数；其他采样参数不属于公共接口，也不会发送。
 
 ### 个性化推荐
 

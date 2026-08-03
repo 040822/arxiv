@@ -56,6 +56,27 @@ class ProviderRequestBuilderTests(unittest.TestCase):
         self.assertNotIn("max_tokens", kwargs)
         self.assertNotIn("max_completion_tokens", kwargs)
 
+    def test_regular_model_ignores_removed_sampling_fields(self):
+        kwargs = build_chat_completion_kwargs(
+            {
+                "base_url": "https://api.example.com/v1",
+                "model": "gpt-4o",
+                "temperature": 0.4,
+                "temperature_enabled": True,
+                "top_p": 0.2,
+                "top_p_enabled": True,
+                "presence_penalty": 0.4,
+                "presence_penalty_enabled": True,
+                "frequency_penalty": 0.6,
+                "frequency_penalty_enabled": True,
+            },
+            [{"role": "user", "content": "hi"}],
+        )
+
+        self.assertEqual(kwargs["temperature"], 0.4)
+        for field in ("top_p", "presence_penalty", "frequency_penalty"):
+            self.assertNotIn(field, kwargs)
+
     def test_thinking_model_omits_sampling_parameters(self):
         kwargs = build_chat_completion_kwargs(
             {
@@ -121,6 +142,245 @@ class ProviderRequestBuilderTests(unittest.TestCase):
 
 
 class AiTaskSettingsTests(unittest.TestCase):
+    def test_first_load_without_settings_file_returns_and_persists_schema_v3(self):
+        import settings
+
+        original_path = settings_store.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+
+                loaded = settings.load_settings()
+                with open(settings_store.SETTINGS_PATH, "r", encoding="utf-8") as f:
+                    persisted = json.load(f)
+
+            self.assertEqual(loaded["settings_schema_version"], 3)
+            self.assertEqual(persisted["settings_schema_version"], 3)
+        finally:
+            settings_store.SETTINGS_PATH = original_path
+
+    def test_v2_migration_persists_schema_and_prunes_legacy_sampling_fields(self):
+        import settings
+
+        original_path = settings_store.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "settings_schema_version": 2,
+                        "providers": {
+                            "route-a": {
+                                "name": "Route A",
+                                "api_key": "sk-a",
+                                "base_url": "https://api.example.com/v1",
+                                "available_models": ["model-a"],
+                            },
+                            "route-b": {
+                                "name": "Route B",
+                                "api_key": "sk-b",
+                                "base_url": "https://api.example.com/v1",
+                                "available_models": ["model-b"],
+                            },
+                        },
+                        "ai_tasks": {
+                            "basic_analysis": {
+                                "provider_key": "route-a",
+                                "model": "model-a",
+                                "temperature": 0.7,
+                                "temperature_enabled": True,
+                                "max_tokens": 4321,
+                                "max_tokens_enabled": True,
+                                "is_thinking": True,
+                                "thinking_effort": "high",
+                                "top_p": 0.2,
+                                "top_p_enabled": True,
+                                "presence_penalty": 0.4,
+                                "presence_penalty_enabled": True,
+                                "frequency_penalty": 0.6,
+                                "frequency_penalty_enabled": True,
+                            },
+                        },
+                    }, f)
+
+                loaded = settings.load_settings()
+                with open(settings_store.SETTINGS_PATH, "r", encoding="utf-8") as f:
+                    persisted = json.load(f)
+
+            route = loaded["ai_tasks"]["basic_analysis"]
+            persisted_route = persisted["ai_tasks"]["basic_analysis"]
+            self.assertEqual(loaded["settings_schema_version"], 3)
+            self.assertEqual(persisted["settings_schema_version"], 3)
+            for candidate in (route, persisted_route):
+                self.assertEqual(candidate["provider_key"], "route-a")
+                self.assertEqual(candidate["model"], "model-a")
+                self.assertEqual(candidate["temperature"], 0.7)
+                self.assertTrue(candidate["temperature_enabled"])
+                self.assertEqual(candidate["max_tokens"], 4321)
+                self.assertTrue(candidate["max_tokens_enabled"])
+                self.assertTrue(candidate["is_thinking"])
+                self.assertEqual(candidate["thinking_effort"], "high")
+                for field in (
+                    "top_p", "top_p_enabled",
+                    "presence_penalty", "presence_penalty_enabled",
+                    "frequency_penalty", "frequency_penalty_enabled",
+                ):
+                    self.assertNotIn(field, candidate)
+        finally:
+            settings_store.SETTINGS_PATH = original_path
+
+    def test_schema_v3_dirty_sampling_fields_are_pruned_and_persisted_at_all_levels(self):
+        import settings
+
+        legacy_fields = (
+            "top_p", "top_p_enabled",
+            "presence_penalty", "presence_penalty_enabled",
+            "frequency_penalty", "frequency_penalty_enabled",
+        )
+        legacy_values = {
+            "top_p": 0.2,
+            "top_p_enabled": True,
+            "presence_penalty": 0.4,
+            "presence_penalty_enabled": True,
+            "frequency_penalty": 0.6,
+            "frequency_penalty_enabled": True,
+        }
+        original_path = settings_store.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "settings_schema_version": 3,
+                        "custom_top_level": "keep-me",
+                        **legacy_values,
+                        "providers": {
+                            "route-a": {
+                                "name": "Route A",
+                                "api_key": "sk-a",
+                                "base_url": "https://api.example.com/v1",
+                                "available_models": ["model-a"],
+                                **legacy_values,
+                            },
+                        },
+                        "ai_tasks": {
+                            "basic_analysis": {
+                                "provider_key": "route-a",
+                                "model": "model-a",
+                                "temperature": 0.7,
+                                "temperature_enabled": True,
+                                "max_tokens": 4321,
+                                "max_tokens_enabled": True,
+                                "is_thinking": True,
+                                "thinking_effort": "high",
+                                **legacy_values,
+                            },
+                        },
+                    }, f)
+
+                loaded = settings.load_settings()
+                with open(settings_store.SETTINGS_PATH, "r", encoding="utf-8") as f:
+                    persisted = json.load(f)
+
+            loaded_route = loaded["ai_tasks"]["basic_analysis"]
+            persisted_route = persisted["ai_tasks"]["basic_analysis"]
+            for candidate in (loaded, persisted):
+                self.assertEqual(candidate["settings_schema_version"], 3)
+                self.assertEqual(candidate["custom_top_level"], "keep-me")
+                for field in legacy_fields:
+                    self.assertNotIn(field, candidate)
+                for field in legacy_fields:
+                    self.assertNotIn(field, candidate["providers"]["route-a"])
+
+            for candidate in (loaded_route, persisted_route):
+                self.assertEqual(candidate["provider_key"], "route-a")
+                self.assertEqual(candidate["model"], "model-a")
+                self.assertEqual(candidate["temperature"], 0.7)
+                self.assertTrue(candidate["temperature_enabled"])
+                self.assertEqual(candidate["max_tokens"], 4321)
+                self.assertTrue(candidate["max_tokens_enabled"])
+                self.assertTrue(candidate["is_thinking"])
+                self.assertEqual(candidate["thinking_effort"], "high")
+                for field in legacy_fields:
+                    self.assertNotIn(field, candidate)
+        finally:
+            settings_store.SETTINGS_PATH = original_path
+
+    def test_v2_drops_legacy_sampling_fields_without_rerouting_task(self):
+        import settings
+
+        original_dir = settings.DB_DIR
+        original_path = settings_store.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings.DB_DIR = tmp
+                settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+                with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "settings_schema_version": 2,
+                        "providers": {
+                            "route-a": {
+                                "name": "Route A",
+                                "api_key": "sk-a",
+                                "base_url": "https://api.example.com/v1",
+                                "available_models": ["model-a"],
+                            },
+                            "route-b": {
+                                "name": "Route B",
+                                "api_key": "sk-b",
+                                "base_url": "https://api.example.com/v1",
+                                "available_models": ["model-b"],
+                            },
+                        },
+                        "ai_tasks": {
+                            "basic_analysis": {
+                                "provider_key": "route-a",
+                                "model": "model-a",
+                                "temperature": 0.7,
+                                "temperature_enabled": True,
+                                "max_tokens": 4321,
+                                "max_tokens_enabled": True,
+                                "is_thinking": False,
+                                "thinking_effort": "low",
+                                "top_p": 0.2,
+                                "top_p_enabled": True,
+                                "presence_penalty": 0.4,
+                                "presence_penalty_enabled": True,
+                                "frequency_penalty": 0.6,
+                                "frequency_penalty_enabled": True,
+                            },
+                        },
+                    }, f)
+
+                loaded = settings.load_settings()
+                route = loaded["ai_tasks"]["basic_analysis"]
+                kwargs = build_chat_completion_kwargs({
+                    **route,
+                    **loaded["providers"][route["provider_key"]],
+                }, [{"role": "user", "content": "hi"}])
+
+            self.assertEqual(loaded["settings_schema_version"], 3)
+            self.assertEqual(route["provider_key"], "route-a")
+            self.assertEqual(route["model"], "model-a")
+            self.assertEqual(route["temperature"], 0.7)
+            self.assertTrue(route["temperature_enabled"])
+            self.assertEqual(route["max_tokens"], 4321)
+            self.assertTrue(route["max_tokens_enabled"])
+            self.assertFalse(route["is_thinking"])
+            self.assertEqual(route["thinking_effort"], "low")
+            self.assertEqual(kwargs["temperature"], 0.7)
+            self.assertEqual(kwargs["max_tokens"], 4321)
+            for field in (
+                "top_p", "top_p_enabled",
+                "presence_penalty", "presence_penalty_enabled",
+                "frequency_penalty", "frequency_penalty_enabled",
+            ):
+                self.assertNotIn(field, route)
+                self.assertNotIn(field, kwargs)
+        finally:
+            settings.DB_DIR = original_dir
+            settings_store.SETTINGS_PATH = original_path
+
     def test_legacy_provider_inference_fields_migrate_to_explicit_task_routes(self):
         import settings
 

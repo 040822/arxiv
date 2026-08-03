@@ -207,18 +207,6 @@ def _normalize_ai_task_config(task, task_key, active_provider, providers):
         "model": model,
         "temperature": max(0.0, min(2.0, as_float(task.get("temperature"), defaults["temperature"]))),
         "temperature_enabled": as_bool(task.get("temperature_enabled"), defaults["temperature_enabled"]),
-        "top_p": max(0.0, min(1.0, as_float(task.get("top_p"), defaults["top_p"]))),
-        "top_p_enabled": as_bool(task.get("top_p_enabled"), defaults["top_p_enabled"]),
-        "presence_penalty": max(-2.0, min(2.0, as_float(task.get("presence_penalty"), defaults["presence_penalty"]))),
-        "presence_penalty_enabled": as_bool(
-            task.get("presence_penalty_enabled"),
-            defaults["presence_penalty_enabled"],
-        ),
-        "frequency_penalty": max(-2.0, min(2.0, as_float(task.get("frequency_penalty"), defaults["frequency_penalty"]))),
-        "frequency_penalty_enabled": as_bool(
-            task.get("frequency_penalty_enabled"),
-            defaults["frequency_penalty_enabled"],
-        ),
         "max_tokens": max(1, min(200000, as_int(task.get("max_tokens"), defaults["max_tokens"]))),
         "max_tokens_enabled": as_bool(task.get("max_tokens_enabled"), defaults["max_tokens_enabled"]),
         "is_thinking": as_bool(task.get("is_thinking"), defaults["is_thinking"]),
