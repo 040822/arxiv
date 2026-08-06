@@ -42,6 +42,7 @@ from source.storage import (
     get_paper_quiz_question,
     get_paper_quiz_session_detail,
 )
+from .pages import _prepare_paper_for_view
 from .progress import get_progress, update_progress
 
 logger = logging.getLogger(__name__)

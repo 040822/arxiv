@@ -2,6 +2,13 @@
 
 ## 未发布
 
+### 长输入任务指令后置，修复 flash 模型深度阅读漏题
+- 深度阅读（`deep_reading`）与手动导入（`paper_import`）的消息顺序从 `system → instruction → 动态数据` 调整为 `system → 动态数据 → instruction`：PDF 全文可达数万 token，指令若放在全文之前会被长上下文“淹没”，flash 类模型会漏答部分问题（实测约 30% 概率只输出 Q1 或 Q6 一个条目，且 `finish_reason=stop` 无法用截断检测兜底）
+- 同输入实测：指令后置后 flash 深度阅读 4/4 完整输出 Q1-Q6（原结构 10 次中 3 次失败）；pro 模型两种顺序均稳定
+- 短输入任务（基础分析、个性化推荐、报告导读）保持 `system → instruction → 动态数据` 顺序，不存在淹没问题且可保留更长的稳定前缀缓存
+- 缓存代价：跨论文时丢失 instruction 约 654 字符的缓存命中（对 48k tokens 输入约 1%）；同论文重试/自动补全调用仍完整命中前缀缓存
+- 更新 `tests/test_ai_provider_config.py` 深度阅读消息顺序断言（动态数据在 `messages[1]`、instruction 在 `messages[2]`）
+
 ### 模型供应商与功能路由解耦
 - 模型供应商只管理 API Key、Base URL 与模型列表缓存；模型、输出长度、Temperature 采样控制和思考模式统一迁入各功能模型路由
 - 功能路由模型字段支持下拉建议与手动输入，并可按供应商刷新模型列表

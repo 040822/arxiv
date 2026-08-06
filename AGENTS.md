@@ -227,7 +227,7 @@ analyzer.analyze_pending_papers(limit, concurrency)
 analyzer.analyze_paper_full(paper_data)
   → get_ai_task_config("deep_reading") 获取深度阅读模型与参数
   → get_paper_full_text(max_chars=None) 下载 PDF 并提取全文（不截断）
-  → 稳定 Prompt 前缀 + 动态论文全文 JSON message
+  → system + 动态论文全文 JSON message + 稳定 instruction（长输入任务指令后置，见 7.4）
   → OpenAI chat.completions.create()
   → 解析 JSON 响应：{qa_analysis}
   → 按当前 Prompt 中的 Q 编号校验完整性；截断或缺题时最多自动续写一次
@@ -520,6 +520,7 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 - 旧版 `prompts.system_prompt/user_prompt` 保留为兼容字段，并映射到 `deep_reading`
 - 基础分析 Prompt Profile 可使用 `{tag_candidates}`、`{rating_criteria}`，并返回 `tags`、`rating`、`summary_cn`、`value_comment`；深度阅读只描述 Q&A 输出；论文标题、作者、摘要、PDF 全文由后端作为独立 JSON message 传入
 - 修改 AI 调用逻辑时不要重新把动态论文内容拼回稳定 instruction，否则会降低 prompt cache 命中率
+- 长输入任务（`deep_reading`、`paper_import`，输入含数万 token PDF 全文）的消息顺序固定为 `system → 动态论文全文 JSON message → 稳定 instruction`：指令放在长文本之后（输入末尾）可避免被上下文“淹没”导致 flash 类模型漏答；短输入任务（基础分析、推荐、报告导读）保持 `system → instruction → 动态数据` 以保留更长的稳定前缀缓存。两种顺序都由 `_build_task_messages()` 统一构建，不要手工拼消息
 - 深度阅读按质量优先读取完整 PDF 全文；基础分析通常只使用摘要，无摘要的手动论文可回退到 PDF 前 50000 字符
 - 深度阅读必须校验当前 Prompt 声明的所有 `### Qn:`；自动补全最多调用一次，补全后仍不完整时禁止覆盖已有 `qa_analysis`
 - 论文详情页和学习页的模型富文本统一通过 `static/rich_text.js` 的 `RichText.render()` / `RichText.renderMath()` 渲染，不要在模板中复制 Markdown 或清洗逻辑

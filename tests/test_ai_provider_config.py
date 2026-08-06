@@ -2299,9 +2299,10 @@ class AiCallRoutingTests(unittest.TestCase):
         full_text.assert_called_once_with("https://arxiv.org/pdf/2601.00001", "2601.00001", max_chars=None)
         messages, _, task_key = call.call_args.args
         self.assertEqual(task_key, "deep_reading")
-        for text in ('"tags"', '"rating"', '"summary_cn"', '"value_comment"', "{tag_candidates}", "{rating_criteria}"):
-            self.assertNotIn(text, messages[1]["content"])
-        self.assertIn('"paper_text": "FULL PDF TEXT"', messages[2]["content"])
+        self.assertIn('"paper_text": "FULL PDF TEXT"', messages[1]["content"])
+        self.assertEqual(messages[1]["role"], "user")
+        self.assertIn("### Q1:", messages[2]["content"])
+        self.assertEqual(messages[2]["role"], "user")
 
     def test_recommendation_uses_recommendation_task_and_interest_payload(self):
         paper = {
