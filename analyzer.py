@@ -243,15 +243,25 @@ def _render_instruction(instruction):
 
 
 def _build_task_messages(task_key, payload):
+    """
+    构建任务消息列表，包含稳定的 system + instruction 前缀和动态论文 JSON 数据。
+    
+    2026-08-06
+    对于深度阅读和手动导入任务，我们发现deepseek v4 flash会在原有的长文本前缀中“淹没”指令，导致漏答问题。为提升指令遵循率，我们将 instruction 放在动态数据之后。
+    其余任务通常无长文本数据（chat任务使用build_paper_learning_messages），所以说明 instruction 放在前面更符合直觉。
+    """
+    
     profile = get_prompt_profile(task_key)
-    return [
-        {"role": "system", "content": profile.get("system", "")},
-        {"role": "user", "content": _render_instruction(profile.get("instruction", ""))},
-        {
-            "role": "user",
-            "content": "动态输入数据（JSON，固定字段顺序）：\n" + json.dumps(payload, ensure_ascii=False, indent=2),
-        },
-    ]
+    system = {"role": "system", "content": profile.get("system", "")}
+    instruction = {"role": "user", "content": _render_instruction(profile.get("instruction", ""))}
+    data = {
+        "role": "user",
+        "content": "动态输入数据（JSON，固定字段顺序）：\n" + json.dumps(payload, ensure_ascii=False, indent=2),
+    }
+
+    if task_key in {"deep_reading", "paper_import"}:
+        return [system, data, instruction]
+    return [system, instruction, data]
 
 
 def _paper_context_payload(paper_data, text_info):
