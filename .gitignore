@@ -13,4 +13,5 @@ data/*.db
 data/pdf_cache/
 temp/*
 data/*.db-*
+data/migration_backups/*.db
 output/
