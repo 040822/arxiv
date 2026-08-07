@@ -1001,72 +1001,6 @@ class DummyHttpxClient:
 
 def install_import_stubs():
     os.environ.setdefault("FLASK_SECRET_KEY", "test-secret-key")
-    flask_mod = types.ModuleType("flask")
-
-    class FakeBlueprint:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def route(self, *args, **kwargs):
-            def decorator(func):
-                return func
-            return decorator
-
-        def before_app_request(self, func):
-            return func
-
-        def app_context_processor(self, func):
-            return func
-
-    class FakeFlask:
-        def __init__(self, *args, **kwargs):
-            self.secret_key = None
-            self.config = {}
-
-        def route(self, *args, **kwargs):
-            def decorator(func):
-                return func
-            return decorator
-
-        def before_request(self, func):
-            return func
-
-        def context_processor(self, func):
-            return func
-
-        def register_blueprint(self, blueprint):
-            pass
-
-        def run(self, *args, **kwargs):
-            pass
-
-    def jsonify(*args, **kwargs):
-        if args and kwargs:
-            return {"args": args, **kwargs}
-        if kwargs:
-            return kwargs
-        if len(args) == 1:
-            return args[0]
-        return list(args)
-
-    class FakeSession(dict):
-        permanent = False
-
-        def clear(self):
-            self.permanent = False
-            super().clear()
-
-    flask_mod.Flask = FakeFlask
-    flask_mod.Blueprint = FakeBlueprint
-    flask_mod.current_app = types.SimpleNamespace(secret_key="test-secret-key")
-    flask_mod.render_template = lambda *args, **kwargs: ""
-    flask_mod.request = types.SimpleNamespace(args={}, get_json=lambda: {})
-    flask_mod.jsonify = jsonify
-    flask_mod.Response = lambda *args, **kwargs: types.SimpleNamespace(args=args, kwargs=kwargs)
-    flask_mod.session = FakeSession()
-    flask_mod.redirect = lambda target: {"redirect": target}
-    flask_mod.url_for = lambda endpoint, **kwargs: "/" + endpoint
-    sys.modules.setdefault("flask", flask_mod)
 
     sched_mod = types.ModuleType("apscheduler.schedulers.background")
 
@@ -1101,6 +1035,44 @@ def install_import_stubs():
     openai_mod.OpenAI = DummyOpenAI
     openai_mod.DefaultHttpxClient = DummyHttpxClient
     sys.modules["openai"] = openai_mod
+    analyzer_mod = sys.modules.get("analyzer")
+    if analyzer_mod is not None:
+        analyzer_mod.OpenAI = DummyOpenAI
+        analyzer_mod.DefaultHttpxClient = DummyHttpxClient
+
+
+def _plain_jsonify(*args, **kwargs):
+    if args and kwargs:
+        return {"args": args, **kwargs}
+    if kwargs:
+        return kwargs
+    if len(args) == 1:
+        return args[0]
+    return list(args)
+
+
+_WEB_APP = None
+_WEB_APP_CONTEXT = None
+
+
+def setup_web_test_base():
+    global _WEB_APP, _WEB_APP_CONTEXT
+    _WEB_APP = web_application.app
+    _WEB_APP_CONTEXT = _WEB_APP.app_context()
+    _WEB_APP_CONTEXT.push()
+    for mod in (
+        web_auth, web_pages, web_papers_api, web_providers_api,
+        web_settings_api, web_tasks_api, web_learning_api,
+    ):
+        if mod is not None:
+            mod.jsonify = _plain_jsonify
+
+
+def teardown_web_test_base():
+    global _WEB_APP_CONTEXT
+    if _WEB_APP_CONTEXT is not None:
+        _WEB_APP_CONTEXT.pop()
+        _WEB_APP_CONTEXT = None
 
 
 class FakeRequest:
@@ -1144,6 +1116,11 @@ class ProviderEndpointTests(unittest.TestCase):
         cls.web_settings_api = web_settings_api
         cls.web_tasks_api = web_tasks_api
         cls.app_module = app_module
+        setup_web_test_base()
+
+    @classmethod
+    def tearDownClass(cls):
+        teardown_web_test_base()
 
     def tearDown(self):
         DummyOpenAI.models_error = None
@@ -1373,110 +1350,117 @@ class ProviderEndpointTests(unittest.TestCase):
 
     def test_auth_blocks_protected_api_when_not_logged_in(self):
         web_auth = self.web_auth
-        web_auth.session.clear()
-        web_auth.request = FakeRequest(
-            {},
-            endpoint="api_save_concurrency",
-            method="POST",
-            path="/api/settings/concurrency",
-        )
+        with _WEB_APP.test_request_context():
+            web_auth.session.clear()
+            web_auth.request = FakeRequest(
+                {},
+                endpoint="api_save_concurrency",
+                method="POST",
+                path="/api/settings/concurrency",
+            )
 
-        with patch.object(web_auth, "has_admin_password", return_value=True):
-            result, status = web_auth.require_auth_for_protected_routes()
+            with patch.object(web_auth, "has_admin_password", return_value=True):
+                result, status = web_auth.require_auth_for_protected_routes()
 
-        self.assertEqual(status, 401)
-        self.assertTrue(result["auth_required"])
+            self.assertEqual(status, 401)
+            self.assertTrue(result["auth_required"])
 
     def test_auth_login_sets_permanent_session_and_token(self):
         web_auth = self.web_auth
-        web_auth.session.clear()
-        web_auth.request = FakeRequest({"password": "secret"})
+        with _WEB_APP.test_request_context():
+            web_auth.session.clear()
+            web_auth.request = FakeRequest({"password": "secret"})
 
-        with patch.object(web_auth, "verify_admin_password", return_value=True), \
-             patch.object(web_auth, "get_admin_password", return_value="hash-v1"):
-            result = web_auth.api_auth_login()
+            with patch.object(web_auth, "verify_admin_password", return_value=True), \
+                 patch.object(web_auth, "get_admin_password", return_value="hash-v1"):
+                result = web_auth.api_auth_login()
 
-        self.assertEqual(result["status"], "ok")
-        self.assertTrue(web_auth.session.permanent)
-        self.assertTrue(web_auth.session["admin_authenticated"])
-        self.assertEqual(
-            web_auth.session["admin_auth_token"],
-            web_auth._admin_auth_token("hash-v1"),
-        )
+            self.assertEqual(result["status"], "ok")
+            self.assertTrue(web_auth.session.permanent)
+            self.assertTrue(web_auth.session["admin_authenticated"])
+            self.assertEqual(
+                web_auth.session["admin_auth_token"],
+                web_auth._admin_auth_token("hash-v1"),
+            )
 
     def test_auth_rejects_legacy_session_without_password_token(self):
         web_auth = self.web_auth
-        web_auth.session.clear()
-        web_auth.session["admin_authenticated"] = True
+        with _WEB_APP.test_request_context():
+            web_auth.session.clear()
+            web_auth.session["admin_authenticated"] = True
 
-        with patch.object(web_auth, "has_admin_password", return_value=True), \
-             patch.object(web_auth, "get_admin_password", return_value="hash-v1"):
-            self.assertFalse(web_auth.is_authenticated())
+            with patch.object(web_auth, "has_admin_password", return_value=True), \
+                 patch.object(web_auth, "get_admin_password", return_value="hash-v1"):
+                self.assertFalse(web_auth.is_authenticated())
 
     def test_auth_rejects_session_after_password_hash_changes(self):
         web_auth = self.web_auth
-        web_auth.session.clear()
-        web_auth.session["admin_authenticated"] = True
-        web_auth.session["admin_auth_token"] = web_auth._admin_auth_token("hash-v1")
+        with _WEB_APP.test_request_context():
+            web_auth.session.clear()
+            web_auth.session["admin_authenticated"] = True
+            web_auth.session["admin_auth_token"] = web_auth._admin_auth_token("hash-v1")
 
-        with patch.object(web_auth, "has_admin_password", return_value=True), \
-             patch.object(web_auth, "get_admin_password", return_value="hash-v2"):
-            self.assertFalse(web_auth.is_authenticated())
+            with patch.object(web_auth, "has_admin_password", return_value=True), \
+                 patch.object(web_auth, "get_admin_password", return_value="hash-v2"):
+                self.assertFalse(web_auth.is_authenticated())
 
     def test_set_admin_password_refreshes_current_session_token(self):
         web_auth = self.web_auth
-        web_auth.session.clear()
-        web_auth.session.permanent = True
-        web_auth.session["admin_authenticated"] = True
-        web_auth.session["admin_auth_token"] = web_auth._admin_auth_token("old-hash")
-        web_auth.request = FakeRequest({
-            "current_password": "old-secret",
-            "new_password": "new-secret",
-        })
+        with _WEB_APP.test_request_context():
+            web_auth.session.clear()
+            web_auth.session.permanent = True
+            web_auth.session["admin_authenticated"] = True
+            web_auth.session["admin_auth_token"] = web_auth._admin_auth_token("old-hash")
+            web_auth.request = FakeRequest({
+                "current_password": "old-secret",
+                "new_password": "new-secret",
+            })
 
-        with patch.object(web_auth, "has_admin_password", return_value=True), \
-             patch.object(web_auth, "verify_admin_password", return_value=True), \
-             patch.object(web_auth, "set_admin_password") as set_password, \
-             patch.object(web_auth, "get_admin_password", return_value="new-hash"):
-            result = web_auth.api_set_admin_password()
+            with patch.object(web_auth, "has_admin_password", return_value=True), \
+                 patch.object(web_auth, "verify_admin_password", return_value=True), \
+                 patch.object(web_auth, "set_admin_password") as set_password, \
+                 patch.object(web_auth, "get_admin_password", return_value="new-hash"):
+                result = web_auth.api_set_admin_password()
 
-        self.assertEqual(result["status"], "ok")
-        set_password.assert_called_once_with("new-secret")
-        self.assertTrue(web_auth.session.permanent)
-        self.assertTrue(web_auth.session["admin_authenticated"])
-        self.assertEqual(
-            web_auth.session["admin_auth_token"],
-            web_auth._admin_auth_token("new-hash"),
-        )
+            self.assertEqual(result["status"], "ok")
+            set_password.assert_called_once_with("new-secret")
+            self.assertTrue(web_auth.session.permanent)
+            self.assertTrue(web_auth.session["admin_authenticated"])
+            self.assertEqual(
+                web_auth.session["admin_auth_token"],
+                web_auth._admin_auth_token("new-hash"),
+            )
 
     def test_todo_add_remove_are_public_even_when_password_enabled(self):
         web_auth = self.web_auth
-        web_auth.session.clear()
+        with _WEB_APP.test_request_context():
+            web_auth.session.clear()
 
-        for endpoint, method in (("api_add_todo", "POST"), ("api_remove_todo", "DELETE")):
-            with self.subTest(endpoint=endpoint):
-                web_auth.request = FakeRequest(
-                    {},
-                    endpoint=endpoint,
-                    method=method,
-                    path="/api/paper/2601.00001/todo",
-                )
-                with patch.object(web_auth, "has_admin_password", return_value=True):
-                    self.assertIsNone(web_auth.require_auth_for_protected_routes())
+            for endpoint, method in (("api_add_todo", "POST"), ("api_remove_todo", "DELETE")):
+                with self.subTest(endpoint=endpoint):
+                    web_auth.request = FakeRequest(
+                        {},
+                        endpoint=endpoint,
+                        method=method,
+                        path="/api/paper/2601.00001/todo",
+                    )
+                    with patch.object(web_auth, "has_admin_password", return_value=True):
+                        self.assertIsNone(web_auth.require_auth_for_protected_routes())
 
     def test_promo_pages_are_public_even_when_password_enabled(self):
         web_auth = self.web_auth
-        web_auth.session.clear()
+        with _WEB_APP.test_request_context():
+            web_auth.session.clear()
 
-        for endpoint, path in (("about_page", "/about"), ("vision_page", "/vision")):
-            with self.subTest(endpoint=endpoint):
-                web_auth.request = FakeRequest(
-                    endpoint=endpoint,
-                    method="GET",
-                    path=path,
-                )
-                with patch.object(web_auth, "has_admin_password", return_value=True):
-                    self.assertIsNone(web_auth.require_auth_for_protected_routes())
+            for endpoint, path in (("about_page", "/about"), ("vision_page", "/vision")):
+                with self.subTest(endpoint=endpoint):
+                    web_auth.request = FakeRequest(
+                        endpoint=endpoint,
+                        method="GET",
+                        path=path,
+                    )
+                    with patch.object(web_auth, "has_admin_password", return_value=True):
+                        self.assertIsNone(web_auth.require_auth_for_protected_routes())
 
     def test_promo_page_routes_render_their_public_templates(self):
         app_module = self.app_module
@@ -1494,48 +1478,51 @@ class ProviderEndpointTests(unittest.TestCase):
 
     def test_todo_read_status_changes_still_require_login(self):
         web_auth = self.web_auth
-        web_auth.session.clear()
-        web_auth.request = FakeRequest(
-            {},
-            endpoint="api_mark_read",
-            method="POST",
-            path="/api/paper/2601.00001/todo/read",
-        )
+        with _WEB_APP.test_request_context():
+            web_auth.session.clear()
+            web_auth.request = FakeRequest(
+                {},
+                endpoint="api_mark_read",
+                method="POST",
+                path="/api/paper/2601.00001/todo/read",
+            )
 
-        with patch.object(web_auth, "has_admin_password", return_value=True):
-            result, status = web_auth.require_auth_for_protected_routes()
+            with patch.object(web_auth, "has_admin_password", return_value=True):
+                result, status = web_auth.require_auth_for_protected_routes()
 
-        self.assertEqual(status, 401)
-        self.assertTrue(result["auth_required"])
+            self.assertEqual(status, 401)
+            self.assertTrue(result["auth_required"])
 
     def test_learning_write_api_requires_login_when_password_enabled(self):
         web_auth = self.web_auth
-        web_auth.session.clear()
-        web_auth.request = FakeRequest(
-            {"message": "请解释这篇论文"},
-            endpoint="api_paper_chat_send",
-            method="POST",
-            path="/api/paper/2601.00001/chat/messages",
-        )
+        with _WEB_APP.test_request_context():
+            web_auth.session.clear()
+            web_auth.request = FakeRequest(
+                {"message": "请解释这篇论文"},
+                endpoint="api_paper_chat_send",
+                method="POST",
+                path="/api/paper/2601.00001/chat/messages",
+            )
 
-        with patch.object(web_auth, "has_admin_password", return_value=True):
-            result, status = web_auth.require_auth_for_protected_routes()
+            with patch.object(web_auth, "has_admin_password", return_value=True):
+                result, status = web_auth.require_auth_for_protected_routes()
 
-        self.assertEqual(status, 401)
-        self.assertTrue(result["auth_required"])
+            self.assertEqual(status, 401)
+            self.assertTrue(result["auth_required"])
 
     def test_clear_admin_password_requires_current_password(self):
         web_auth = self.web_auth
-        web_auth.request = FakeRequest({"current_password": "wrong"})
+        with _WEB_APP.test_request_context():
+            web_auth.request = FakeRequest({"current_password": "wrong"})
 
-        with patch.object(web_auth, "has_admin_password", return_value=True), \
-             patch.object(web_auth, "verify_admin_password", return_value=False), \
-             patch.object(web_auth, "set_admin_password") as set_password:
-            result, status = web_auth.api_clear_admin_password()
+            with patch.object(web_auth, "has_admin_password", return_value=True), \
+                 patch.object(web_auth, "verify_admin_password", return_value=False), \
+                 patch.object(web_auth, "set_admin_password") as set_password:
+                result, status = web_auth.api_clear_admin_password()
 
-        self.assertEqual(status, 403)
-        self.assertEqual(result["status"], "error")
-        set_password.assert_not_called()
+            self.assertEqual(status, 403)
+            self.assertEqual(result["status"], "error")
+            set_password.assert_not_called()
 
     def test_batch_analyze_uses_selected_papers(self):
         web_papers_api = self.web_papers_api
@@ -3034,6 +3021,7 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
         cls.main = main
         cls.pdf_reader = pdf_reader
         cls.settings = settings
+        setup_web_test_base()
 
     def test_api_papers_uses_saved_per_page_setting(self):
         web_papers_api.request = FakeRequest(args={"page": "2"})
@@ -4098,6 +4086,7 @@ class ScheduleRetryTests(unittest.TestCase):
         web_providers_api = importlib.import_module("source.web.providers_api")
         web_settings_api = importlib.import_module("source.web.settings_api")
         web_tasks_api = importlib.import_module("source.web.tasks_api")
+        setup_web_test_base()
         return app_module
 
     def test_schedule_api_saves_and_returns_fetch_retry_config(self):
