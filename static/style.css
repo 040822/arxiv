@@ -783,7 +783,6 @@ header h1 {
     color: #444;
     font-size: 0.9em;
     line-height: 1.7;
-    white-space: pre-wrap;
 }
 
 .qa-question p {
