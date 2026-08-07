@@ -4,6 +4,7 @@
 用法:
   python scripts/run_all_tests.py                 # 标准流程,失败即停
   python scripts/run_all_tests.py --quick         # 只跑 pytest 一次(日常快速验证)
+  python scripts/run_all_tests.py --cov           # pytest 阶段附带覆盖率表格(term-missing)
   python scripts/run_all_tests.py --shuffle-seed N   # 覆盖乱序种子(默认 42)
   python scripts/run_all_tests.py --verbose       # 失败时输出完整 traceback
 """
@@ -24,7 +25,19 @@ def test_modules():
     return sorted(p.stem for p in TESTS_DIR.glob("test_*.py"))
 
 
-def run_command(cmd, label, verbose=False):
+def extract_coverage_table(stdout):
+    """从 pytest --cov 输出中提取覆盖率表格(第一条长分隔线到末尾)。"""
+    lines = stdout.splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if line.startswith("-") and len(line) > 10),
+        None,
+    )
+    if start is None:
+        return None
+    return "\n".join(lines[start:])
+
+
+def run_command(cmd, label, verbose=False, cov=False):
     print(f"[{label}] $ {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     summary = "OK"
@@ -51,6 +64,10 @@ def run_command(cmd, label, verbose=False):
             match = re.search(r"(\d+) passed", result.stdout)
             if match:
                 count = f" ({match.group(1)} passed)"
+        if cov:
+            table = extract_coverage_table(result.stdout)
+            if table:
+                print(table)
     print(f"[{label}] {summary}{count}")
     return result.returncode
 
@@ -63,12 +80,14 @@ def run_unittest(modules=None, label="unittest", verbose=False):
     return run_command(cmd, label, verbose)
 
 
-def run_pytest(seed=None, label="pytest", verbose=False):
+def run_pytest(seed=None, label="pytest", verbose=False, cov=False):
     cmd = [sys.executable, "-m", "pytest"]
     if seed is not None:
         cmd.append(f"--randomly-seed={seed}")
+    if cov:
+        cmd += ["--cov=.", "--cov-report=term-missing"]
     cmd += ["-q", "-p", "no:cacheprovider", "tests/"]
-    return run_command(cmd, label, verbose)
+    return run_command(cmd, label, verbose, cov=cov)
 
 
 def run_shuffles(seed, verbose=False):
@@ -86,17 +105,18 @@ def run_shuffles(seed, verbose=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--quick", action="store_true", help="只跑 pytest 一次")
+    parser.add_argument("--cov", action="store_true", help="pytest 阶段附带覆盖率表格(term-missing)")
     parser.add_argument("--shuffle-seed", type=int, default=42, help="乱序种子(默认 42)")
     parser.add_argument("--verbose", action="store_true", help="失败时输出完整 traceback")
     args = parser.parse_args()
 
     steps = []
     if args.quick:
-        steps = [("pytest", lambda: run_pytest(args.shuffle_seed, verbose=args.verbose))]
+        steps = [("pytest", lambda: run_pytest(args.shuffle_seed, verbose=args.verbose, cov=args.cov))]
     else:
         steps = [
             ("unittest", lambda: run_unittest(verbose=args.verbose)),
-            ("pytest", lambda: run_pytest(args.shuffle_seed, verbose=args.verbose)),
+            ("pytest", lambda: run_pytest(args.shuffle_seed, verbose=args.verbose, cov=args.cov)),
             ("shuffle", lambda: run_shuffles(args.shuffle_seed, verbose=args.verbose)),
         ]
 
