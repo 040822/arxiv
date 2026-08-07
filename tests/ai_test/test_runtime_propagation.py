@@ -12,6 +12,7 @@ from .common import (
     install_import_stubs,
     setup_web_test_base,
 )
+from source.settings.normalize import _normalize_fetch_config
 
 
 web_papers_api = None
@@ -23,15 +24,11 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
         import app
         import analyzer
         import fetcher
-        import main
         import pdf_reader
-        import settings
         cls.app = app
         cls.analyzer = analyzer
         cls.fetcher = fetcher
-        cls.main = main
         cls.pdf_reader = pdf_reader
-        cls.settings = settings
         setup_web_test_base()
         global web_papers_api
         web_papers_api = common.web_papers_api
@@ -55,15 +52,6 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
 
         self.assertEqual(get_papers.call_args.kwargs["limit"], 10)
         self.assertEqual(get_papers.call_args.kwargs["offset"], 20)
-
-    def test_cli_analyze_uses_saved_concurrency(self):
-        with patch("database.init_db"), \
-             patch("settings.get_concurrency", return_value=7), \
-             patch("analyzer.analyze_pending_papers", return_value=3) as analyze, \
-             patch.object(self.main.logger, "info"):
-            self.main.run_analyze_only()
-
-        analyze.assert_called_once_with(limit=100, concurrency=7)
 
     def test_analyze_papers_fallback_uses_saved_concurrency(self):
         paper = {"id": 1, "arxiv_id": "2601.00001"}
@@ -125,7 +113,7 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
         })
 
     def test_fetch_config_is_normalized(self):
-        normalized = self.settings._normalize_fetch_config({
+        normalized = _normalize_fetch_config({
             "request_delay": "1",
             "batch_days": "999",
             "batch_delay": "9999",

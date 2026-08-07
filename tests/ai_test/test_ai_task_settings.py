@@ -7,20 +7,31 @@ import os
 import json
 import tempfile
 
-from settings import build_chat_completion_kwargs, validate_prompt_template
+from source.settings import (
+    DEFAULT_AI_TASK_OPTIONS,
+    build_chat_completion_kwargs,
+    get_ai_task_config,
+    get_research_interest_hash,
+    get_session_secret,
+    get_webdav_backup_config,
+    load_settings,
+    save_ai_tasks,
+    save_webdav_backup_config,
+    validate_prompt_template,
+)
+from source.settings.normalize import _normalize_prompt_profiles
 from source.settings import store as settings_store
 
 
 class AiTaskSettingsTests(unittest.TestCase):
     def test_first_load_without_settings_file_returns_and_persists_schema_v3(self):
-        import settings
 
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
 
-                loaded = settings.load_settings()
+                loaded = load_settings()
                 with open(settings_store.SETTINGS_PATH, "r", encoding="utf-8") as f:
                     persisted = json.load(f)
 
@@ -30,7 +41,6 @@ class AiTaskSettingsTests(unittest.TestCase):
             settings_store.SETTINGS_PATH = original_path
 
     def test_v2_migration_persists_schema_and_prunes_legacy_sampling_fields(self):
-        import settings
 
         original_path = settings_store.SETTINGS_PATH
         try:
@@ -73,7 +83,7 @@ class AiTaskSettingsTests(unittest.TestCase):
                         },
                     }, f)
 
-                loaded = settings.load_settings()
+                loaded = load_settings()
                 with open(settings_store.SETTINGS_PATH, "r", encoding="utf-8") as f:
                     persisted = json.load(f)
 
@@ -100,7 +110,6 @@ class AiTaskSettingsTests(unittest.TestCase):
             settings_store.SETTINGS_PATH = original_path
 
     def test_schema_v3_dirty_sampling_fields_are_pruned_and_persisted_at_all_levels(self):
-        import settings
 
         legacy_fields = (
             "top_p", "top_p_enabled",
@@ -148,7 +157,7 @@ class AiTaskSettingsTests(unittest.TestCase):
                         },
                     }, f)
 
-                loaded = settings.load_settings()
+                loaded = load_settings()
                 with open(settings_store.SETTINGS_PATH, "r", encoding="utf-8") as f:
                     persisted = json.load(f)
 
@@ -177,13 +186,10 @@ class AiTaskSettingsTests(unittest.TestCase):
             settings_store.SETTINGS_PATH = original_path
 
     def test_v2_drops_legacy_sampling_fields_without_rerouting_task(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
                 with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({
@@ -222,7 +228,7 @@ class AiTaskSettingsTests(unittest.TestCase):
                         },
                     }, f)
 
-                loaded = settings.load_settings()
+                loaded = load_settings()
                 route = loaded["ai_tasks"]["basic_analysis"]
                 kwargs = build_chat_completion_kwargs({
                     **route,
@@ -248,17 +254,13 @@ class AiTaskSettingsTests(unittest.TestCase):
                 self.assertNotIn(field, route)
                 self.assertNotIn(field, kwargs)
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_legacy_provider_inference_fields_migrate_to_explicit_task_routes(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
                 with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({
@@ -280,7 +282,7 @@ class AiTaskSettingsTests(unittest.TestCase):
                         },
                     }, f)
 
-                loaded = settings.load_settings()
+                loaded = load_settings()
 
             self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["provider_key"], "legacy")
             self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["model"], "legacy-model")
@@ -293,21 +295,17 @@ class AiTaskSettingsTests(unittest.TestCase):
                 "name", "api_key", "base_url", "available_models",
             })
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_ai_task_routes_reject_missing_provider_references(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
                 tasks = {
                     key: {**value, "provider_key": "demo", "model": "demo-model"}
-                    for key, value in settings.DEFAULT_AI_TASK_OPTIONS.items()
+                    for key, value in DEFAULT_AI_TASK_OPTIONS.items()
                 }
                 tasks["paper_import"]["provider_key"] = "missing"
                 with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
@@ -325,19 +323,15 @@ class AiTaskSettingsTests(unittest.TestCase):
                     }, f)
 
                 with self.assertRaisesRegex(ValueError, "PDF 元数据提取.*供应商不存在"):
-                    settings.save_ai_tasks(tasks)
+                    save_ai_tasks(tasks)
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_current_schema_load_preserves_invalid_routes_for_validation(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
                 with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({
@@ -355,21 +349,17 @@ class AiTaskSettingsTests(unittest.TestCase):
                         },
                     }, f)
 
-                loaded = settings.load_settings()
+                loaded = load_settings()
 
             self.assertEqual(loaded["ai_tasks"]["paper_import"]["provider_key"], "missing")
             self.assertEqual(loaded["ai_tasks"]["paper_import"]["model"], "")
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_legacy_settings_get_default_task_routes_and_profiles(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            settings.DB_DIR = tmp
             settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
             with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                 json.dump({
@@ -388,9 +378,8 @@ class AiTaskSettingsTests(unittest.TestCase):
                     },
                 }, f)
 
-            loaded = settings.load_settings()
+            loaded = load_settings()
 
-        settings.DB_DIR = original_dir
         settings_store.SETTINGS_PATH = original_path
 
         self.assertEqual(loaded["ai_tasks"]["basic_analysis"]["provider_key"], "cheap")
@@ -413,39 +402,32 @@ class AiTaskSettingsTests(unittest.TestCase):
         self.assertEqual(loaded["personalization"]["research_interests"], "")
 
     def test_load_settings_preserves_session_secret(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
                 with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({"session_secret": "stable-secret"}, f)
 
-                loaded = settings.load_settings()
+                loaded = load_settings()
 
             self.assertEqual(loaded["session_secret"], "stable-secret")
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_legacy_schedule_is_upgraded_to_full_daily_pipeline_defaults(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
                 with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({
                         "schedule": {"enabled": True, "hour": 8, "minute": 30},
                     }, f)
 
-                loaded = settings.load_settings()["schedule"]
+                loaded = load_settings()["schedule"]
 
             self.assertEqual(loaded["days_of_week"], ["mon", "tue", "wed", "thu", "fri", "sat", "sun"])
             self.assertEqual(loaded["fetch_days"], 3)
@@ -454,60 +436,48 @@ class AiTaskSettingsTests(unittest.TestCase):
             self.assertEqual(loaded["fetch_max_retries"], 20)
             self.assertEqual((loaded["hour"], loaded["minute"]), (8, 30))
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_get_session_secret_generates_and_persists_secret(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
 
-                secret = settings.get_session_secret()
+                secret = get_session_secret()
                 with open(settings_store.SETTINGS_PATH, "r", encoding="utf-8") as f:
                     saved = json.load(f)
 
             self.assertGreaterEqual(len(secret), 32)
             self.assertEqual(saved["session_secret"], secret)
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_personalization_config_is_trimmed_and_preserved(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
                 with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({
                         "personalization": {"research_interests": "  robot learning  "},
                     }, f)
 
-                loaded = settings.load_settings()
-                interest_hash = settings.get_research_interest_hash(loaded["personalization"]["research_interests"])
+                loaded = load_settings()
+                interest_hash = get_research_interest_hash(loaded["personalization"]["research_interests"])
 
             self.assertEqual(loaded["personalization"]["research_interests"], "robot learning")
             self.assertEqual(len(interest_hash), 64)
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_webdav_backup_config_is_preserved_and_masked(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
                 with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({
@@ -521,8 +491,8 @@ class AiTaskSettingsTests(unittest.TestCase):
                         },
                     }, f)
 
-                loaded = settings.load_settings()
-                masked = settings.get_webdav_backup_config(mask_password=True)
+                loaded = load_settings()
+                masked = get_webdav_backup_config(mask_password=True)
 
             self.assertTrue(loaded["webdav_backup"]["enabled"])
             self.assertEqual(loaded["webdav_backup"]["url"], "https://dav.example.com/root/")
@@ -532,17 +502,13 @@ class AiTaskSettingsTests(unittest.TestCase):
             self.assertNotIn("password", masked)
             self.assertEqual(masked["password_masked"], "******")
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_save_webdav_backup_config_preserves_existing_password_when_blank(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
                 with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump({
@@ -559,7 +525,7 @@ class AiTaskSettingsTests(unittest.TestCase):
                         },
                     }, f)
 
-                self.assertTrue(settings.save_webdav_backup_config({
+                self.assertTrue(save_webdav_backup_config({
                     "enabled": False,
                     "url": "https://dav.example.com/new",
                     "username": "bob",
@@ -567,7 +533,7 @@ class AiTaskSettingsTests(unittest.TestCase):
                     "remote_dir": "new",
                     "history_days": 5,
                 }))
-                saved = settings.load_settings()["webdav_backup"]
+                saved = load_settings()["webdav_backup"]
 
             self.assertFalse(saved["enabled"])
             self.assertEqual(saved["url"], "https://dav.example.com/new")
@@ -579,16 +545,12 @@ class AiTaskSettingsTests(unittest.TestCase):
             self.assertEqual(saved["last_success_at"], "2026-06-15 12:00:00")
             self.assertEqual(saved["last_uploaded_file"], "arxiv-backup-old.zip")
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_task_config_merges_provider_credentials_and_task_overrides(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            settings.DB_DIR = tmp
             settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
             with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                 json.dump({
@@ -620,9 +582,8 @@ class AiTaskSettingsTests(unittest.TestCase):
                     },
                 }, f)
 
-            cfg = settings.get_ai_task_config("deep_reading")
+            cfg = get_ai_task_config("deep_reading")
 
-        settings.DB_DIR = original_dir
         settings_store.SETTINGS_PATH = original_path
 
         self.assertEqual(cfg["api_key"], "sk-smart")
@@ -634,12 +595,9 @@ class AiTaskSettingsTests(unittest.TestCase):
         self.assertEqual(kwargs["max_tokens"], 6000)
 
     def test_recommendation_task_config_is_independent_route(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         with tempfile.TemporaryDirectory() as tmp:
-            settings.DB_DIR = tmp
             settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
             with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as f:
                 json.dump({
@@ -668,9 +626,8 @@ class AiTaskSettingsTests(unittest.TestCase):
                     },
                 }, f)
 
-            cfg = settings.get_ai_task_config("recommendation")
+            cfg = get_ai_task_config("recommendation")
 
-        settings.DB_DIR = original_dir
         settings_store.SETTINGS_PATH = original_path
 
         self.assertEqual(cfg["task_key"], "recommendation")
@@ -680,7 +637,6 @@ class AiTaskSettingsTests(unittest.TestCase):
         self.assertEqual(cfg["max_tokens"], 321)
 
     def test_legacy_deep_reading_prompt_migrates_to_qa_only(self):
-        import settings
 
         legacy_prompt = """请对论文内容进行深度阅读分析，按 Q&A 格式详细回答每个问题，然后给出标签、评级、中文摘要和价值评价。
 
@@ -699,7 +655,7 @@ class AiTaskSettingsTests(unittest.TestCase):
 
 {rating_criteria}
 """
-        profiles = settings._normalize_prompt_profiles({
+        profiles = _normalize_prompt_profiles({
             "deep_reading": {"system": "s", "instruction": legacy_prompt}
         })
         instruction = profiles["deep_reading"]["instruction"]
@@ -710,17 +666,15 @@ class AiTaskSettingsTests(unittest.TestCase):
             self.assertNotIn(text, instruction)
 
     def test_custom_deep_reading_prompt_is_preserved(self):
-        import settings
 
         custom_prompt = '请按我自己的结构返回 {"qa_analysis": "详细内容"}，并重点分析机器人实验。'
-        profiles = settings._normalize_prompt_profiles({
+        profiles = _normalize_prompt_profiles({
             "deep_reading": {"system": "s", "instruction": custom_prompt}
         })
 
         self.assertEqual(profiles["deep_reading"]["instruction"], custom_prompt)
 
     def test_weak_qa_only_prompt_migrates_to_strict_all_questions_prompt(self):
-        import settings
 
         weak_prompt = """请对论文内容进行深度阅读分析，只生成 Q&A 深度阅读内容。
 
@@ -733,7 +687,7 @@ class AiTaskSettingsTests(unittest.TestCase):
 重要要求：
 1. qa_analysis 中每个 Q&A 使用 Markdown 标题格式（### Qn: 问题）
 """
-        profiles = settings._normalize_prompt_profiles({
+        profiles = _normalize_prompt_profiles({
             "deep_reading": {"system": "s", "instruction": weak_prompt}
         })
         instruction = profiles["deep_reading"]["instruction"]

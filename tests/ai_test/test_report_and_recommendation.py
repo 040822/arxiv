@@ -8,20 +8,27 @@ import tempfile
 from unittest.mock import patch
 
 from source.storage import connection as db_connection
+from source.storage import (
+    get_papers_for_recommendation,
+    init_db,
+    insert_analysis,
+    insert_paper,
+    update_recommendation_result,
+)
+from source.reports import generate_report_content
 from source.reports import renderer as report_renderer
 
 
 class ReportAndRecommendationTests(unittest.TestCase):
     def test_report_generation_escapes_database_content(self):
-        import database
 
         original_dir = db_connection.DB_DIR
         original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
             db_connection.DB_DIR = tmp
             db_connection.DB_PATH = os.path.join(tmp, "papers.db")
-            database.init_db()
-            paper_id = database.insert_paper({
+            init_db()
+            paper_id = insert_paper({
                 "arxiv_id": "2601.00001",
                 "title": "<script>alert(1)</script>",
                 "authors": ["Alice <Admin>"],
@@ -33,7 +40,7 @@ class ReportAndRecommendationTests(unittest.TestCase):
                 "published_date": "2026-01-01",
                 "updated_date": "2026-01-01",
             })
-            database.insert_analysis(paper_id, {
+            insert_analysis(paper_id, {
                 "tags": ["<tag>"],
                 "summary_cn": "<img src=x onerror=alert(1)>",
                 "summary_en": "",
@@ -41,11 +48,11 @@ class ReportAndRecommendationTests(unittest.TestCase):
                 "value_comment": "<b>bad</b>",
                 "qa_analysis": "",
             })
-            database.update_recommendation_result(paper_id, 95, "<i>rec</i>", "hash-v1")
+            update_recommendation_result(paper_id, 95, "<i>rec</i>", "hash-v1")
 
             with patch.object(report_renderer, "get_personalization_config", return_value={"research_interests": "机器人基础模型\nVLA"}), \
                  patch.object(report_renderer, "get_research_interest_hash", return_value="hash-v1"):
-                content, _, _, _ = database.generate_report_content("2026-01-01")
+                content, _, _, _ = generate_report_content("2026-01-01")
 
         db_connection.DB_DIR = original_dir
         db_connection.DB_PATH = original_path
@@ -58,15 +65,14 @@ class ReportAndRecommendationTests(unittest.TestCase):
         self.assertNotIn("<i>", content)
 
     def test_recommendation_columns_update_and_report_sorting(self):
-        import database
 
         original_dir = db_connection.DB_DIR
         original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
             db_connection.DB_DIR = tmp
             db_connection.DB_PATH = os.path.join(tmp, "papers.db")
-            database.init_db()
-            high_rating_id = database.insert_paper({
+            init_db()
+            high_rating_id = insert_paper({
                 "arxiv_id": "2601.00001",
                 "title": "High Rating Low Interest",
                 "authors": ["Alice"],
@@ -78,7 +84,7 @@ class ReportAndRecommendationTests(unittest.TestCase):
                 "published_date": "2026-01-01",
                 "updated_date": "2026-01-01",
             })
-            high_interest_id = database.insert_paper({
+            high_interest_id = insert_paper({
                 "arxiv_id": "2601.00002",
                 "title": "Lower Rating High Interest",
                 "authors": ["Bob"],
@@ -90,7 +96,7 @@ class ReportAndRecommendationTests(unittest.TestCase):
                 "published_date": "2026-01-01",
                 "updated_date": "2026-01-01",
             })
-            database.insert_analysis(high_rating_id, {
+            insert_analysis(high_rating_id, {
                 "tags": ["Robot"],
                 "summary_cn": "摘要",
                 "summary_en": "",
@@ -98,7 +104,7 @@ class ReportAndRecommendationTests(unittest.TestCase):
                 "value_comment": "高分",
                 "qa_analysis": "",
             })
-            database.insert_analysis(high_interest_id, {
+            insert_analysis(high_interest_id, {
                 "tags": ["VLA"],
                 "summary_cn": "高兴趣中文摘要",
                 "summary_en": "",
@@ -106,12 +112,12 @@ class ReportAndRecommendationTests(unittest.TestCase):
                 "value_comment": "相关",
                 "qa_analysis": "",
             })
-            self.assertTrue(database.update_recommendation_result(high_rating_id, 20, "弱相关", "hash-v1"))
-            self.assertTrue(database.update_recommendation_result(high_interest_id, 95, "强相关", "hash-v1"))
+            self.assertTrue(update_recommendation_result(high_rating_id, 20, "弱相关", "hash-v1"))
+            self.assertTrue(update_recommendation_result(high_interest_id, 95, "强相关", "hash-v1"))
 
             with patch.object(report_renderer, "get_personalization_config", return_value={"research_interests": "机器人基础模型\nVLA"}), \
                  patch.object(report_renderer, "get_research_interest_hash", return_value="hash-v1"):
-                content, _, _, _ = database.generate_report_content("2026-01-01")
+                content, _, _, _ = generate_report_content("2026-01-01")
 
         db_connection.DB_DIR = original_dir
         db_connection.DB_PATH = original_path
@@ -128,15 +134,14 @@ class ReportAndRecommendationTests(unittest.TestCase):
         self.assertLess(content.index("Lower Rating High Interest"), content.index("High Rating Low Interest"))
 
     def test_recommendation_candidates_require_existing_analysis(self):
-        import database
 
         original_dir = db_connection.DB_DIR
         original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
             db_connection.DB_DIR = tmp
             db_connection.DB_PATH = os.path.join(tmp, "papers.db")
-            database.init_db()
-            unanalyzed_id = database.insert_paper({
+            init_db()
+            unanalyzed_id = insert_paper({
                 "arxiv_id": "2601.00003",
                 "title": "Unanalyzed",
                 "authors": ["Alice"],
@@ -148,7 +153,7 @@ class ReportAndRecommendationTests(unittest.TestCase):
                 "published_date": "2026-01-01",
                 "updated_date": "2026-01-01",
             })
-            analyzed_id = database.insert_paper({
+            analyzed_id = insert_paper({
                 "arxiv_id": "2601.00004",
                 "title": "Analyzed",
                 "authors": ["Bob"],
@@ -160,7 +165,7 @@ class ReportAndRecommendationTests(unittest.TestCase):
                 "published_date": "2026-01-01",
                 "updated_date": "2026-01-01",
             })
-            database.insert_analysis(analyzed_id, {
+            insert_analysis(analyzed_id, {
                 "tags": ["VLA"],
                 "summary_cn": "摘要",
                 "summary_en": "",
@@ -169,7 +174,7 @@ class ReportAndRecommendationTests(unittest.TestCase):
                 "qa_analysis": "",
             })
 
-            candidates = database.get_papers_for_recommendation(limit=10, date="2026-01-01", interest_hash="hash-v1")
+            candidates = get_papers_for_recommendation(limit=10, date="2026-01-01", interest_hash="hash-v1")
 
         db_connection.DB_DIR = original_dir
         db_connection.DB_PATH = original_path

@@ -30,9 +30,7 @@ web_tasks_api = None
 
 class ScheduleRetryTests(unittest.TestCase):
     def import_app_with_temp_settings(self, tmp):
-        import settings
 
-        settings.DB_DIR = tmp
         settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
         sys.modules.pop("app", None)
         app_module = importlib.import_module("app")
@@ -53,9 +51,7 @@ class ScheduleRetryTests(unittest.TestCase):
         return app_module
 
     def test_schedule_api_saves_and_returns_fetch_retry_config(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -82,13 +78,10 @@ class ScheduleRetryTests(unittest.TestCase):
             self.assertEqual(data["fetch_max_retries"], 25)
         finally:
             sys.modules.pop("app", None)
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_daily_fetch_retries_then_succeeds(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -115,13 +108,10 @@ class ScheduleRetryTests(unittest.TestCase):
             self.assertGreaterEqual(step_mock.call_count, 2)
         finally:
             sys.modules.pop("app", None)
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_daily_fetch_raises_after_max_retries(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -141,13 +131,10 @@ class ScheduleRetryTests(unittest.TestCase):
             self.assertEqual(sleep_mock.call_count, 2)
         finally:
             sys.modules.pop("app", None)
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_daily_fetch_can_disable_retries(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -167,7 +154,6 @@ class ScheduleRetryTests(unittest.TestCase):
             sleep_mock.assert_not_called()
         finally:
             sys.modules.pop("app", None)
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
 

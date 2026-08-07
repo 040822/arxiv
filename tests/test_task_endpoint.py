@@ -4,7 +4,7 @@ import unittest
 
 from flask import Flask
 
-import database
+from source.storage import get_task_logs, init_db
 from source.storage import connection as db_connection
 from source.web.task_endpoint import TaskEndpointResult, task_endpoint
 
@@ -16,7 +16,7 @@ class TaskEndpointTests(unittest.TestCase):
         self.original_db_path = db_connection.DB_PATH
         db_connection.DB_DIR = self.tmp.name
         db_connection.DB_PATH = os.path.join(self.tmp.name, "papers.db")
-        database.init_db()
+        init_db()
         self.app = Flask(__name__)
 
     def tearDown(self):
@@ -35,7 +35,7 @@ class TaskEndpointTests(unittest.TestCase):
             )
 
         response = self.app.test_client().post("/success")
-        logs, total = database.get_task_logs(task_name="sample")
+        logs, total = get_task_logs(task_name="sample")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {
@@ -60,7 +60,7 @@ class TaskEndpointTests(unittest.TestCase):
             )
 
         response = self.app.test_client().post("/expected-error")
-        logs, total = database.get_task_logs(task_name="sample")
+        logs, total = get_task_logs(task_name="sample")
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json(), {
@@ -79,7 +79,7 @@ class TaskEndpointTests(unittest.TestCase):
             raise RuntimeError("boom")
 
         response = self.app.test_client().post("/exception")
-        logs, total = database.get_task_logs(task_name="sample")
+        logs, total = get_task_logs(task_name="sample")
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.get_json(), {
@@ -98,7 +98,7 @@ class TaskEndpointTests(unittest.TestCase):
             return {"status": "ok"}
 
         response = self.app.test_client().post("/invalid-result")
-        logs, total = database.get_task_logs(task_name="sample")
+        logs, total = get_task_logs(task_name="sample")
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(total, 1)

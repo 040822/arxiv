@@ -22,8 +22,8 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from config import ARXIV_CATEGORIES, MAX_PAPERS_PER_CATEGORY
-from database import paper_exists, insert_paper
-from settings import get_proxy_config, get_fetch_config
+from source.storage import paper_exists, insert_paper
+from source.settings import get_proxy_config, get_fetch_config
 
 # 模块级日志记录器
 logger = logging.getLogger(__name__)
@@ -558,7 +558,7 @@ def fetch_paper_by_id(arxiv_id):
         # 检查数据库中是否已存在
         if paper_exists(real_id):
             logger.info(f"Paper already exists: {real_id}")
-            from database import get_paper_by_arxiv_id
+            from source.storage import get_paper_by_arxiv_id
             return get_paper_by_arxiv_id(real_id)
 
         # 格式化日期

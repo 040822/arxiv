@@ -32,8 +32,6 @@
 ```
 arxiv/
 ├── config.py           # 硬编码配置（分类、标签、路径、延迟参数）
-├── settings.py         # source/settings 的兼容 shim
-├── database.py         # source/storage + source/reports 的兼容 shim
 ├── fetcher.py          # arXiv API 论文抓取（支持分批）
 ├── analyzer.py         # AI 分析与论文学习对话/问答
 ├── backup.py           # WebDAV 云同步备份
@@ -41,7 +39,6 @@ arxiv/
 ├── pdf_reader.py       # PDF 下载与文本提取（令牌桶限速）
 ├── app.py              # source/web 的启动兼容 shim
 ├── source/             # settings/storage/reports/pipeline/web 业务包
-├── main.py             # CLI 入口（fetch/analyze/run）
 ├── requirements.txt    # Python 依赖
 ├── templates/          # Jinja2 HTML 模板
 │   ├── index.html      # 首页（每日论文）
@@ -239,7 +236,7 @@ CREATE TABLE paper_quiz_attempts (
 | `FETCH_BATCH_DELAY` | 批次间隔 |
 | `PDF_DOWNLOAD_RATE/CAPACITY` | PDF 下载限速 |
 
-### source/settings — 运行时配置（根 `settings.py` 兼容导出）
+### source/settings — 运行时配置
 
 通过 Web 设置页可修改，存储在 `data/settings.json`：
 

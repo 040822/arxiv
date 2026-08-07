@@ -63,18 +63,10 @@ pip install -r requirements.txt
 
 ### 3. 运行
 
-**CLI 完整流程**（抓取 → 分析 → 推荐评分）：
+**抓取与分析**（原 CLI 能力，现以 Web 为唯一入口）：
 
-```bash
-python main.py
-```
-
-**分步执行**：
-
-```bash
-python main.py fetch       # 仅抓取新论文
-python main.py analyze     # 仅分析未处理的论文
-```
+- 页面：[`/tasks`](http://localhost:5000/tasks)（论文处理页）
+- API：`POST /api/fetch`（仅抓取）、`POST /api/analyze`（仅分析）、`POST /api/run`（完整流程）
 
 **启动 Web 服务**（含每日定时任务）：
 
@@ -102,9 +94,7 @@ journalctl -u arxiv-paper.service -f
 
 ```
 ├── config.py           # 硬编码配置（分类、标签候选、路径、默认值）
-├── main.py             # CLI 入口，支持 fetch/analyze/run
 ├── app.py              # Flask Web 服务 + APScheduler 定时任务
-├── database.py         # SQLite 数据库操作
 ├── fetcher.py          # arXiv API 论文抓取
 ├── analyzer.py         # OpenAI API 论文分析（标签/翻译/摘要/简评）
 ├── templates/          # Flask HTML 模板

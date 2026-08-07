@@ -22,9 +22,7 @@
 | 文件 | 行数 | 职责 | 修改频率 |
 |------|------|------|----------|
 | `config.py` | ~96 | 硬编码配置（分类、标签、路径、延迟） | 低 |
-| `settings.py` | 9 | `source.settings` 兼容 shim | 低 |
 | `source/settings/*` | 8 个模块 | 值转换、默认值、归一化、思考协议、store、供应商、Prompt、运行时配置 | 中 |
-| `database.py` | 8 | `source.storage` / `source.reports` 兼容 shim | 低 |
 | `source/storage/*` | 10 个模块 | SQLite 托管连接、顺序迁移/快照、论文、分析、日志、报告与学习记录 | 中 |
 | `fetcher.py` | ~343 | arXiv 论文抓取 | 中 |
 | `analyzer.py` | ~204 | AI 分析（基础/完整） | 中 |
@@ -32,7 +30,6 @@
 | `app.py` | 14 | `source.web` 启动兼容 shim | 低 |
 | `source/web/*` | 9 个模块 | Blueprint、鉴权、页面/API 与进度 | 高 |
 | `source/pipeline/*` | 3 个模块 | 定时/手动组合流水线与 scheduler | 中 |
-| `main.py` | ~97 | CLI 入口 | 低 |
 | `templates/*.html` | ~10+ 文件 | 前端页面 | 高 |
 | `static/style.css` | ~1860 | 全局样式 | 中 |
 

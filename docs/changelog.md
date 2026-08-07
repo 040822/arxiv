@@ -2,6 +2,13 @@
 
 ## 未发布
 
+### 删除根兼容模块（4.1 第 1A 轮）
+- 删除 `main.py`、`settings.py`、`database.py` 三个根兼容模块，不保留转发 shim；CLI（fetch/analyze/run）不再提供，抓取、分析、推荐评分以 Web `/tasks` 与 `/api/fetch`、`/api/analyze`、`/api/run` 为唯一入口
+- 5 个根模块（`analyzer.py`/`fetcher.py`/`pdf_reader.py`/`email_report.py`/`backup.py`）的 shim 导入全部改写为 `source.settings` / `source.storage` 正式路径；`source.web`/`source.pipeline` 等业务包不受影响
+- 15 个测试文件改导入 `source.*`；删除 2 个依赖 CLI 的测试（`LegacyRemovalTests`、`test_cli_analyze_uses_saved_concurrency`，行为均有等价覆盖）；移除测试中 `settings.DB_DIR` 死赋值
+- 新增 `tests/test_root_boundaries.py` 边界测试：根目录 `*.py` 仅允许正式入口与 1B 待迁模块，AST 断言源码不再导入旧根模块
+- 活跃文档与 `templates/index.html` 空态提示同步收口，不再指导运行 `python main.py`
+
 ### Q20 测试巨石拆分
 - `tests/test_ai_provider_config.py`（4224 行 / 143 个方法）按功能拆至 `tests/ai_test/`：17 个测试文件 + 共享基座 `tests/ai_test/common.py`（FakeArgs/FakeRequest/DummyOpenAI/DummyHttpxClient/install_import_stubs/setup_web_test_base 与 web/pipeline 模块引用）
 - 拆分类命名：`ProviderApiTests`/`AuthApiTests`/`PapersApiTests`/`SettingsTasksApiTests`/`PipelineTests`、`PromptValidationTests`/`ReportAndRecommendationTests`/`RatingMigrationTests`/`AiUsageAndLearningTests`；其余 10 个类整体平移保留原名

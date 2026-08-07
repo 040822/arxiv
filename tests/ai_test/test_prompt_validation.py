@@ -4,7 +4,7 @@ test_prompt_validation.py — 由 tests/test_ai_provider_config.py 拆分迁入�
 
 import unittest
 
-from settings import build_chat_completion_kwargs, validate_prompt_template
+from source.settings import build_chat_completion_kwargs, validate_prompt_template
 
 
 class PromptValidationTests(unittest.TestCase):

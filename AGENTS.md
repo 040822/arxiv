@@ -27,8 +27,6 @@
 ```
 arxiv/
 ├── config.py           # 硬编码配置（分类、标签候选、路径）
-├── settings.py         # 运行时配置兼容 shim（实现位于 source/settings/）
-├── database.py         # SQLite 操作兼容 shim（实现位于 source/storage/）
 ├── fetcher.py          # arXiv API 论文抓取（去重、按分类拉取）
 ├── analyzer.py         # AI 分析与论文学习逻辑（PDF全文、Q&A、对话、问答反馈）
 ├── backup.py           # WebDAV 云同步备份（SQLite 快照、zip 打包、上传/清理）
@@ -42,7 +40,6 @@ arxiv/
 │   ├── reports/        # Web 日报 HTML 渲染
 │   ├── pipeline/       # 定时/手动组合流水线与 APScheduler
 │   └── web/            # Flask application assembly、Blueprint 路由（含 import_api）、鉴权与进度
-├── main.py             # CLI 入口（fetch/analyze/run）
 ├── requirements.txt    # Python 依赖
 ├── README.md           # 用户文档
 ├── AGENTS.md           # 本文件（AI维护文档）
@@ -369,7 +366,7 @@ APScheduler cron(day_of_week, hour, minute)
 }
 ```
 
-**source/settings 公共函数（根 settings.py 兼容导出）:**
+**source/settings 公共函数:**
 - `load_settings()` / `save_settings()` — 读写JSON（含自动迁移）
 - `get_ai_config()` — 兼容接口，返回 `basic_analysis` 功能路由的实际调用配置
 - `get_ai_task_config(task_key)` — 获取某个 AI 功能的实际供应商、模型和参数配置
@@ -552,17 +549,10 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 # 启动服务
 python app.py
 
-# CLI 执行抓取、分析和推荐评分
-python main.py
-
-# 仅抓取
-python main.py fetch
-
-# 仅分析
-python main.py analyze
+# 抓取 / 分析 / 推荐评分：Web 页面 /tasks 或 API POST /api/fetch、/api/analyze、/api/run（原 CLI 能力入口）
 
 # 查看数据库状态
-python -c "from database import *; init_db(); print(get_paper_count(), 'papers,', get_analyzed_count(), 'analyzed')"
+python -c "from source.storage import *; init_db(); print(get_paper_count(), 'papers,', get_analyzed_count(), 'analyzed')"
 
 # 运行测试（统一入口，需在仓库根目录；测试用相对路径读 templates/）
 python scripts/run_all_tests.py         # 标准流程：unittest + pytest(随机顺序) + 3 次模块乱序，失败即停

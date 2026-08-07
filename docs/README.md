@@ -41,14 +41,11 @@ python app.py
 ```
 arxiv/
 ├── config.py           # 硬编码配置（分类、标签、路径）
-├── settings.py         # 运行时配置（JSON：供应商、prompt）
-├── database.py         # SQLite 数据库操作
 ├── fetcher.py          # arXiv API 论文抓取
 ├── analyzer.py         # AI 分析（基础/完整）
 ├── backup.py           # WebDAV 云同步备份
 ├── pdf_reader.py       # PDF 下载与文本提取
 ├── app.py              # Flask Web 服务 + 定时任务
-├── main.py             # CLI 入口
 ├── templates/          # Jinja2 HTML 模板
 ├── static/style.css    # 全局样式
 ├── data/               # 运行时数据（不提交 git）

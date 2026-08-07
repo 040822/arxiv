@@ -4,8 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import settings
-from source.settings import store
+from source.settings import load_settings, store
 
 
 class SettingsMergeTests(unittest.TestCase):
@@ -30,7 +29,7 @@ class SettingsMergeTests(unittest.TestCase):
                 }, handle)
 
             with patch.object(store, "SETTINGS_PATH", path):
-                loaded = settings.load_settings()
+                loaded = load_settings()
 
         self.assertEqual(loaded["future_feature"], {
             "enabled": True,
@@ -50,7 +49,7 @@ class SettingsMergeTests(unittest.TestCase):
                 }, handle)
 
             with patch.object(store, "SETTINGS_PATH", path):
-                loaded = settings.load_settings()
+                loaded = load_settings()
 
         self.assertEqual(loaded["future_feature"], {"enabled": True})
         self.assertEqual(loaded["providers"]["deepseek"]["api_key"], "legacy-secret")

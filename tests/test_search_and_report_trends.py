@@ -1,11 +1,13 @@
 import os
-import io
 import tempfile
 import unittest
-from contextlib import redirect_stdout
 from unittest.mock import patch
 
-import database
+from source.reports import generate_report_content
+from source.storage import (
+    get_report_trends, hide_paper, init_db, insert_analysis, insert_paper,
+    search_papers, update_analysis, update_recommendation_result,
+)
 from source.storage import connection as db_connection
 from source.reports import renderer as report_renderer
 
@@ -17,7 +19,7 @@ class DatabaseTestCase(unittest.TestCase):
         self.original_db_path = db_connection.DB_PATH
         db_connection.DB_DIR = self.tmp.name
         db_connection.DB_PATH = os.path.join(self.tmp.name, "papers.db")
-        database.init_db()
+        init_db()
 
     def tearDown(self):
         db_connection.DB_DIR = self.original_db_dir
@@ -26,7 +28,7 @@ class DatabaseTestCase(unittest.TestCase):
 
     def add_paper(self, arxiv_id, title, abstract="abstract", published_date="2026-07-10", tags=None,
                   summary_cn="中文摘要", qa_analysis=""):
-        paper_id = database.insert_paper({
+        paper_id = insert_paper({
             "arxiv_id": arxiv_id,
             "title": title,
             "authors": ["Alice"],
@@ -38,7 +40,7 @@ class DatabaseTestCase(unittest.TestCase):
             "published_date": published_date,
             "updated_date": published_date,
         })
-        database.insert_analysis(paper_id, {
+        insert_analysis(paper_id, {
             "tags": tags or [],
             "summary_cn": summary_cn,
             "summary_en": "",
@@ -54,7 +56,7 @@ class SearchPapersTests(DatabaseTestCase):
         self.add_paper("2607.00001", "Dexterous Policy", tags=["World Model"])
         self.add_paper("2607.00002", "Dexterous Baseline", tags=["Imitation Learning"])
 
-        results = database.search_papers("dexterous world", limit=50)
+        results = search_papers("dexterous world", limit=50)
 
         self.assertEqual([paper["arxiv_id"] for paper in results], ["2607.00001"])
 
@@ -65,7 +67,7 @@ class SearchPapersTests(DatabaseTestCase):
             conn.execute("UPDATE analysis SET tags = ? WHERE paper_id = ?", ("{}", paper_id))
 
         with self.assertLogs("source.storage.row_mapping", level="WARNING"):
-            results = database.search_papers("corrupt", limit=50)
+            results = search_papers("corrupt", limit=50)
 
         self.assertEqual(results[0]["authors"], [])
         self.assertEqual(results[0]["tags"], [])
@@ -79,10 +81,10 @@ class SearchPapersTests(DatabaseTestCase):
             abstract="A world model baseline.",
             tags=["Planning"],
         )
-        database.update_analysis(title_id, {"rating": 1})
-        database.update_analysis(abstract_id, {"rating": 5})
+        update_analysis(title_id, {"rating": 1})
+        update_analysis(abstract_id, {"rating": 5})
 
-        results = database.search_papers("world", limit=50)
+        results = search_papers("world", limit=50)
 
         self.assertEqual([paper["arxiv_id"] for paper in results], ["2607.00003", "2607.00004"])
         self.assertGreater(results[0]["search_score"], results[1]["search_score"])
@@ -91,22 +93,22 @@ class SearchPapersTests(DatabaseTestCase):
         self.add_paper("2607.00005", "Policy 100%_Safe")
         self.add_paper("2607.00006", "Policy 100X Safe")
 
-        results = database.search_papers("100%_", limit=50)
+        results = search_papers("100%_", limit=50)
 
         self.assertEqual([paper["arxiv_id"] for paper in results], ["2607.00005"])
 
     def test_versioned_arxiv_id_keeps_exact_lookup_behavior(self):
         self.add_paper("2607.12345", "Unrelated title")
 
-        results = database.search_papers("2607.12345v3", limit=50)
+        results = search_papers("2607.12345v3", limit=50)
 
         self.assertEqual([paper["arxiv_id"] for paper in results], ["2607.12345"])
 
     def test_duplicate_terms_do_not_inflate_relevance_score(self):
         self.add_paper("2607.00008", "World Model")
 
-        single = database.search_papers("world", limit=50)
-        duplicate = database.search_papers("world WORLD world", limit=50)
+        single = search_papers("world", limit=50)
+        duplicate = search_papers("world WORLD world", limit=50)
 
         self.assertEqual(duplicate[0]["search_score"], single[0]["search_score"])
 
@@ -119,9 +121,9 @@ class SearchPapersTests(DatabaseTestCase):
         ]
         for arxiv_id, published_date, rating in cases:
             paper_id = self.add_paper(arxiv_id, "World Model", published_date=published_date)
-            database.update_analysis(paper_id, {"rating": rating})
+            update_analysis(paper_id, {"rating": rating})
 
-        results = database.search_papers("world", limit=50)
+        results = search_papers("world", limit=50)
 
         self.assertEqual(
             [paper["arxiv_id"] for paper in results],
@@ -130,17 +132,17 @@ class SearchPapersTests(DatabaseTestCase):
 
     def test_hidden_papers_are_excluded_from_keyword_and_exact_id_search(self):
         self.add_paper("2607.00013", "Hidden World Model")
-        database.hide_paper("2607.00013")
+        hide_paper("2607.00013")
 
-        self.assertEqual(database.search_papers("world", limit=50), [])
-        self.assertEqual(database.search_papers("2607.00013v2", limit=50), [])
+        self.assertEqual(search_papers("world", limit=50), [])
+        self.assertEqual(search_papers("2607.00013v2", limit=50), [])
 
     def test_oversized_queries_are_rejected_with_a_clear_error(self):
         with self.assertRaisesRegex(ValueError, "200"):
-            database.search_papers("x" * 201)
+            search_papers("x" * 201)
 
         with self.assertRaisesRegex(ValueError, "10"):
-            database.search_papers("one two three four five six seven eight nine ten eleven")
+            search_papers("one two three four five six seven eight nine ten eleven")
 
     def test_search_result_builds_highlight_segments_without_marking_database_html_safe(self):
         from source.web import pages as web_pages
@@ -186,7 +188,7 @@ class ReportTrendTests(DatabaseTestCase):
                 tags=tags,
             )
 
-        trends = database.get_report_trends("2026-07-10", interest_hash="hash-v1")
+        trends = get_report_trends("2026-07-10", interest_hash="hash-v1")
 
         self.assertEqual(trends["dates"], dates[1:])
         robot = next(item for item in trends["tag_series"] if item["tag"] == "Robot")
@@ -199,9 +201,9 @@ class ReportTrendTests(DatabaseTestCase):
         for index, (score, interest_hash) in enumerate(scores):
             paper_id = self.add_paper(f"2607.{index + 200:05d}", f"Paper {index}", tags=["Robot"])
             if score is not None:
-                database.update_recommendation_result(paper_id, score, "reason", interest_hash)
+                update_recommendation_result(paper_id, score, "reason", interest_hash)
 
-        trends = database.get_report_trends("2026-07-10", interest_hash="hash-v1")
+        trends = get_report_trends("2026-07-10", interest_hash="hash-v1")
         recommendation = trends["recommendation"]
 
         self.assertEqual([bucket["count"] for bucket in recommendation["buckets"]], [1, 1, 1])
@@ -216,11 +218,11 @@ class ReportTrendTests(DatabaseTestCase):
             published_date="2026-07-10",
             tags=["Robot", "<img src=x onerror=alert(1)>"],
         )
-        database.update_recommendation_result(paper_id, 88, "reason", "hash-v1")
+        update_recommendation_result(paper_id, 88, "reason", "hash-v1")
 
         with patch.object(report_renderer, "get_personalization_config", return_value={"research_interests": "robotics"}), \
              patch.object(report_renderer, "get_research_interest_hash", return_value="hash-v1"):
-            content, _, _, _ = database.generate_report_content("2026-07-10")
+            content, _, _, _ = generate_report_content("2026-07-10")
 
         self.assertIn("近 7 个有数据日趋势", content)
         self.assertIn("标签走势", content)
@@ -237,7 +239,7 @@ class ReportTrendTests(DatabaseTestCase):
                 tags=[f"Tag{tag_index}" for tag_index in range(index + 1)],
             )
 
-        trends = database.get_report_trends("2026-07-10", top_tags=5)
+        trends = get_report_trends("2026-07-10", top_tags=5)
 
         self.assertEqual([item["tag"] for item in trends["tag_series"]], ["Tag0", "Tag1", "Tag2", "Tag3", "Tag4"])
         self.assertEqual([item["total"] for item in trends["tag_series"]], [6, 5, 4, 3, 2])
@@ -245,7 +247,7 @@ class ReportTrendTests(DatabaseTestCase):
     def test_single_data_date_has_no_new_tag_baseline(self):
         self.add_paper("2607.00500", "Only day", tags=["Robot"])
 
-        trends = database.get_report_trends("2026-07-10")
+        trends = get_report_trends("2026-07-10")
 
         self.assertFalse(trends["has_tag_history"])
         self.assertEqual(trends["new_tags"], [])
@@ -253,23 +255,11 @@ class ReportTrendTests(DatabaseTestCase):
     def test_missing_research_interest_disables_recommendation_distribution(self):
         self.add_paper("2607.00501", "No interest", tags=["Robot"])
 
-        trends = database.get_report_trends("2026-07-10", interest_hash="")
+        trends = get_report_trends("2026-07-10", interest_hash="")
 
         self.assertFalse(trends["recommendation"]["enabled"])
         self.assertEqual(trends["recommendation"]["scored"], 0)
         self.assertEqual(trends["recommendation"]["unscored"], 1)
-
-
-class LegacyRemovalTests(unittest.TestCase):
-    def test_generate_is_no_longer_a_cli_command(self):
-        import main
-
-        output = io.StringIO()
-        with patch.object(main.sys, "argv", ["main.py", "generate"]), redirect_stdout(output):
-            main.main()
-
-        self.assertIn("[fetch|analyze|run]", output.getvalue())
-        self.assertNotIn("Markdown", output.getvalue())
 
 
 

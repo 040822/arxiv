@@ -7,19 +7,33 @@ import os
 import tempfile
 
 from source.storage import connection as db_connection
+from source.storage import (
+    add_paper_chat_message,
+    add_paper_quiz_attempt,
+    add_paper_quiz_questions,
+    create_paper_quiz_session,
+    delete_paper,
+    get_ai_usage_summary,
+    get_connection,
+    get_latest_paper_quiz_sessions,
+    get_paper_chat_messages,
+    get_paper_quiz_session_detail,
+    init_db,
+    insert_paper,
+    record_ai_usage,
+)
 
 
 class AiUsageAndLearningTests(unittest.TestCase):
     def test_ai_usage_log_records_and_summarizes_tokens(self):
-        import database
 
         original_dir = db_connection.DB_DIR
         original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
             db_connection.DB_DIR = tmp
             db_connection.DB_PATH = os.path.join(tmp, "papers.db")
-            database.init_db()
-            database.record_ai_usage({
+            init_db()
+            record_ai_usage({
                 "task_key": "basic_analysis",
                 "provider_key": "cheap",
                 "provider_name": "Cheap",
@@ -31,7 +45,7 @@ class AiUsageAndLearningTests(unittest.TestCase):
                 "cached_tokens": 50,
                 "cache_miss_tokens": 50,
             })
-            database.record_ai_usage({
+            record_ai_usage({
                 "task_key": "deep_reading",
                 "provider_key": "smart",
                 "provider_name": "Smart",
@@ -43,8 +57,8 @@ class AiUsageAndLearningTests(unittest.TestCase):
                 "cached_tokens": 80,
                 "cache_miss_tokens": 0,
             })
-            summary = database.get_ai_usage_summary(days=7)
-            summary_by_model = database.get_ai_usage_summary(days=7, group_by="model")
+            summary = get_ai_usage_summary(days=7)
+            summary_by_model = get_ai_usage_summary(days=7, group_by="model")
 
         db_connection.DB_DIR = original_dir
         db_connection.DB_PATH = original_path
@@ -67,15 +81,14 @@ class AiUsageAndLearningTests(unittest.TestCase):
         self.assertTrue(any(group["key"] == "smart-model" and group["cached_tokens"] == 80 for group in summary_by_model["groups"]))
 
     def test_paper_learning_tables_store_history_and_cascade_delete(self):
-        import database
 
         original_dir = db_connection.DB_DIR
         original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
             db_connection.DB_DIR = tmp
             db_connection.DB_PATH = os.path.join(tmp, "papers.db")
-            database.init_db()
-            paper_id = database.insert_paper({
+            init_db()
+            paper_id = insert_paper({
                 "arxiv_id": "2601.00001",
                 "title": "Learning Paper",
                 "authors": ["Alice"],
@@ -88,22 +101,22 @@ class AiUsageAndLearningTests(unittest.TestCase):
                 "updated_date": "2026-01-01",
             })
 
-            database.add_paper_chat_message(paper_id, "user", "问题")
-            database.add_paper_chat_message(paper_id, "assistant", "回答")
-            session_id = database.create_paper_quiz_session(paper_id, "quick3")
-            question_ids = database.add_paper_quiz_questions(session_id, [
+            add_paper_chat_message(paper_id, "user", "问题")
+            add_paper_chat_message(paper_id, "assistant", "回答")
+            session_id = create_paper_quiz_session(paper_id, "quick3")
+            question_ids = add_paper_quiz_questions(session_id, [
                 {"question": "Q1?", "expected_points": ["A"]},
                 {"question": "Q2?", "expected_points": ["B"]},
             ])
-            database.add_paper_quiz_attempt(question_ids[0], "我的答案", 4, {"feedback": "不错"})
-            database.add_paper_quiz_attempt(question_ids[0], "第二版答案", 5, {"feedback": "更好"})
+            add_paper_quiz_attempt(question_ids[0], "我的答案", 4, {"feedback": "不错"})
+            add_paper_quiz_attempt(question_ids[0], "第二版答案", 5, {"feedback": "更好"})
 
-            messages = database.get_paper_chat_messages(paper_id)
-            session = database.get_paper_quiz_session_detail(session_id, paper_id=paper_id)
-            latest_sessions = database.get_latest_paper_quiz_sessions(paper_id)
+            messages = get_paper_chat_messages(paper_id)
+            session = get_paper_quiz_session_detail(session_id, paper_id=paper_id)
+            latest_sessions = get_latest_paper_quiz_sessions(paper_id)
 
-            database.delete_paper("2601.00001")
-            conn = database.get_connection()
+            delete_paper("2601.00001")
+            conn = get_connection()
             counts = {
                 "chat": conn.execute("SELECT COUNT(*) FROM paper_chat_messages").fetchone()[0],
                 "sessions": conn.execute("SELECT COUNT(*) FROM paper_quiz_sessions").fetchone()[0],

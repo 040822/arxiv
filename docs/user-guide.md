@@ -56,14 +56,9 @@ pip install -r requirements.txt
 ```bash
 # 启动 Web 服务（含定时任务）
 python app.py
-
-# 或使用 CLI
-python main.py          # 抓取 → 分析 → 推荐评分
-python main.py fetch    # 仅抓取
-python main.py analyze  # 仅分析
 ```
 
-浏览器访问 `http://localhost:5000`
+浏览器访问 `http://localhost:5000`。抓取、分析和推荐评分在 Web 页面 `/tasks`（或 API `POST /api/fetch`、`/api/analyze`、`/api/run`）中完成。
 
 ---
 

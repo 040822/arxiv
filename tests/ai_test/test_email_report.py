@@ -9,6 +9,12 @@ import tempfile
 from unittest.mock import patch
 
 from source.settings import store as settings_store
+from source.settings import (
+    get_email_report_config,
+    load_settings,
+    save_email_report_config,
+    update_email_report_status,
+)
 
 
 class EmailReportTests(unittest.TestCase):
@@ -30,20 +36,17 @@ class EmailReportTests(unittest.TestCase):
         }
 
     def test_email_report_settings_preserve_password_and_mask_get(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
 
-                loaded = settings.load_settings()
+                loaded = load_settings()
                 self.assertIn("email_report", loaded)
                 self.assertFalse(loaded["email_report"]["enabled"])
 
-                settings.save_email_report_config({
+                save_email_report_config({
                     "enabled": True,
                     "smtp_host": "smtp.example.com",
                     "smtp_port": "587",
@@ -55,7 +58,7 @@ class EmailReportTests(unittest.TestCase):
                     "subject_template": "Daily {date}",
                     "site_url": "https://papers.example.com/",
                 })
-                settings.save_email_report_config({
+                save_email_report_config({
                     "enabled": True,
                     "smtp_host": "smtp2.example.com",
                     "smtp_port": "465",
@@ -68,8 +71,8 @@ class EmailReportTests(unittest.TestCase):
                     "site_url": "https://papers.example.com/",
                 })
 
-                full = settings.get_email_report_config(mask_password=False)
-                masked = settings.get_email_report_config(mask_password=True)
+                full = get_email_report_config(mask_password=False)
+                masked = get_email_report_config(mask_password=True)
 
             self.assertEqual(full["password"], "secret")
             self.assertEqual(full["recipients"], ["bob@example.com", "carol@example.com"])
@@ -77,30 +80,26 @@ class EmailReportTests(unittest.TestCase):
             self.assertNotIn("password", masked)
             self.assertEqual(masked["password_masked"], "******")
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_email_report_status_only_success_updates_sent_date(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
-                settings.load_settings()
+                load_settings()
 
-                settings.update_email_report_status("success", report_date="2026-06-16")
-                settings.update_email_report_status(
+                update_email_report_status("success", report_date="2026-06-16")
+                update_email_report_status(
                     "error",
                     error="smtp down",
                     report_date="2026-06-17",
                 )
-                failed = settings.get_email_report_config(mask_password=False)
+                failed = get_email_report_config(mask_password=False)
 
-                settings.update_email_report_status("success")
-                manual = settings.get_email_report_config(mask_password=False)
+                update_email_report_status("success")
+                manual = get_email_report_config(mask_password=False)
 
             self.assertEqual(failed["last_status"], "error")
             self.assertEqual(failed["last_error"], "smtp down")
@@ -109,7 +108,6 @@ class EmailReportTests(unittest.TestCase):
             self.assertEqual(manual["last_error"], "")
             self.assertEqual(manual["last_sent_report_date"], "2026-06-16")
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
     def test_report_email_html_uses_digest_layout_and_site_links(self):
@@ -287,31 +285,27 @@ class EmailReportTests(unittest.TestCase):
         self.assertIn("今天没有推荐分高于 0 的重点精读论文。", empty_text)
 
     def test_email_report_config_clamps_threshold_and_limit(self):
-        import settings
 
-        original_dir = settings.DB_DIR
         original_path = settings_store.SETTINGS_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                settings.DB_DIR = tmp
                 settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")
-                settings.load_settings()
+                load_settings()
 
-                settings.save_email_report_config({
+                save_email_report_config({
                     "enabled": False,
                     "important_score_threshold": 200,
                     "overview_limit": 9999,
                 })
-                clamped = settings.get_email_report_config(mask_password=False)
+                clamped = get_email_report_config(mask_password=False)
 
-                settings.save_email_report_config({
+                save_email_report_config({
                     "enabled": False,
                     "important_score_threshold": -1,
                     "overview_limit": -5,
                 })
-                below = settings.get_email_report_config(mask_password=False)
+                below = get_email_report_config(mask_password=False)
         finally:
-            settings.DB_DIR = original_dir
             settings_store.SETTINGS_PATH = original_path
 
         self.assertEqual(clamped["important_score_threshold"], 100)

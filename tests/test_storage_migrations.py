@@ -7,9 +7,11 @@ import unittest
 from unittest.mock import Mock, patch
 
 from source.storage import connection, migrations, schema
+from source.storage import (
+    add_paper_chat_message, get_analysis_by_paper_id, get_average_rating,
+    init_db, insert_analysis, insert_paper, update_analysis,
+)
 from source.storage.snapshot import copy_sqlite_snapshot
-
-import database
 
 
 class SQLiteSnapshotTests(unittest.TestCase):
@@ -63,7 +65,7 @@ class SchemaMigrationTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_empty_database_migrates_to_latest_version_without_snapshot(self):
-        database.init_db()
+        init_db()
 
         conn = sqlite3.connect(connection.DB_PATH)
         try:
@@ -127,7 +129,7 @@ class SchemaMigrationTests(unittest.TestCase):
         finally:
             conn.close()
 
-        database.init_db()
+        init_db()
 
         conn = sqlite3.connect(connection.DB_PATH)
         try:
@@ -140,7 +142,7 @@ class SchemaMigrationTests(unittest.TestCase):
         backup_dir = os.path.join(self.tmp.name, "migration_backups")
         backups = os.listdir(backup_dir)
         self.assertEqual(len(backups), 1)
-        database.init_db()
+        init_db()
         self.assertEqual(os.listdir(backup_dir), backups)
         snapshot = sqlite3.connect(os.path.join(backup_dir, backups[0]))
         try:
@@ -188,7 +190,7 @@ class SchemaMigrationTests(unittest.TestCase):
         finally:
             conn.close()
 
-        database.init_db()
+        init_db()
 
         conn = sqlite3.connect(connection.DB_PATH)
         try:
@@ -211,8 +213,8 @@ class SchemaMigrationTests(unittest.TestCase):
         ])
 
     def test_version_three_generalizes_paper_identity_without_breaking_foreign_keys(self):
-        database.init_db()
-        paper_id = database.insert_paper({
+        init_db()
+        paper_id = insert_paper({
             "arxiv_id": "2607.54321",
             "title": "Legacy paper",
             "authors": ["Alice"],
@@ -224,7 +226,7 @@ class SchemaMigrationTests(unittest.TestCase):
             "published_date": "2026-07-24",
             "updated_date": "2026-07-24",
         })
-        database.add_paper_chat_message(paper_id, "user", "hello")
+        add_paper_chat_message(paper_id, "user", "hello")
 
         conn = sqlite3.connect(connection.DB_PATH)
         try:
@@ -253,10 +255,10 @@ class SchemaMigrationTests(unittest.TestCase):
 
 
     def test_average_rating_query_is_exposed_by_storage(self):
-        database.init_db()
+        init_db()
         ratings = (2, 4)
         for index, rating in enumerate(ratings):
-            paper_id = database.insert_paper({
+            paper_id = insert_paper({
                 "arxiv_id": f"2607.1000{index}",
                 "title": "title",
                 "authors": [],
@@ -268,7 +270,7 @@ class SchemaMigrationTests(unittest.TestCase):
                 "published_date": "2026-07-24",
                 "updated_date": "2026-07-24",
             })
-            database.insert_analysis(paper_id, {
+            insert_analysis(paper_id, {
                 "tags": [],
                 "summary_cn": "",
                 "summary_en": "",
@@ -276,12 +278,12 @@ class SchemaMigrationTests(unittest.TestCase):
                 "value_comment": "",
             })
 
-        self.assertEqual(database.get_average_rating(), 3.0)
+        self.assertEqual(get_average_rating(), 3.0)
 
 
     def test_concurrent_analysis_insert_creates_one_record_without_errors(self):
-        database.init_db()
-        paper_id = database.insert_paper({
+        init_db()
+        paper_id = insert_paper({
             "arxiv_id": "2607.00003",
             "title": "title",
             "authors": [],
@@ -301,7 +303,7 @@ class SchemaMigrationTests(unittest.TestCase):
         def insert():
             barrier.wait()
             try:
-                result = database.insert_analysis(paper_id, {
+                result = insert_analysis(paper_id, {
                     "tags": ["VLA"],
                     "summary_cn": "summary",
                     "summary_en": "",
@@ -326,8 +328,8 @@ class SchemaMigrationTests(unittest.TestCase):
 
 
     def test_concurrent_partial_update_creates_one_analysis_without_errors(self):
-        database.init_db()
-        paper_id = database.insert_paper({
+        init_db()
+        paper_id = insert_paper({
             "arxiv_id": "2607.00004",
             "title": "title",
             "authors": [],
@@ -347,7 +349,7 @@ class SchemaMigrationTests(unittest.TestCase):
         def update():
             barrier.wait()
             try:
-                result = database.update_analysis(paper_id, {"rating": 3})
+                result = update_analysis(paper_id, {"rating": 3})
                 with lock:
                     results.append(result)
             except Exception as exc:
@@ -362,11 +364,11 @@ class SchemaMigrationTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
         self.assertEqual(results, [True] * 8)
-        self.assertEqual(database.get_analysis_by_paper_id(paper_id)["rating"], 3)
+        self.assertEqual(get_analysis_by_paper_id(paper_id)["rating"], 3)
 
 
     def test_failed_migration_rolls_back_and_keeps_only_three_snapshots(self):
-        database.init_db()
+        init_db()
         original_migrations = migrations.MIGRATIONS
 
         def fail_after_write(conn):
@@ -380,7 +382,7 @@ class SchemaMigrationTests(unittest.TestCase):
             )
             for _ in range(5):
                 with self.assertRaises(RuntimeError) as raised:
-                    database.init_db()
+                    init_db()
                 messages.append(str(raised.exception))
         finally:
             migrations.MIGRATIONS = original_migrations
@@ -403,7 +405,7 @@ class SchemaMigrationTests(unittest.TestCase):
         self.assertTrue(all("快照:" in message for message in messages))
 
     def test_writer_waits_for_short_lock_and_then_succeeds(self):
-        database.init_db()
+        init_db()
         locker = sqlite3.connect(connection.DB_PATH, timeout=0)
         locker.execute("BEGIN IMMEDIATE")
         started = threading.Event()
@@ -413,7 +415,7 @@ class SchemaMigrationTests(unittest.TestCase):
         def write():
             started.set()
             try:
-                result.append(database.insert_paper({
+                result.append(insert_paper({
                     "arxiv_id": "2607.00005",
                     "title": "title",
                     "authors": [],
@@ -442,7 +444,7 @@ class SchemaMigrationTests(unittest.TestCase):
 
 
     def test_newer_database_version_aborts_startup(self):
-        database.init_db()
+        init_db()
         conn = sqlite3.connect(connection.DB_PATH)
         try:
             conn.execute(
@@ -453,10 +455,10 @@ class SchemaMigrationTests(unittest.TestCase):
             conn.close()
 
         with self.assertRaisesRegex(RuntimeError, "高于程序支持的版本"):
-            database.init_db()
+            init_db()
 
     def test_migration_version_gap_aborts_startup(self):
-        database.init_db()
+        init_db()
         conn = sqlite3.connect(connection.DB_PATH)
         try:
             conn.execute("DELETE FROM schema_migrations WHERE version = 1")
@@ -465,7 +467,7 @@ class SchemaMigrationTests(unittest.TestCase):
             conn.close()
 
         with self.assertRaisesRegex(RuntimeError, "版本不连续"):
-            database.init_db()
+            init_db()
 
     def test_snapshot_failure_aborts_before_schema_changes(self):
         conn = sqlite3.connect(connection.DB_PATH)
@@ -478,7 +480,7 @@ class SchemaMigrationTests(unittest.TestCase):
 
         with patch.object(migrations, "copy_sqlite_snapshot", side_effect=OSError("disk full")):
             with self.assertRaisesRegex(RuntimeError, "快照失败"):
-                database.init_db()
+                init_db()
 
         conn = sqlite3.connect(connection.DB_PATH)
         try:

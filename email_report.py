@@ -14,9 +14,9 @@ import ssl
 from email.message import EmailMessage
 from urllib.parse import unquote, urlparse
 
-from database import get_connection
+from source.storage import get_connection
 from source.value_coercion import as_float, as_int
-from settings import (
+from source.settings import (
     get_email_report_config,
     get_personalization_config,
     get_proxy_config,

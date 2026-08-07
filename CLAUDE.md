@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 自动从 arXiv 抓取 AI/机器人领域论文，调用 OpenAI 兼容 API 做基础分析（标签/评级/中文摘要）和按需深度阅读（Q&A），存入 SQLite，通过 Flask Web 界面浏览、生成报告，并支持单篇论文对话/主动问答学习。Python 3.11 / Flask / SQLite / APScheduler / arxiv-py / OpenAI SDK / PyMuPDF。
 
-**详尽文档已存在，优先查阅：** [`AGENTS.md`](AGENTS.md)（数据库 schema、完整 API 端点清单、`settings.py` 函数表、开发规范）和 [`docs/`](docs/)（架构、开发者指南、API 参考）。本文件只记录命令和需要跨文件阅读才能掌握的「大局」。**改动后请同步更新 `AGENTS.md`。**
+**详尽文档已存在，优先查阅：** [`AGENTS.md`](AGENTS.md)（数据库 schema、完整 API 端点清单、`source.settings` 函数表、开发规范）和 [`docs/`](docs/)（架构、开发者指南、API 参考）。本文件只记录命令和需要跨文件阅读才能掌握的「大局」。**改动后请同步更新 `AGENTS.md`。**
 
 分支：`master` 稳定 / `dev` 开发（当前在 `dev`）。提交信息用中文。
 
@@ -15,9 +15,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 source .venv/bin/activate          # 必须先激活；.envrc 也会做这件事
 
-# CLI 流水线（main.py）
-python main.py                     # 完整流程：fetch → analyze → recommend
-python main.py fetch               # 仅抓取；analyze 仅分析
+# 抓取 / 分析 / 推荐评分（Web 入口，原 CLI 能力）
+# 页面 /tasks 或 API POST /api/fetch、/api/analyze、/api/run
 
 python app.py                      # 启动 Flask（0.0.0.0:5000）+ APScheduler 定时任务
 
@@ -31,16 +30,16 @@ python -m unittest tests.ai_test.test_email_report
 python -m unittest tests.ai_test.test_request_builder.ProviderRequestBuilderTests.test_regular_model_omits_disabled_max_tokens
 
 # 查看数据库状态
-python -c "from database import *; init_db(); print(get_paper_count(), 'papers,', get_analyzed_count(), 'analyzed')"
+python -c "from source.storage import *; init_db(); print(get_paper_count(), 'papers,', get_analyzed_count(), 'analyzed')"
 ```
 
 无 lint/format/CI 配置；测试位于 `tests/`（顶层 11 个文件 + `tests/ai_test/` 17 个文件，按模块拆分自原 `test_ai_provider_config.py`，覆盖配置/认证/抓取/分析路由/模板安全/论文学习；共享桩与 Web 测试基座在 `tests/ai_test/common.py`）。
 
 ## 架构要点（需跨文件阅读）
 
-**模块分层与懒加载。** `app.py`（Web+定时）和 `main.py`（CLI）是入口；它们调用 `fetcher` / `analyzer` / `database`；后者依赖 `settings`（运行时配置）和 `pdf_reader`（PDF 下载+PyMuPDF 提取），最底层是 `config`。`main.py` 在函数内部 import 以避免循环依赖——新增入口时保持这个模式。
+**模块分层与懒加载。** `app.py`（Web+定时）是唯一入口；它调用根模块 `fetcher` / `analyzer` / `pdf_reader` / `email_report` / `backup`（后续迁入 `source/`）；后者依赖 `source.settings`（运行时配置）和 `source.storage`（SQLite），最底层是 `config`。
 
-**两层配置系统是核心。** `config.py` 是硬编码默认值/环境变量 fallback，**仅在首次运行或缺省时生效**；真正的运行时配置在 `data/settings.json`（git 忽略，含 API Key），由 Web 设置页读写。所有运行时配置都经 `settings.py` 读取，不要直接读 `config.py` 的 API 变量。
+**两层配置系统是核心。** `config.py` 是硬编码默认值/环境变量 fallback，**仅在首次运行或缺省时生效**；真正的运行时配置在 `data/settings.json`（git 忽略，含 API Key），由 Web 设置页读写。所有运行时配置都经 `source.settings` 读取，不要直接读 `config.py` 的 API 变量。
 
 **AI 任务路由。** 独立 AI 任务包括 `basic_analysis`、`deep_reading`、`report_summary`、`recommendation`、`paper_chat`、`paper_quiz`，各自路由到自己的供应商/模型/参数。调用前用 `get_ai_task_config(task_key)` 取配置、`get_prompt_profile(task_key)` 取 Prompt 前缀，**参数必须用 `build_chat_completion_kwargs()` 构建**——绝不在业务代码里硬编码 `temperature`/`max_tokens`（思考模型会自动省略采样参数并改用 reasoning/thinking 字段）。
 

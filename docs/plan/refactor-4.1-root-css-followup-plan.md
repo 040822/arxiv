@@ -1,7 +1,7 @@
 # 4.1 后续重构：根目录收口、CSS 模块化与 Web 单入口
 
 > 计划日期：2026-08-07  
-> 状态：待实施  
+> 状态：第 0 轮已完成；第 1 轮拆为 1A（删除）/ 1B（迁入拆解），1A 已实施  
 > 本文仅记录已确认的实施计划；本次写入不执行其中任何代码或样式变更。
 
 ## 总结
@@ -13,29 +13,45 @@
 
 ## 分轮实施
 
-### 第 0 轮：固化计划与恢复测试基线
+### 第 0 轮：固化计划与恢复测试基线 ✅ 已完成（2026-08-07）
 
 - 第一个文件变更必须是将本计划写入 `docs/plan/refactor-4.1-root-css-followup-plan.md`，在此之前不修改代码。
 - 将当前 `static/style.css` 和 `docs/changelog.md` 的未提交修改视为用户基线，全程保留。
 - 修复 `test_ai_provider_config.py` 缺少 Flask application/request context 导致的 40 个既有错误；暂不拆分该测试文件。
 - 阶段验收：当前 210 项测试全部通过，再进入结构迁移。
 
+完成记录：
+- `test_ai_provider_config.py` 已按 Q20 拆分为 `tests/ai_test/` 下 17 个文件（143 个方法逐字节平移，测试基座在 `common.py`），原巨石文件删除，commit `0a828df`。
+- 基线验收：210 passed + 35 subtests 全绿，三层验收（unittest + pytest 随机序 + 3 次模块乱序）通过；`static/style.css`、`docs/changelog.md` 基线保留，worktree clean。
+
 ### 第 1 轮：Python 结构收口与入口调整
+
+按风险拆为两个子轮：1A 先删除低风险根兼容模块，1B 再执行迁入与拆解。
+
+#### 第 1A 轮：删除根兼容模块（main.py / settings.py / database.py）✅ 已完成（2026-08-07）
+
+- 改写 5 个根模块（`analyzer.py` / `fetcher.py` / `pdf_reader.py` / `email_report.py` / `backup.py`）的 shim import 为 `source.*` 正式路径（纯同名转发，零行为变化）。
+- 改写 15 个测试文件的导入；删除 2 个依赖 CLI 的测试（`LegacyRemovalTests`、`test_cli_analyze_uses_saved_concurrency`，行为均有等价覆盖）。
+- 新增 `tests/test_root_boundaries.py`：根目录 `*.py` 仅 `app.py`；AST 扫描断言源码不再导入旧根模块。
+- 删除 `main.py`、`settings.py`、`database.py`，不保留转发 shim。
+- 活跃文档最小收口：`AGENTS.md`、`README.md`、`CLAUDE.md`、`docs/*.md` 删除 `python main.py` 用法，改为 Web `/tasks` 与 `/api/fetch|analyze|run` 入口；全面宣传性收口仍属第 3 轮。
+- 验收：210 项测试全绿 + 新增边界测试；`python app.py` 启动冒烟，调度器只启动一次。
+
+#### 第 1B 轮：迁入与拆解（config / analyzer / fetcher / pdf_reader / backup / email_report / app）
 
 | 现有模块 | 最终位置与职责 |
 |---|---|
 | `config.py` | `source/config.py`；继续提供硬编码常量，并通过项目根路径计算保证 `data/` 位置不变 |
-| `settings.py` | 删除；所有调用改为 `source.settings` |
-| `database.py` | 删除；所有调用改为 `source.storage` / `source.reports` |
 | `analyzer.py` | 拆为 `source/analysis/`：LLM 客户端与用量、消息构建、基础/深度分析、推荐、学习问答、报告导读、批处理 |
 | `fetcher.py` | 拆为 `source/ingestion/`：arXiv 日常抓取、分批抓取和单篇查询 |
 | `pdf_reader.py` | 迁入 `source/documents/`：PDF 校验、存储、缓存下载和文本提取 |
 | `backup.py` | WebDAV 逻辑迁入 `source/backups/`；数据库文件信息移入 `source/storage/info.py` |
 | `email_report.py` | 拆为 `source/reports/email/`：邮件内容、SMTP/代理传输、发送编排；长邮件 CSS 独立为包内资源 |
-| `main.py` | 删除，不提供替代 CLI |
 | `app.py` | 唯一根入口；增加明确的 `main()`，保留可导入的 Flask `app` 供测试/WSGI 使用 |
 
-实施要求：
+（`settings.py` / `database.py` / `main.py` 已在 1A 删除，不再列入。）
+
+实施要求（1A 已落实的部分：边界测试、根目录 `*.py` 仅 `app.py`）：
 
 - 每个新包用显式 `__all__` 暴露业务接口；调用方只导入正式 `source.*` 路径。
 - 清除 `source/web` 等模块中历史遗留的整块无用 import。
@@ -82,7 +98,7 @@ static/css/
 
 ### 第 3 轮：文档收口
 
-- 更新 `AGENTS.md`、`README.md`、架构、开发者、用户和 Agent 指南，删除所有正式 CLI 使用说明。
+- 更新 `AGENTS.md`、`README.md`、架构、开发者、用户和 Agent 指南，删除所有正式 CLI 使用说明（1A 已做最小收口，此处做全面收口）。
 - 将 `/tasks`、`/api/fetch`、`/api/analyze`、`/api/run` 说明为原 CLI 能力的 Web 替代入口。
 - 更新模板维护文档，记录 CSS 文件加载矩阵和“共享组件/页面专属样式”的归属规则。
 - 在 `docs/plan/test-suite-modularization-followup.md` 单独记录 4222 行测试文件的后续领域拆分计划，本轮不实施。

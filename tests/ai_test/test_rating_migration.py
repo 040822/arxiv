@@ -8,12 +8,20 @@ import sqlite3
 import tempfile
 
 from source.storage import connection as db_connection
+from source.storage import (
+    get_analyzed_count,
+    get_unanalyzed_count,
+    get_unanalyzed_papers,
+    init_db,
+    insert_analysis,
+    insert_paper,
+    update_analysis,
+)
 
 
 class RatingMigrationTests(unittest.TestCase):
     def test_rating_migration_restores_legacy_ai_rating_once(self):
         import sqlite3
-        import database
 
         original_dir = db_connection.DB_DIR
         original_path = db_connection.DB_PATH
@@ -38,7 +46,7 @@ class RatingMigrationTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            database.init_db()
+            init_db()
             conn = sqlite3.connect(db_connection.DB_PATH)
             rows = conn.execute(
                 "SELECT id, rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis ORDER BY id"
@@ -49,7 +57,7 @@ class RatingMigrationTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            database.init_db()
+            init_db()
             conn = sqlite3.connect(db_connection.DB_PATH)
             rows = conn.execute(
                 "SELECT id, rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis ORDER BY id"
@@ -62,7 +70,6 @@ class RatingMigrationTests(unittest.TestCase):
 
     def test_rating_restore_overwrites_current_rating_when_legacy_exists(self):
         import sqlite3
-        import database
 
         original_dir = db_connection.DB_DIR
         original_path = db_connection.DB_PATH
@@ -87,7 +94,7 @@ class RatingMigrationTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            database.init_db()
+            init_db()
             conn = sqlite3.connect(db_connection.DB_PATH)
             row = conn.execute(
                 "SELECT rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis WHERE paper_id = 1"
@@ -96,7 +103,7 @@ class RatingMigrationTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            database.init_db()
+            init_db()
             conn = sqlite3.connect(db_connection.DB_PATH)
             row_after_second_init = conn.execute(
                 "SELECT rating, legacy_ai_rating, rating_restored_from_legacy FROM analysis WHERE paper_id = 1"
@@ -110,15 +117,14 @@ class RatingMigrationTests(unittest.TestCase):
 
     def test_new_analysis_defaults_to_zero_manual_rating_without_legacy_backup(self):
         import sqlite3
-        import database
 
         original_dir = db_connection.DB_DIR
         original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
             db_connection.DB_DIR = tmp
             db_connection.DB_PATH = os.path.join(tmp, "papers.db")
-            database.init_db()
-            paper_id = database.insert_paper({
+            init_db()
+            paper_id = insert_paper({
                 "arxiv_id": "2601.00000",
                 "title": "Manual Rating Paper",
                 "authors": ["Alice"],
@@ -130,7 +136,7 @@ class RatingMigrationTests(unittest.TestCase):
                 "published_date": "2026-01-01",
                 "updated_date": "2026-01-01",
             })
-            database.insert_analysis(paper_id, {
+            insert_analysis(paper_id, {
                 "tags": ["Robot"],
                 "summary_cn": "摘要",
                 "summary_en": "",
@@ -146,15 +152,14 @@ class RatingMigrationTests(unittest.TestCase):
         self.assertEqual(row, (0, None))
 
     def test_manual_rating_only_record_is_still_pending_basic_analysis(self):
-        import database
 
         original_dir = db_connection.DB_DIR
         original_path = db_connection.DB_PATH
         with tempfile.TemporaryDirectory() as tmp:
             db_connection.DB_DIR = tmp
             db_connection.DB_PATH = os.path.join(tmp, "papers.db")
-            database.init_db()
-            paper_id = database.insert_paper({
+            init_db()
+            paper_id = insert_paper({
                 "arxiv_id": "2601.00007",
                 "title": "Manual Rated Pending",
                 "authors": ["Alice"],
@@ -166,10 +171,10 @@ class RatingMigrationTests(unittest.TestCase):
                 "published_date": "2026-01-01",
                 "updated_date": "2026-01-01",
             })
-            database.update_analysis(paper_id, {"rating": 4})
-            pending = database.get_unanalyzed_papers(limit=10)
-            pending_count = database.get_unanalyzed_count()
-            analyzed_count = database.get_analyzed_count()
+            update_analysis(paper_id, {"rating": 4})
+            pending = get_unanalyzed_papers(limit=10)
+            pending_count = get_unanalyzed_count()
+            analyzed_count = get_analyzed_count()
 
         db_connection.DB_DIR = original_dir
         db_connection.DB_PATH = original_path
