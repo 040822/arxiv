@@ -2,6 +2,12 @@
 
 ## 未发布
 
+### Q20 测试巨石拆分
+- `tests/test_ai_provider_config.py`（4224 行 / 143 个方法）按功能拆至 `tests/ai_test/`：17 个测试文件 + 共享基座 `tests/ai_test/common.py`（FakeArgs/FakeRequest/DummyOpenAI/DummyHttpxClient/install_import_stubs/setup_web_test_base 与 web/pipeline 模块引用）
+- 拆分类命名：`ProviderApiTests`/`AuthApiTests`/`PapersApiTests`/`SettingsTasksApiTests`/`PipelineTests`、`PromptValidationTests`/`ReportAndRecommendationTests`/`RatingMigrationTests`/`AiUsageAndLearningTests`；其余 10 个类整体平移保留原名
+- 验收：AST 逐方法对比 143/143 源码逐字节一致；pytest/unittest 双收集器 210 前后一致无漏跑双跑；seed=42 逐测试 outcome 一致；`run_all_tests.py` 三阶段全绿；覆盖率 66% 前后不变
+- `scripts/run_all_tests.py` 乱序验证支持子目录（返回 `ai_test.test_x` 模块点路径）
+
 ### 长输入任务指令后置，修复 flash 模型深度阅读漏题
 - 深度阅读（`deep_reading`）与手动导入（`paper_import`）的消息顺序从 `system → instruction → 动态数据` 调整为 `system → 动态数据 → instruction`：PDF 全文可达数万 token，指令若放在全文之前会被长上下文“淹没”，flash 类模型会漏答部分问题（实测约 30% 概率只输出 Q1 或 Q6 一个条目，且 `finish_reason=stop` 无法用截断检测兜底）
 - 同输入实测：指令后置后 flash 深度阅读 4/4 完整输出 Q1-Q6（原结构 10 次中 3 次失败）；pro 模型两种顺序均稳定

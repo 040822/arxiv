@@ -568,7 +568,9 @@ python -c "from database import *; init_db(); print(get_paper_count(), 'papers,'
 python scripts/run_all_tests.py         # 标准流程：unittest + pytest(随机顺序) + 3 次模块乱序，失败即停
 python scripts/run_all_tests.py --quick # 只跑 pytest 一次（日常快速验证）
 # 等价裸命令（脚本内部使用）：python -m unittest discover -s tests / python -m pytest tests/
-# 覆盖率：python -m pytest --cov=. --cov-report=term-missing tests/（.coveragerc 排除 tests/scripts/.venv）
+# 测试布局：tests/ 顶层 11 个文件 + tests/ai_test/ 17 个文件（按模块拆分自原 test_ai_provider_config.py，
+# 143 个方法逐字节平移；共享桩 DummyOpenAI/FakeRequest/install_import_stubs 与 Web 测试基座在 tests/ai_test/common.py）
+# 覆盖率：python -m pytest --cov=. --cov-report=term-missing tests/（.coveragerc 排除 tests/scripts/.venv，tests/* 通配覆盖 ai_test 子目录）
 # CI：push 到 dev/master 自动跑 tests.yml（完整套件 + 覆盖率），见 .github/workflows/tests.yml
 
 # 备份数据库

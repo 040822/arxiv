@@ -273,8 +273,8 @@
 
 | # | 严重度 | 问题 | 位置 | 建议 |
 |---|--------|------|------|------|
-| Q20 | 中 | 唯一测试文件 3582 行 130+ 方法全在一个 TestCase 中，文件名 `test_ai_provider_config.py` 严重名不副实 | `tests/test_ai_provider_config.py` | 按模块拆分 `test_settings.py`/`test_database.py`/... |
-| Q21 | 中 | 无 pytest / `conftest.py` / fixture 基础设施，每个用例内 `importlib` 重载模块 + monkeypatch 全局 | `tests/test_ai_provider_config.py:1-18` | 引入 pytest + conftest fixture | ✅ 部分完成 2026-08-07：pytest 9.1 + pytest-randomly 已就位，双运行器与统一入口 `scripts/run_all_tests.py`（含乱序验证）；conftest/fixture 迁移待测试巨石拆分计划实施 |
+| Q20 ✅ | ~~中~~ **已完成** | 唯一测试文件 3582 行 130+ 方法全在一个 TestCase 中，文件名 `test_ai_provider_config.py` 严重名不副实 | `tests/ai_test/` | 2026-08-07 按功能拆为 17 个文件 + 共享基座 `tests/ai_test/common.py`（143 个方法逐字节平移）；验收：AST 逐方法对比 + 收集数 + 逐测试 outcome 三方一致，覆盖率 66% 前后不变；原巨石文件已删除 |
+| Q21 | 中 | 无 pytest / `conftest.py` / fixture 基础设施，每个用例内 `importlib` 重载模块 + monkeypatch 全局 | `tests/test_ai_provider_config.py:1-18` | 引入 pytest + conftest fixture | ✅ 部分完成 2026-08-07：pytest 9.1 + pytest-randomly 已就位，双运行器与统一入口 `scripts/run_all_tests.py`（含乱序验证）；2026-08-07 巨石已拆至 `tests/ai_test/`，conftest/fixture 迁移待后续计划实施 |
 | Q22 | 中 | 核心渲染逻辑 `generate_report_content`（190行）无针对性单测；模板几乎无渲染断言 | `database.py:1838-2024` | 补关键路径单测 |
 | Q23 | 低 | 无 CI 配置、无覆盖率统计 | 项目根 | 加 GitHub Actions | ✅ 已完成 2026-08-07：新增 `.github/workflows/tests.yml`（push 到 dev/master 自动跑 `scripts/run_all_tests.py` + pytest-cov 覆盖率）；覆盖率命令 `python -m pytest --cov=. --cov-report=term-missing tests/`（当前约 66%，`.coveragerc` 排除 tests/scripts/.venv）；首次 push 后 Actions 跑绿为最终验收 |
 

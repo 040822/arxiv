@@ -22,7 +22,11 @@ SHUFFLE_RUNS = 3
 
 
 def test_modules():
-    return sorted(p.stem for p in TESTS_DIR.glob("test_*.py"))
+    """返回可被 `python -m unittest tests.<module>` 加载的模块点路径列表。"""
+    modules = sorted(p.stem for p in TESTS_DIR.glob("test_*.py"))
+    ai_dir = TESTS_DIR / "ai_test"
+    modules += sorted(f"ai_test.{p.stem}" for p in ai_dir.glob("test_*.py"))
+    return modules
 
 
 def extract_coverage_table(stdout):

@@ -27,14 +27,14 @@ python scripts/run_all_tests.py --quick # 只跑 pytest 一次（日常快速验
 # 覆盖率：python -m pytest --cov=. --cov-report=term-missing tests/（.coveragerc 排除 tests/scripts/.venv）
 # CI：push 到 dev/master 自动跑 .github/workflows/tests.yml
 # 单个测试（调试时）：
-python -m unittest tests.test_ai_provider_config
-python -m unittest tests.test_ai_provider_config.ProviderRequestBuilderTests.test_regular_model_omits_disabled_max_tokens
+python -m unittest tests.ai_test.test_email_report
+python -m unittest tests.ai_test.test_request_builder.ProviderRequestBuilderTests.test_regular_model_omits_disabled_max_tokens
 
 # 查看数据库状态
 python -c "from database import *; init_db(); print(get_paper_count(), 'papers,', get_analyzed_count(), 'analyzed')"
 ```
 
-无 lint/format/CI 配置；测试位于 `tests/`（12 个文件，主体是 `test_ai_provider_config.py`，覆盖配置/认证/抓取/分析路由/模板安全/论文学习）。
+无 lint/format/CI 配置；测试位于 `tests/`（顶层 11 个文件 + `tests/ai_test/` 17 个文件，按模块拆分自原 `test_ai_provider_config.py`，覆盖配置/认证/抓取/分析路由/模板安全/论文学习；共享桩与 Web 测试基座在 `tests/ai_test/common.py`）。
 
 ## 架构要点（需跨文件阅读）
 
