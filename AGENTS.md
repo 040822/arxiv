@@ -564,6 +564,11 @@ python main.py analyze
 # 查看数据库状态
 python -c "from database import *; init_db(); print(get_paper_count(), 'papers,', get_analyzed_count(), 'analyzed')"
 
+# 运行测试（统一入口，需在仓库根目录；测试用相对路径读 templates/）
+python scripts/run_all_tests.py         # 标准流程：unittest + pytest(随机顺序) + 3 次模块乱序，失败即停
+python scripts/run_all_tests.py --quick # 只跑 pytest 一次（日常快速验证）
+# 等价裸命令（脚本内部使用）：python -m unittest discover -s tests / python -m pytest tests/
+
 # 备份数据库
 cp data/papers.db data/papers.db.bak
 
@@ -617,4 +622,6 @@ flask>=3.0.0        # Web 框架
 apscheduler>=3.10.0 # 定时任务调度
 requests>=2.31.0    # HTTP 客户端（PDF下载）
 PyMuPDF>=1.24.0     # PDF 文本提取
+pytest>=9.0.0       # 测试运行器（与 unittest 双运行器并存）
+pytest-randomly>=4.1.0 # pytest 随机顺序插件（防顺序耦合回归，--randomly-seed 可复现）
 ```

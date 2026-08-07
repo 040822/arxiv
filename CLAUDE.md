@@ -21,16 +21,18 @@ python main.py fetch               # 仅抓取；analyze 仅分析
 
 python app.py                      # 启动 Flask（0.0.0.0:5000）+ APScheduler 定时任务
 
-# 测试（unittest，全部 mock、无网络、<1s）—— 必须在仓库根目录运行（测试用相对路径读 templates/）
+# 测试（unittest + pytest 双运行器，全部 mock、无网络、<1s）—— 统一入口脚本：
+python scripts/run_all_tests.py         # 标准流程：unittest + pytest(随机顺序) + 3 次模块乱序，失败即停
+python scripts/run_all_tests.py --quick # 只跑 pytest 一次（日常快速验证）
+# 单个测试（调试时）：
 python -m unittest tests.test_ai_provider_config
-# 单个测试：
 python -m unittest tests.test_ai_provider_config.ProviderRequestBuilderTests.test_regular_model_omits_disabled_max_tokens
 
 # 查看数据库状态
 python -c "from database import *; init_db(); print(get_paper_count(), 'papers,', get_analyzed_count(), 'analyzed')"
 ```
 
-无 lint/format/CI 配置；主要测试文件是 `tests/test_ai_provider_config.py`（覆盖配置/认证/抓取/分析路由/模板安全/论文学习）。
+无 lint/format/CI 配置；测试位于 `tests/`（12 个文件，主体是 `test_ai_provider_config.py`，覆盖配置/认证/抓取/分析路由/模板安全/论文学习）。
 
 ## 架构要点（需跨文件阅读）
 
