@@ -1,0 +1,6 @@
+# Codecov 配置：只上报覆盖率数据用于可视化，不阻断 CI。
+# 项目单用户、无 PR 工作流，关闭 status check 避免被覆盖率数字卡住。
+coverage:
+  status:
+    project: off
+    patch: off
