@@ -15,3 +15,9 @@ temp/*
 data/*.db-*
 data/migration_backups/*.db
 output/
+
+# Test tooling artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

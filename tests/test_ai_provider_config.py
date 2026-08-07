@@ -1057,6 +1057,18 @@ _WEB_APP_CONTEXT = None
 
 def setup_web_test_base():
     global _WEB_APP, _WEB_APP_CONTEXT
+    global web_application, web_auth, web_pages, web_papers_api
+    global web_providers_api, web_settings_api, web_tasks_api, web_learning_api
+    if web_application is None:
+        install_import_stubs()
+        web_application = importlib.import_module("source.web.application")
+        web_auth = importlib.import_module("source.web.auth")
+        web_learning_api = importlib.import_module("source.web.learning_api")
+        web_pages = importlib.import_module("source.web.pages")
+        web_papers_api = importlib.import_module("source.web.papers_api")
+        web_providers_api = importlib.import_module("source.web.providers_api")
+        web_settings_api = importlib.import_module("source.web.settings_api")
+        web_tasks_api = importlib.import_module("source.web.tasks_api")
     _WEB_APP = web_application.app
     _WEB_APP_CONTEXT = _WEB_APP.app_context()
     _WEB_APP_CONTEXT.push()

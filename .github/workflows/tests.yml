@@ -1,0 +1,24 @@
+name: tests
+
+on:
+  push:
+    branches: [master, dev]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run full test suite
+        run: python scripts/run_all_tests.py
+      - name: Coverage report
+        run: python -m pytest --cov=. --cov-report=term-missing --cov-report=xml tests/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml

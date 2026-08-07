@@ -24,6 +24,8 @@ python app.py                      # 启动 Flask（0.0.0.0:5000）+ APScheduler
 # 测试（unittest + pytest 双运行器，全部 mock、无网络、<1s）—— 统一入口脚本：
 python scripts/run_all_tests.py         # 标准流程：unittest + pytest(随机顺序) + 3 次模块乱序，失败即停
 python scripts/run_all_tests.py --quick # 只跑 pytest 一次（日常快速验证）
+# 覆盖率：python -m pytest --cov=. --cov-report=term-missing tests/（.coveragerc 排除 tests/scripts/.venv）
+# CI：push 到 dev/master 自动跑 .github/workflows/tests.yml
 # 单个测试（调试时）：
 python -m unittest tests.test_ai_provider_config
 python -m unittest tests.test_ai_provider_config.ProviderRequestBuilderTests.test_regular_model_omits_disabled_max_tokens
