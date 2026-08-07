@@ -5,6 +5,16 @@ import sys
 import unittest
 
 
+def _parse_json_stdout(stdout):
+    """解析子进程 stdout 中的 JSON，容忍第三方库（如 PyMuPDF 1.28+）在
+    import 时向 stdout 打印的弃用警告。"""
+    for marker in ("[", "{"):
+        start = stdout.find(marker)
+        if start != -1:
+            return json.loads(stdout[start:])
+    raise ValueError(f"stdout 中未找到 JSON: {stdout[:200]!r}")
+
+
 class WebContractTests(unittest.TestCase):
     def test_root_app_exposes_the_complete_http_route_contract(self):
         code = """
@@ -27,7 +37,7 @@ print(json.dumps(rows, ensure_ascii=False))
             text=True,
             env=env,
         )
-        actual = json.loads(result.stdout)
+        actual = _parse_json_stdout(result.stdout)
         with open("tests/fixtures/web_routes.json", "r", encoding="utf-8") as handle:
             expected = json.load(handle)
 
@@ -59,7 +69,7 @@ print(json.dumps({
             text=True,
             env=env,
         )
-        actual = json.loads(result.stdout)
+        actual = _parse_json_stdout(result.stdout)
         self.assertEqual(actual, {
             "about": 200,
             "settings": 302,
