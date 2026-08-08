@@ -43,14 +43,9 @@
                         <option value="cs.IR">cs.IR - Information Retrieval</option>
                     </select>
                 </div>
-                <div class="form-group" style="flex:1;">
-                    <label>最大数量（每分类）</label>
-                    <input type="number" id="fetch-max" min="1" max="500" value="50" placeholder="50">
-                </div>
-            </div>
             <div class="form-row">
                 <div class="form-group" style="flex:1;">
-                    <label>抓取天数（留空则按数量抓取）</label>
+                    <label>抓取天数（留空则抓最近 1 天）</label>
                     <input type="number" id="fetch-days" min="1" max="3650" placeholder="例如: 30 表示最近30天（最大10年）">
                 </div>
                 <div class="form-group" style="flex:1;">
@@ -166,7 +161,6 @@
         async function runFetch(btn) {
             const statusEl = document.getElementById('fetch-status');
             const category = document.getElementById('fetch-category').value;
-            const maxResults = document.getElementById('fetch-max').value;
             const days = document.getElementById('fetch-days').value;
             const date = document.getElementById('fetch-date').value;
             const origText = btn.textContent;
@@ -192,7 +186,6 @@
                 const params = new URLSearchParams();
                 params.set('task_id', taskId);
                 if (category) params.set('category', category);
-                if (maxResults && !days && !date) params.set('max_results', maxResults);
                 if (days && !date) params.set('days', days);
                 if (date) params.set('date', date);
                 const resp = await fetch('/api/fetch?' + params.toString(), { method: 'POST' });

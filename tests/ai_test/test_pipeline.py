@@ -208,6 +208,27 @@ class PipelineTests(unittest.TestCase):
         start_log.assert_not_called()
         fetch.assert_not_called()
 
+    def test_manual_combined_run_fetches_with_schedule_fetch_days(self):
+        web_tasks_api = self.web_tasks_api
+        web_tasks_api.request = FakeRequest(args={"task_id": "manual-2"})
+        captured = {}
+
+        def fake_fetch(categories=None, days=1):
+            captured["days"] = days
+            raise RuntimeError("abort-after-fetch")
+
+        with patch.object(web_tasks_api, "start_task_log", return_value=1), \
+             patch.object(web_tasks_api, "update_progress"), \
+             patch.object(web_tasks_api, "get_schedule_config", return_value={"fetch_days": 5}), \
+             patch.object(web_tasks_api, "fetch_latest_papers", side_effect=fake_fetch), \
+             patch.object(web_tasks_api, "finish_task_log") as finish_log:
+            result, status = web_tasks_api.api_run()
+
+        self.assertEqual(status, 500)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(captured["days"], 5)
+        finish_log.assert_called_once()
+
     def test_daily_pipeline_stops_after_core_step_failure(self):
         app_module = self.app_module
 

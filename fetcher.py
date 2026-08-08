@@ -21,7 +21,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
-from source.config import ARXIV_CATEGORIES, MAX_PAPERS_PER_CATEGORY
+from source.config import ARXIV_CATEGORIES
 from source.storage import paper_exists, insert_paper
 from source.settings import get_proxy_config, get_fetch_config
 
@@ -113,17 +113,24 @@ def _fetch_date_range(categories, start_date, end_date, request_delay=None):
                 num_retries=3,
             )
 
-            # 构建查询：按分类过滤
+            # 构建查询：按分类过滤 + submittedDate 日期窗口过滤
             # 注意：使用 cat: 而非 primary_category:，后者在某些情况下结果不完整
-            query = f"cat:{category}"
+            # submittedDate 是 arXiv API 官方日期过滤字段（GMT、分钟精度），
+            # 过滤后结果天然限定在窗口内，避免无过滤查询时"跳过区"（比窗口新的论文）
+            # 消耗翻页额度，导致深回填在单查询 30000 条上限内被静默截断。
+            date_filter = (
+                f" AND submittedDate:[{start_date.strftime('%Y%m%d%H%M')}"
+                f" TO {end_date.strftime('%Y%m%d%H%M')}]"
+            )
+            query = f"cat:{category}{date_filter}"
 
             # 创建搜索对象：
-            # - max_results=10000: 足够大的上限，后续通过日期过滤控制实际数量
+            # - max_results=30000: arXiv API 单查询上限；窗口内论文数由日期过滤天然限定
             # - sort_by=SubmittedDate: 按提交日期排序
             # - sort_order=Descending: 降序，最新的论文优先
             search = arxiv.Search(
                 query=query,
-                max_results=10000,
+                max_results=30000,
                 sort_by=arxiv.SortCriterion.SubmittedDate,
                 sort_order=arxiv.SortOrder.Descending,
             )
@@ -144,8 +151,8 @@ def _fetch_date_range(categories, start_date, end_date, request_delay=None):
                     continue
                 seen_ids.add(arxiv_id)
 
-                # 日期过滤：
-                # arXiv API 的 submittedDate 查询语法不可靠，因此在代码中手动过滤
+                # 日期过滤（防御层）：submittedDate 查询过滤为主，此处兜底处理
+                # 分钟精度截断与边界时刻（秒级）差异，保证 [start, end) 窗口语义精确
                 published_dt = result.published
                 if published_dt:
                     published_date = published_dt.strftime("%Y-%m-%d")
@@ -207,128 +214,36 @@ def _fetch_date_range(categories, start_date, end_date, request_delay=None):
     return all_papers
 
 
-def fetch_latest_papers(categories=None, max_results=None, days=None):
+def fetch_latest_papers(categories=None, days=1):
     """
-    抓取最新论文（主入口函数）。
+    抓取最近 N 天的新论文（主入口函数）。
 
-    根据参数决定抓取策略：
-    - 如果指定了 days 参数，则调用 fetch_batch() 进行分批抓取
-    - 否则按分类逐个抓取最新的 max_results 篇论文
+    统一按日期窗口抓全：内部走 fetch_batch() 分批，_fetch_date_range() 使用
+    submittedDate 日期过滤 + 翻页，窗口内论文完整取回，不再使用固定条数上限。
+    滚动窗口重叠（后续每日窗口会再次覆盖前几天的论文）+ 入库去重，
+    天然支持抓取失败后由下一次运行自动补抓。
 
     参数:
         categories (list, optional): arXiv 分类列表，默认使用 config 中的配置
-        max_results (int, optional): 每个分类最多抓取的论文数，默认使用 config 中的配置
-        days (int, optional): 抓取最近 N 天的论文，启用分批抓取模式
+        days (int, optional): 抓取最近 N 天的论文，默认 1 天
 
     返回:
         list[dict]: 新抓取的论文数据列表
     """
     if categories is None:
         categories = ARXIV_CATEGORIES
-    if max_results is None:
-        max_results = MAX_PAPERS_PER_CATEGORY
+    if days is None or days < 1:
+        days = 1
 
     # 应用代理配置
     _apply_proxy()
 
-    # 读取抓取配置
+    # 读取抓取配置（请求间隔、批次节奏）
     fetch_cfg = get_fetch_config()
 
-    # 如果指定了天数，使用分批抓取模式
-    if days:
-        return fetch_batch(categories=categories, total_days=days,
-                           batch_days=fetch_cfg["batch_days"],
-                           batch_delay=fetch_cfg["batch_delay"])
-
-    all_papers = []
-    # 内存去重集合
-    seen_ids = set()
-    successful_categories = 0
-    errors = []
-
-    # 按分类逐个抓取
-    for category in categories:
-        logger.info(f"Fetching papers from category: {category}")
-        try:
-            # 创建 arXiv 客户端
-            client = arxiv.Client(
-                page_size=max_results,
-                delay_seconds=fetch_cfg["request_delay"],
-                num_retries=3,
-            )
-
-            # 使用 cat: 查询更可靠，再在代码中保留主分类匹配的论文
-            search_limit = max_results * 5
-            search = arxiv.Search(
-                query=f"cat:{category}",
-                max_results=search_limit,
-                sort_by=arxiv.SortCriterion.SubmittedDate,
-                sort_order=arxiv.SortOrder.Descending,
-            )
-
-            category_count = 0
-            for result in client.results(search):
-                if str(result.primary_category) != category:
-                    continue
-
-                # 解析 arXiv ID，去掉版本号
-                arxiv_id = result.entry_id.split("/abs/")[-1]
-                if "." in arxiv_id:
-                    arxiv_id = arxiv_id.split("v")[0]
-
-                # 内存去重
-                if arxiv_id in seen_ids:
-                    continue
-                seen_ids.add(arxiv_id)
-
-                # 数据库去重
-                if paper_exists(arxiv_id):
-                    continue
-
-                # 格式化日期
-                published = result.published.strftime("%Y-%m-%d") if result.published else ""
-                updated = result.updated.strftime("%Y-%m-%d") if result.updated else ""
-
-                # 提取作者和分类
-                authors = [str(a) for a in result.authors]
-                categories_list = [str(c) for c in result.categories]
-
-                # 构建论文数据字典
-                paper_data = {
-                    "arxiv_id": arxiv_id,
-                    "title": result.title.replace("\n", " ").strip(),
-                    "authors": authors,
-                    "abstract": result.summary.replace("\n", " ").strip(),
-                    "categories": categories_list,
-                    "primary_category": str(result.primary_category),
-                    "url": result.entry_id,
-                    "pdf_url": result.pdf_url,
-                    "published_date": published,
-                    "updated_date": updated,
-                }
-
-                # 写入数据库
-                paper_id = insert_paper(paper_data)
-                if paper_id:
-                    paper_data["id"] = paper_id
-                    all_papers.append(paper_data)
-                    category_count += 1
-                    logger.info(f"  New paper: {arxiv_id} - {paper_data['title'][:60]}...")
-                    if category_count >= max_results:
-                        break
-
-        except Exception as e:
-            # 单个分类失败不影响整体
-            errors.append(_format_fetch_error(category, e))
-            logger.error(f"Error fetching category {category}: {e}")
-            continue
-        successful_categories += 1
-
-    if errors and successful_categories == 0:
-        raise RuntimeError("arXiv 抓取失败：" + "；".join(errors))
-
-    logger.info(f"Total new papers fetched: {len(all_papers)}")
-    return all_papers
+    return fetch_batch(categories=categories, total_days=days,
+                       batch_days=fetch_cfg["batch_days"],
+                       batch_delay=fetch_cfg["batch_delay"])
 
 
 # ============================================================

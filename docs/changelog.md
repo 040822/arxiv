@@ -2,12 +2,20 @@
 
 ## 未发布
 
+### 抓取完整性修复：日期窗口抓全（4.1 第 1B-3 轮）
+- 修复手动抓取固定 50 条上限：`fetch_latest_papers` 统一按日期窗口抓全（默认最近 1 天），删除按条数抓取的非分批路径与 `MAX_PAPERS_PER_CATEGORY` 常量；`/api/fetch` 默认抓最近 1 天并删除 `max_results` 参数，tasks 页同步移除「最大数量」输入
+- `/api/run` 与手动组合流水线的抓取窗口改为 `schedule.fetch_days`（与定时日报一致）
+- `_fetch_date_range` 查询启用 arXiv API 官方 `submittedDate` 日期过滤（GMT 分钟精度），消除无过滤查询时"跳过区"消耗翻页额度导致的深回填截断；代码内 `[start, end)` 日期过滤保留为分钟截断/秒级边界的兜底；单查询上限提升至 API 上限 30000
+- 复核并推翻 AGENTS.md「submittedDate 过滤器不工作」的历史结论：实测语法可用（如 `cat:cs.RO AND submittedDate:[202608060000 TO 202608070000]` 精确返回当日 35 篇）
+- 防 429：抓取请求间隔默认 3→5 秒、批次间隔默认 5→10 秒（实测连续翻页在 3 秒间隔下仍可能触发 arXiv 软限流）；同步更新 `data/settings.json` 现值与设置页 UI 默认
+- 滚动窗口重叠 + 入库去重自动补抓语义补测试锁定（抓取失败后次日运行自动补回，不重复入库）
+- 新增测试：日期过滤查询构造、窗口边界过滤、重复抓取去重、默认窗口 1 天、/api/run 使用 fetch_days
+
 ### config.py 迁入 source/ 与 app.py 入口收口（4.1 第 1B-1 轮）
 - `config.py` 迁至 `source/config.py`：`DB_DIR/DB_PATH` 改为基于项目根计算（上跳两级），`data/` 与 `papers.db` 位置不变；删除无引用的历史常量 `OPENAI_API_KEY/OPENAI_BASE_URL/OPENAI_MODEL`
 - 全部 12 处 `from config import` 改写为 `from source.config import`；清理 `source/settings` 六个模块中未使用的 config 导入（providers/runtime/prompts 整块删除，defaults/store/normalize 收窄到实际用量）
 - `source/web/application.py` 删除未使用的 `WEB_HOST/WEB_PORT` 导入
 - `app.py` 增加明确 `main()`（初始化 + 调度器 + 开发服务器），保留模块级 Flask `app` 供测试/WSGI 使用；根目录不再有 `config.py`
-
 
 ### 删除根兼容模块（4.1 第 1A 轮）
 - 删除 `main.py`、`settings.py`、`database.py` 三个根兼容模块，不保留转发 shim；CLI（fetch/analyze/run）不再提供，抓取、分析、推荐评分以 Web `/tasks` 与 `/api/fetch`、`/api/analyze`、`/api/run` 为唯一入口

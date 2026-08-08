@@ -28,9 +28,6 @@ ARXIV_CATEGORIES = [
     # "cs.MA",   # Multiagent Systems
 ]
 
-# 每个分类每次拉取的最大论文数
-MAX_PAPERS_PER_CATEGORY = 50
-
 # ==================== 数据库配置 ====================
 # 基于文件位置上跳两级计算项目根路径，保证 data/ 始终位于项目根
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -51,12 +48,12 @@ SCHEDULE_MINUTE = 0
 ANALYSIS_CONCURRENCY = 5
 
 # ==================== arXiv 抓取配置 ====================
-# API 请求间隔（秒），arXiv 官方建议 ≥ 3
-FETCH_REQUEST_DELAY = 3.0
+# API 请求间隔（秒），arXiv 官方建议 ≥ 3；实测连续翻页在 3s 间隔下仍可能触发 429 软限流，故默认取 5
+FETCH_REQUEST_DELAY = 5.0
 # 分批抓取时，每批的天数
 FETCH_BATCH_DAYS = 30
 # 分批抓取时，批次之间的间隔（秒）
-FETCH_BATCH_DELAY = 5.0
+FETCH_BATCH_DELAY = 10.0
 
 # ==================== PDF 下载限速（令牌桶）====================
 # rate: 每秒生成的令牌数（即每秒允许的下载次数）

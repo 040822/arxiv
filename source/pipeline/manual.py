@@ -5,7 +5,7 @@ from datetime import datetime
 from analyzer import analyze_pending_papers, recommend_pending_papers
 from fetcher import fetch_latest_papers
 from source.reports import generate_report_content
-from source.settings import get_concurrency
+from source.settings import get_concurrency, get_schedule_config
 from source.storage import (
     finish_task_log,
     get_all_dates,
@@ -28,7 +28,7 @@ def run_manual_pipeline(progress_callback):
     try:
         log_id = start_task_log("run", "抓取、分析并生成报告")
         progress_callback({"current": 0, "total": 4, "status": "running", "message": "正在抓取论文..."})
-        new_papers = fetch_latest_papers()
+        new_papers = fetch_latest_papers(days=get_schedule_config()["fetch_days"])
 
         progress_callback({
             "current": 1,

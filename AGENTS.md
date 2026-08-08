@@ -201,13 +201,17 @@ CREATE TABLE paper_quiz_attempts (
 
 ### 4.1 论文抓取流程
 ```
-fetcher.fetch_latest_papers()
-  → 遍历 ARXIV_CATEGORIES
-  → arxiv.Client 按 submittedDate 降序拉取
+fetcher.fetch_latest_papers(days)   # 默认 1 天；定时日报传 schedule.fetch_days
+  → fetch_batch() 按 batch_days 分批（请求节奏/进度粒度）
+  → _fetch_date_range() 按分类查询
+    → 查询带 submittedDate 日期窗口过滤（GMT 分钟精度）+ cat:xxx
+    → 按 submittedDate 降序翻页取完窗口内论文（单查询上限 30000 条）
+    → 代码内 [start, end) 日期过滤兜底（分钟截断/秒级边界）
   → 去重：seen_ids 内存去重 + paper_exists() 数据库去重
   → insert_paper() 写入 papers 表
   → 返回新增论文列表
 ```
+滚动窗口重叠（每日窗口再次覆盖前几天的论文）+ 入库去重，天然支持抓取失败后由下一次运行自动补抓。
 
 ### 4.2 AI 分析流程
 ```
@@ -530,9 +534,10 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 - 优先使用具体的技术方法名称
 
 ### 7.6 arXiv API 注意事项
-- **submittedDate 过滤器不工作**：arXiv API 的 `submittedDate:[... TO ...]` 查询语法实际不返回结果，已踩坑
-- **正确做法**：使用 `cat:xxx` 查询 + `sortBy=submittedDate&sortOrder=descending` 排序，然后在代码中按 `published` 日期过滤
-- **分类查询**：`cat:cs.RO` 匹配主分类为 cs.RO 的论文，比 `primary_category:cs.RO` 更可靠
+- **`submittedDate` 是官方日期过滤字段**：格式 `submittedDate:[YYYYMMDDTTTT TO YYYYMMDDTTTT]`（24 小时制、GMT、分钟精度），如 `cat:cs.RO AND submittedDate:[202608060000 TO 202608070000]`。抓取按日期窗口查询 + 翻页取完窗口内论文；代码内 `[start, end)` 日期过滤保留作为分钟截断与秒级边界的兜底
+- **查询上限**：单查询 `max_results` 上限 30000 条，分片返回；窗口内论文数由日期过滤天然限定
+- **请求节奏**：官方建议连续调用间隔 ≥ 3 秒（`request_delay` 默认 3）；过快请求会触发 429 软限流，需保持批次间 `batch_delay` 节奏
+- **分类查询**：`cat:cs.RO` 匹配分类列表含 cs.RO 的论文（含二级分类），比 `primary_category:cs.RO` 更可靠；抓取不按主分类过滤
 - **分批抓取**：大批量抓取时使用 `fetch_batch()` 自动分批，避免单次请求过大
 - **时区问题**：arXiv 返回的 `published` 是带 UTC 时区的 datetime，比较时必须使用 `datetime.now(timezone.utc)`，否则报 `can't compare offset-naive and offset-aware datetimes`
 

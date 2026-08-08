@@ -1,7 +1,7 @@
 # 4.1 后续重构：根目录收口、CSS 模块化与 Web 单入口
 
 > 计划日期：2026-08-07  
-> 状态：第 0 轮已完成；第 1 轮拆为 1A（删除）/ 1B（迁入拆解），1A 已实施  
+> 状态：第 0 轮、1A、1B-1、1B-3 已完成；1B-2 待实施  
 > 本文仅记录已确认的实施计划；本次写入不执行其中任何代码或样式变更。
 
 ## 总结
@@ -38,6 +38,30 @@
 - 验收：210 项测试全绿 + 新增边界测试；`python app.py` 启动冒烟，调度器只启动一次。
 
 #### 第 1B 轮：迁入与拆解（config / analyzer / fetcher / pdf_reader / backup / email_report / app）
+
+按风险拆为多个子轮：1B-1 迁移 `config.py` 与收口 `app.py`；1B-2 标签候选/评级标准可配化（待实施）；1B-3 抓取完整性修复（已实施）；后续继续 analyzer/fetcher/pdf_reader/backup/email_report 的迁入拆解。
+
+#### 第 1B-1 轮：config.py 迁入 source/ 与 app.py 入口收口 ✅ 已完成（2026-08-07）
+
+- `config.py` 迁至 `source/config.py`：`DB_DIR/DB_PATH` 改为基于项目根上跳两级计算，`data/` 与 `papers.db` 位置不变；删除无引用的历史常量 `OPENAI_API_KEY/OPENAI_BASE_URL/OPENAI_MODEL`
+- 全部 12 处 `from config import` 改写为 `from source.config import`；清理 `source/settings` 六个模块中未使用的 config 导入（providers/runtime/prompts 整块删除，defaults/store/normalize 收窄到实际用量）；`source/web/application.py` 删除未使用的 `WEB_HOST/WEB_PORT` 导入
+- `app.py` 增加明确 `main()`（初始化 + 调度器 + 开发服务器），保留模块级 Flask `app` 供测试/WSGI 使用；根目录不再有 `config.py`
+- 验收：210 项测试全绿；冒烟断言 `DB_DIR == 项目根/data`、调度器单任务
+
+#### 第 1B-3 轮：抓取完整性修复（日期窗口抓全） ✅ 已完成（2026-08-07）
+
+- 实测复核 arXiv API：`submittedDate` 日期过滤语法可用（推翻 AGENTS.md 旧记录），单查询上限 30000 条、2000 分片
+- 实弹审计确认：08-06 缺 35 篇系 08-07 定时日报抓取失败（arXiv 连接超时、重试 20 次耗尽）所致；滚动窗口重叠 + 入库去重自动补抓，已补回 42 篇缺失论文
+- `fetch_latest_papers` 统一按日期窗口抓全（默认 1 天），删除按条数抓取的非分批路径与 `MAX_PAPERS_PER_CATEGORY`（原批准的"2000 安全阀"基于被证伪的 API 2000 上限前提，删除以避免大窗口截断）；`/api/fetch` 删 `max_results` 参数、默认最近 1 天；`/api/run` 与手动流水线抓取窗口改用 `schedule.fetch_days`
+- `_fetch_date_range` 查询启用 `submittedDate` 日期窗口过滤（GMT 分钟精度）+ `max_results=30000`；代码内 `[start, end)` 过滤保留为分钟截断/秒级边界兜底
+- 防 429：请求间隔默认 3→5 秒、批次间隔默认 5→10 秒（实测连续翻页在 3 秒间隔下仍可能触发软限流）
+- 新增测试：日期过滤查询构造、窗口边界过滤、重复抓取去重（补抓语义）、默认窗口、`/api/run` 使用 `fetch_days`；215 项测试全绿
+- 实弹验证：新逻辑补抓 08-06 35 篇 + 08-05 7 篇全部入库，数据库 08-05/08-06 恢复完整
+
+#### 第 1B-2 轮：标签候选与评级标准可配化（待实施）
+
+- `TAG_CANDIDATES` 与 `RATING_CRITERIA` 移入 `settings.json`（默认值=现值），设置页新增「AI 分析与评级」分组（编辑形式待定）；analyzer 改为运行时读取，normalize 补字段校验
+- 抓取范围（`ARXIV_CATEGORIES`）本轮不做；后续可考虑 config.py 收缩为路径模块（`REPO_ROOT/DB_DIR/DB_PATH`）
 
 | 现有模块 | 最终位置与职责 |
 |---|---|

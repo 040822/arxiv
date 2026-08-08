@@ -26,7 +26,6 @@ from fetcher import (
     parse_arxiv_id,
 )
 from source.pipeline import (
-    PipelineBusyError, run_manual_pipeline,
     _run_email_report_task, _run_webdav_backup_task, configure_daily_job,
     pipeline_lock, scheduler,
 )
@@ -65,8 +64,7 @@ def api_fetch():
     支持的查询参数：
     - task_id: 任务追踪 ID（用于进度查询）
     - category: 指定 arXiv 分类（如 cs.RO）
-    - max_results: 最大结果数
-    - days: 抓取最近 N 天的论文（使用分批抓取）
+    - days: 抓取最近 N 天的论文（按日期窗口抓全）；缺省为最近 1 天
     - date: 抓取指定日期的论文
     """
     task_id = request.args.get("task_id", "fetch")
@@ -74,7 +72,6 @@ def api_fetch():
     try:
         from fetcher import fetch_latest_papers, fetch_batch, fetch_by_date
         category = request.args.get("category", "").strip()
-        max_results = request.args.get("max_results", type=int)
         days = request.args.get("days", type=int)
         date = request.args.get("date", "").strip()
 
@@ -98,9 +95,9 @@ def api_fetch():
                                      progress_callback=progress_callback)
             desc = f"最近 {days} 天"
         else:
-            # 默认抓取（使用配置中的默认参数）
-            new_papers = fetch_latest_papers(categories=categories, max_results=max_results)
-            desc = "默认"
+            # 默认抓取最近 1 天（按日期窗口抓全）
+            new_papers = fetch_latest_papers(categories=categories)
+            desc = "默认（最近 1 天）"
 
         unanalyzed = get_unanalyzed_count()
         cat_desc = f"（分类: {category}）" if category else ""
@@ -194,9 +191,9 @@ def api_run():
     log_id = None
     try:
         log_id = start_task_log("run", "抓取、分析并生成报告")
-        # 阶段1：抓取论文
+        # 阶段1：抓取论文（与定时日报一致的回看天数窗口）
         update_progress(task_id, {"current": 0, "total": 4, "status": "running", "message": "正在抓取论文..."})
-        new_papers = fetch_latest_papers()
+        new_papers = fetch_latest_papers(days=get_schedule_config()["fetch_days"])
 
         # 阶段2：AI 分析
         update_progress(task_id, {"current": 1, "total": 4, "status": "running", "message": f"抓取完成，开始分析 {len(new_papers)} 篇新论文..."})
