@@ -6,7 +6,6 @@ from datetime import timedelta
 
 from flask import Flask
 
-from config import WEB_HOST, WEB_PORT
 from source.pipeline import configure_daily_job, scheduler
 from source.settings import get_session_secret
 from source.storage import init_db, interrupt_running_task_logs

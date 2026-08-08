@@ -21,7 +21,7 @@
 
 | 文件 | 行数 | 职责 | 修改频率 |
 |------|------|------|----------|
-| `config.py` | ~96 | 硬编码配置（分类、标签、路径、延迟） | 低 |
+| `source/config.py` | ~96 | 硬编码配置（分类、标签、路径、延迟） | 低 |
 | `source/settings/*` | 8 个模块 | 值转换、默认值、归一化、思考协议、store、供应商、Prompt、运行时配置 | 中 |
 | `source/storage/*` | 10 个模块 | SQLite 托管连接、顺序迁移/快照、论文、分析、日志、报告与学习记录 | 中 |
 | `fetcher.py` | ~343 | arXiv 论文抓取 | 中 |
@@ -99,7 +99,7 @@ APScheduler cron(day_of_week, hour, minute)
     → send_report_email() / run_webdav_backup()  # 未启用时 skipped，失败时 warning
 ```
 
-执行星期、时间、抓取回看天数、分析上限和抓取失败重试策略从 `settings.json.schedule` 读取，`config.py` 仅提供首次默认时间。抓取阶段异常时默认每 10 分钟重试，最多 20 次；该策略只作用于定时日报。应用启动时遗留 `running` 日志会变为 `interrupted`；定时日报和 `/api/run` 共用互斥锁。
+执行星期、时间、抓取回看天数、分析上限和抓取失败重试策略从 `settings.json.schedule` 读取，`source/config.py` 仅提供首次默认时间。抓取阶段异常时默认每 10 分钟重试，最多 20 次；该策略只作用于定时日报。应用启动时遗留 `running` 日志会变为 `interrupted`；定时日报和 `/api/run` 共用互斥锁。
 
 ---
 

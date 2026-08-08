@@ -4,7 +4,7 @@
 
 ## 功能特性
 
-- **每日自动抓取** — 默认从 arXiv 拉取 cs.RO 分类论文，可在 `config.py` 中增减分类
+- **每日自动抓取** — 默认从 arXiv 拉取 cs.RO 分类论文，可在 `source/config.py` 中增减分类
 - **AI 快速阅读** — 自动调用 OpenAI 兼容 API，为每篇论文生成标签（VLA、World Model 等）、中文摘要翻译和精炼总结
 - **论文学习页** — 单篇论文支持基于 PDF 全文的自由讨论、3/6 题主动问答练习和苏格拉底追问
 - **Web 报告** — 自动生成数据库内的每日结构化报告，展示近 7 个有数据日的标签与推荐分趋势
@@ -59,7 +59,7 @@ pip install -r requirements.txt
 
 启动 Web 服务后进入 `http://localhost:5000/settings`：先在「模型供应商」中填写 OpenAI 兼容 API Key 和 Base URL、刷新模型列表，再在「功能模型路由」中分别为 PDF 元数据提取、基础分析、深度阅读、论文对话和论文问答练习等功能选择供应商、模型与推理参数。每个路由只提供可选的 Temperature 采样控制；未启用时不发送 Temperature，其他采样参数也不发送，由模型采用默认行为。
 
-运行时配置保存在 `data/settings.json`（当前结构版本为 3），该文件包含 API Key，已被 `.gitignore` 排除，请不要提交到 GitHub。`config.py` 中的 API 相关变量只作为首次默认值或环境变量 fallback。
+运行时配置保存在 `data/settings.json`（当前结构版本为 3），该文件包含 API Key，已被 `.gitignore` 排除，请不要提交到 GitHub。`source/config.py` 只提供硬编码默认值（分类、路径、定时任务首次时间等），不包含任何 API 凭据。
 
 ### 3. 运行
 
@@ -93,10 +93,10 @@ journalctl -u arxiv-paper.service -f
 ## 项目结构
 
 ```
-├── config.py           # 硬编码配置（分类、标签候选、路径、默认值）
 ├── app.py              # Flask Web 服务 + APScheduler 定时任务
 ├── fetcher.py          # arXiv API 论文抓取
 ├── analyzer.py         # OpenAI API 论文分析（标签/翻译/摘要/简评）
+├── source/config.py    # 硬编码配置（分类、标签候选、路径、默认值）
 ├── templates/          # Flask HTML 模板
 ├── static/style.css    # Web 样式
 ├── data/papers.db      # SQLite 数据库（自动创建）
@@ -123,7 +123,7 @@ journalctl -u arxiv-paper.service -f
 
 ## 定时任务配置
 
-首次默认时间来自 `config.py`，之后可在「设置 → 定时任务」中配置执行星期、时间、抓取回看天数和分析上限。内置日报固定执行抓取、基础分析、推荐评分、生成报告、邮件和 WebDAV 六步；邮件或备份失败会标记为“部分成功”，但不会抹掉已生成的日报。
+首次默认时间来自 `source/config.py`，之后可在「设置 → 定时任务」中配置执行星期、时间、抓取回看天数和分析上限。内置日报固定执行抓取、基础分析、推荐评分、生成报告、邮件和 WebDAV 六步；邮件或备份失败会标记为“部分成功”，但不会抹掉已生成的日报。
 
 ## WebDAV 云备份
 
@@ -145,7 +145,7 @@ journalctl -u arxiv-paper.service -f
 | cs.CL | 计算与语言（NLP） |
 | cs.MA | 多智能体系统 |
 
-当前默认只启用 `cs.RO`。在 `config.py` 的 `ARXIV_CATEGORIES` 中可自行增减。
+当前默认只启用 `cs.RO`。在 `source/config.py` 的 `ARXIV_CATEGORIES` 中可自行增减。
 
 ## AI 评级与手动修正
 

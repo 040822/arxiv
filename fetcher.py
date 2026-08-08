@@ -21,7 +21,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
-from config import ARXIV_CATEGORIES, MAX_PAPERS_PER_CATEGORY
+from source.config import ARXIV_CATEGORIES, MAX_PAPERS_PER_CATEGORY
 from source.storage import paper_exists, insert_paper
 from source.settings import get_proxy_config, get_fetch_config
 

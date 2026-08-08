@@ -2,6 +2,13 @@
 
 ## 未发布
 
+### config.py 迁入 source/ 与 app.py 入口收口（4.1 第 1B-1 轮）
+- `config.py` 迁至 `source/config.py`：`DB_DIR/DB_PATH` 改为基于项目根计算（上跳两级），`data/` 与 `papers.db` 位置不变；删除无引用的历史常量 `OPENAI_API_KEY/OPENAI_BASE_URL/OPENAI_MODEL`
+- 全部 12 处 `from config import` 改写为 `from source.config import`；清理 `source/settings` 六个模块中未使用的 config 导入（providers/runtime/prompts 整块删除，defaults/store/normalize 收窄到实际用量）
+- `source/web/application.py` 删除未使用的 `WEB_HOST/WEB_PORT` 导入
+- `app.py` 增加明确 `main()`（初始化 + 调度器 + 开发服务器），保留模块级 Flask `app` 供测试/WSGI 使用；根目录不再有 `config.py`
+
+
 ### 删除根兼容模块（4.1 第 1A 轮）
 - 删除 `main.py`、`settings.py`、`database.py` 三个根兼容模块，不保留转发 shim；CLI（fetch/analyze/run）不再提供，抓取、分析、推荐评分以 Web `/tasks` 与 `/api/fetch`、`/api/analyze`、`/api/run` 为唯一入口
 - 5 个根模块（`analyzer.py`/`fetcher.py`/`pdf_reader.py`/`email_report.py`/`backup.py`）的 shim 导入全部改写为 `source.settings` / `source.storage` 正式路径；`source.web`/`source.pipeline` 等业务包不受影响

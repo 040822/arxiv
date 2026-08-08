@@ -8,14 +8,6 @@ import re
 import secrets
 from string import Formatter
 
-from config import (
-    DB_DIR,
-    FETCH_BATCH_DAYS,
-    FETCH_BATCH_DELAY,
-    FETCH_REQUEST_DELAY,
-    SCHEDULE_HOUR,
-    SCHEDULE_MINUTE,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +110,7 @@ def get_fetch_config():
     - batch_days: 每个批次抓取的天数范围
     - batch_delay: 两个批次之间的间隔秒数
 
-    如果用户未自定义，使用 config.py 中的默认值。
+    如果用户未自定义，使用 source.config 中的默认值。
 
     返回:
         dict: 包含 request_delay/batch_days/batch_delay 的配置字典
@@ -273,7 +265,7 @@ def get_schedule_config():
     获取每日自动任务配置。
 
     返回:
-        dict: enabled/hour/minute，默认来自 config.py 的 SCHEDULE_HOUR/MINUTE
+        dict: enabled/hour/minute，默认来自 source.config 的 SCHEDULE_HOUR/MINUTE
     """
     settings = load_settings()
     return _normalize_schedule(settings.get("schedule", {}))

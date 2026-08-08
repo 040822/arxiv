@@ -20,7 +20,7 @@ import re
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import DefaultHttpxClient, OpenAI
-from config import TAG_CANDIDATES, RATING_CRITERIA
+from source.config import TAG_CANDIDATES, RATING_CRITERIA
 from source.settings import (
     build_chat_completion_kwargs, get_ai_config, get_ai_task_config, get_prompt_profile,
     get_concurrency, get_personalization_config, get_proxy_config, get_research_interest_hash

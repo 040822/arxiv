@@ -8,14 +8,6 @@ import re
 import secrets
 from string import Formatter
 
-from config import (
-    DB_DIR,
-    FETCH_BATCH_DAYS,
-    FETCH_BATCH_DELAY,
-    FETCH_REQUEST_DELAY,
-    SCHEDULE_HOUR,
-    SCHEDULE_MINUTE,
-)
 
 logger = logging.getLogger(__name__)
 

@@ -31,14 +31,15 @@
 
 ```
 arxiv/
-├── config.py           # 硬编码配置（分类、标签、路径、延迟参数）
 ├── fetcher.py          # arXiv API 论文抓取（支持分批）
 ├── analyzer.py         # AI 分析与论文学习对话/问答
 ├── backup.py           # WebDAV 云同步备份
 ├── email_report.py     # 每日报告 SMTP 邮件发送
 ├── pdf_reader.py       # PDF 下载与文本提取（令牌桶限速）
-├── app.py              # source/web 的启动兼容 shim
-├── source/             # settings/storage/reports/pipeline/web 业务包
+├── app.py              # 唯一 Web 入口（main() + 可导入的 Flask app）
+├── source/
+│   ├── config.py       # 硬编码配置（分类、标签、路径、延迟参数）
+│   └── settings/       # settings/storage/reports/pipeline/web 业务包
 ├── requirements.txt    # Python 依赖
 ├── templates/          # Jinja2 HTML 模板
 │   ├── index.html      # 首页（每日论文）
@@ -220,7 +221,7 @@ CREATE TABLE paper_quiz_attempts (
 
 ## 配置系统
 
-### config.py — 硬编码配置
+### source/config.py — 硬编码配置
 
 需要改代码才能修改的配置：
 

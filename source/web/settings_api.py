@@ -397,7 +397,7 @@ def api_db_info():
     返回：论文总数、已分析数、标签数、分类数、日期范围、数据库文件大小、平均评级等。
     """
     import os
-    from config import DB_PATH
+    from source.config import DB_PATH
 
     total = get_paper_count()
     analyzed = get_analyzed_count()

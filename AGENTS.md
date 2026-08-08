@@ -26,14 +26,14 @@
 
 ```
 arxiv/
-├── config.py           # 硬编码配置（分类、标签候选、路径）
 ├── fetcher.py          # arXiv API 论文抓取（去重、按分类拉取）
 ├── analyzer.py         # AI 分析与论文学习逻辑（PDF全文、Q&A、对话、问答反馈）
 ├── backup.py           # WebDAV 云同步备份（SQLite 快照、zip 打包、上传/清理）
 ├── email_report.py     # 每日报告邮件发送（SMTP、邮件HTML包装、站内链接重写）
 ├── pdf_reader.py       # PDF 下载与文本提取（PyMuPDF，缓存到 data/pdf_cache/）
-├── app.py              # Flask 启动兼容 shim（实现位于 source/web/）
+├── app.py              # 唯一 Web 入口（main() + 可导入的 Flask app）
 ├── source/
+│   ├── config.py       # 硬编码配置（分类、标签候选、路径）
 │   ├── settings/       # 值转换、默认值、归一化、思考协议、store、供应商、Prompt、运行时配置
 │   ├── imports/        # 手动论文链接/PDF 元数据预览解析与安全 URL 校验
 │   ├── storage/        # 托管连接、顺序迁移/快照、论文、分析、日志、报告、学习记录
@@ -285,7 +285,7 @@ APScheduler cron(day_of_week, hour, minute)
 
 ## 5. 配置系统
 
-### 5.1 config.py（硬编码，需改代码）
+### 5.1 source/config.py（硬编码，需改代码）
 - `ARXIV_CATEGORIES` — 监控的 arXiv 分类
 - `TAG_CANDIDATES` — AI 标签候选列表
 - `RATING_CRITERIA` — AI 基础分析评级标准（0-5 星校准锚点）
@@ -525,7 +525,7 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 - 论文学习 PDF 文本必须通过 `get_learning_paper_text()` 获取，优先复用 `data/pdf_cache/<arxiv_id>.pdf`，未命中才下载，失败时回退摘要
 
 ### 7.5 添加新标签
-在 `config.py` 的 `TAG_CANDIDATES` 列表中添加。注意：
+在 `source/config.py` 的 `TAG_CANDIDATES` 列表中添加。注意：
 - 避免过于宽泛的标签（如 "Transformer"、"LLM"）
 - 优先使用具体的技术方法名称
 
@@ -597,7 +597,7 @@ cp data/papers.db data/papers.db.bak
 - 无多用户隔离系统，管理密码只提供本地单用户访问保护
 
 ### 可扩展方向
-- 添加更多 arXiv 分类到 `config.py` 的 `ARXIV_CATEGORIES`
+- 添加更多 arXiv 分类到 `source/config.py` 的 `ARXIV_CATEGORIES`
 - 实现论文版本更新检测（v2/v3）
 - 添加 Webhook 推送每日报告
 - 实现向量语义搜索（embedding + cosine similarity）

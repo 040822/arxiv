@@ -1,11 +1,10 @@
 """
-config.py - 硬编码配置文件
+source/config.py - 硬编码配置
 
 本文件包含所有不通过 Web 界面修改的硬编码配置。
 如需修改运行时配置（如 API Key、模型），请通过 Web 设置页或编辑 data/settings.json。
 
 配置分类：
-- OpenAI API 配置（默认值，实际使用 settings.json 中的配置）
 - arXiv 分类配置（监控哪些分类）
 - 数据库和输出目录配置
 - Web 服务配置
@@ -15,16 +14,9 @@ config.py - 硬编码配置文件
 - PDF 下载限速配置
 - AI 标签候选列表
 - 评级标准说明
-
-注意：此文件中的 API 配置仅作为默认值，实际运行时优先使用 settings.json 中的配置。
 """
 
 import os
-
-# ==================== OpenAI API 配置 ====================
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "deepseek-chat")
 
 # ==================== arxiv 分类配置 ====================
 ARXIV_CATEGORIES = [
@@ -40,7 +32,9 @@ ARXIV_CATEGORIES = [
 MAX_PAPERS_PER_CATEGORY = 50
 
 # ==================== 数据库配置 ====================
-DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+# 基于文件位置上跳两级计算项目根路径，保证 data/ 始终位于项目根
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_DIR = os.path.join(REPO_ROOT, "data")
 DB_PATH = os.path.join(DB_DIR, "papers.db")
 
 # ==================== Web 服务配置 ====================

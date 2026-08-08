@@ -8,8 +8,7 @@ import re
 import secrets
 from string import Formatter
 
-from config import (
-    DB_DIR,
+from source.config import (
     FETCH_BATCH_DAYS,
     FETCH_BATCH_DELAY,
     FETCH_REQUEST_DELAY,

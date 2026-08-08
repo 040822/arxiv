@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 
 import requests
 
-from config import DB_DIR, DB_PATH
+from source.config import DB_DIR, DB_PATH
 from source.settings import SETTINGS_PATH, get_webdav_backup_config, update_webdav_backup_status
 from source.storage.snapshot import copy_sqlite_snapshot
 

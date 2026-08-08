@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
-from config import DB_DIR, DB_PATH
+from source.config import DB_DIR, DB_PATH
 
 
 DB_BUSY_TIMEOUT_MS = 5000

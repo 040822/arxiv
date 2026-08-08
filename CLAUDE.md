@@ -39,7 +39,7 @@ python -c "from source.storage import *; init_db(); print(get_paper_count(), 'pa
 
 **模块分层与懒加载。** `app.py`（Web+定时）是唯一入口；它调用根模块 `fetcher` / `analyzer` / `pdf_reader` / `email_report` / `backup`（后续迁入 `source/`）；后者依赖 `source.settings`（运行时配置）和 `source.storage`（SQLite），最底层是 `config`。
 
-**两层配置系统是核心。** `config.py` 是硬编码默认值/环境变量 fallback，**仅在首次运行或缺省时生效**；真正的运行时配置在 `data/settings.json`（git 忽略，含 API Key），由 Web 设置页读写。所有运行时配置都经 `source.settings` 读取，不要直接读 `config.py` 的 API 变量。
+**两层配置系统是核心。** `source/config.py` 是硬编码默认值（分类、路径、定时任务首次时间），**仅在首次运行或缺省时生效**；真正的运行时配置在 `data/settings.json`（git 忽略，含 API Key），由 Web 设置页读写。所有运行时配置都经 `source.settings` 读取，不要直接读 `source/config.py` 的常量覆盖运行时行为。
 
 **AI 任务路由。** 独立 AI 任务包括 `basic_analysis`、`deep_reading`、`report_summary`、`recommendation`、`paper_chat`、`paper_quiz`，各自路由到自己的供应商/模型/参数。调用前用 `get_ai_task_config(task_key)` 取配置、`get_prompt_profile(task_key)` 取 Prompt 前缀，**参数必须用 `build_chat_completion_kwargs()` 构建**——绝不在业务代码里硬编码 `temperature`/`max_tokens`（思考模型会自动省略采样参数并改用 reasoning/thinking 字段）。
 
@@ -53,4 +53,4 @@ python -c "from source.storage import *; init_db(); print(get_paper_count(), 'pa
 - **arXiv API**：`submittedDate:[... TO ...]` 查询语法实际不返回结果——改用 `cat:cs.RO` 查询 + `sortBy=submittedDate&sortOrder=descending`，再在代码里按 `published` 日期过滤。`published` 带 UTC 时区，比较必须用 `datetime.now(timezone.utc)`，否则报 offset-naive/aware 错误。
 - **认证模型**：设置管理密码后，`/settings`、`/tasks`、所有写接口和敏感设置读接口都需登录；阅读清单加入/移除接口是公开例外；`GET /api/providers` 只能返回 `api_key_masked`，绝不返回明文 `api_key`。
 - **数据库迁移**：在 `init_db()` 里用 `PRAGMA table_info(table)` 检查列是否存在再 `ALTER TABLE ADD COLUMN`。SQLite 已开 WAL 模式。
-- **新增标签**：加到 `config.py` 的 `TAG_CANDIDATES`，避免过宽泛的标签（如 "Transformer"/"LLM"），优先具体技术方法名。
+- **新增标签**：加到 `source/config.py` 的 `TAG_CANDIDATES`，避免过宽泛的标签（如 "Transformer"/"LLM"），优先具体技术方法名。

@@ -24,7 +24,7 @@ import logging
 import requests
 import fitz  # PyMuPDF
 from urllib.parse import urljoin, urlparse
-from config import DB_DIR, PDF_DOWNLOAD_RATE, PDF_DOWNLOAD_CAPACITY
+from source.config import DB_DIR, PDF_DOWNLOAD_RATE, PDF_DOWNLOAD_CAPACITY
 from source.settings import get_proxy_config
 
 # 模块日志记录器

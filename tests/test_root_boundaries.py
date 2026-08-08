@@ -8,7 +8,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 ROOT_ENTRY_MODULES = {"app.py"}
 # 1B 待迁入 source/ 的根模块；迁完后再收紧为仅 ROOT_ENTRY_MODULES
 ROOT_PENDING_MODULES = {
-    "analyzer.py", "backup.py", "config.py",
+    "analyzer.py", "backup.py",
     "email_report.py", "fetcher.py", "pdf_reader.py",
 }
 EXPECTED_ROOT_PY = ROOT_ENTRY_MODULES | ROOT_PENDING_MODULES
