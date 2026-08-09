@@ -23,7 +23,7 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
     def setUpClass(cls):
         install_import_stubs()
         import app
-        import source.analysis as analyzer
+        import source.analysis.batch as analyzer
         import source.ingestion as fetcher
         import source.documents as pdf_reader
         cls.app = app

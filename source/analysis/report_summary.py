@@ -6,7 +6,7 @@ from source.settings import get_research_interest_hash
 from source.storage import get_connection
 
 from .messages import _build_task_messages
-from . import _call_ai
+from .core import _call_ai
 
 def _get_report_summary_context(report_date, limit=30):
     """读取报告导读所需的轻量论文上下文，避免把全文再次送给模型。"""

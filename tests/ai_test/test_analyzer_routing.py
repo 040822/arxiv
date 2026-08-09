@@ -17,7 +17,17 @@ class AiCallRoutingTests(unittest.TestCase):
     def setUpClass(cls):
         install_import_stubs()
         import source.analysis as analyzer
+        import source.analysis.core as analysis_core
+        import source.analysis.json_support as json_support
+        import source.analysis.learning as analysis_learning
+        import source.analysis.papers as analysis_papers
+        import source.analysis.usage as analysis_usage
         cls.analyzer = analyzer
+        cls.analysis_core = analysis_core
+        cls.json_support = json_support
+        cls.analysis_learning = analysis_learning
+        cls.analysis_papers = analysis_papers
+        cls.analysis_usage = analysis_usage
 
     def test_basic_analysis_uses_short_profile_without_qa(self):
         paper = {
@@ -29,7 +39,7 @@ class AiCallRoutingTests(unittest.TestCase):
         }
         fake_result = {"tags": ["VLA"], "rating": 4, "summary_cn": "摘要", "value_comment": "有价值"}
 
-        with patch.object(self.analyzer, "_call_ai", return_value=(fake_result, None)) as call:
+        with patch.object(self.analysis_papers, "_call_ai", return_value=(fake_result, None)) as call:
             _, result, error = self.analyzer.analyze_paper_basic(paper)
 
         self.assertIsNone(error)
@@ -53,7 +63,7 @@ class AiCallRoutingTests(unittest.TestCase):
         }
         fake_result = {"tags": ["VLA"], "rating": 9, "summary_cn": "摘要", "value_comment": "有价值"}
 
-        with patch.object(self.analyzer, "_call_ai", return_value=(fake_result, None)):
+        with patch.object(self.analysis_papers, "_call_ai", return_value=(fake_result, None)):
             _, result, error = self.analyzer.analyze_paper_basic(paper)
 
         self.assertIsNone(error)
@@ -65,7 +75,7 @@ class AiCallRoutingTests(unittest.TestCase):
             'invalid markdown \\_ and latex \\uparrow"}'
         )
 
-        cleaned = self.analyzer._clean_json_content(content)
+        cleaned = self.json_support._clean_json_content(content)
         parsed = json.loads(cleaned)
 
         self.assertIn(r"\alpha", parsed["qa_analysis"])
@@ -85,8 +95,8 @@ class AiCallRoutingTests(unittest.TestCase):
         qa_analysis = "\n\n".join(f"### Q{i}: question {i}\n\nanswer {i}" for i in range(1, 7))
         fake_raw = json.dumps({"qa_analysis": qa_analysis})
 
-        with patch.object(self.analyzer, "get_paper_full_text", return_value="FULL PDF TEXT") as full_text, \
-             patch.object(self.analyzer, "_call_ai_raw", return_value=(fake_raw, {"finish_reason": "stop"})) as call:
+        with patch.object(self.analysis_papers, "get_paper_full_text", return_value="FULL PDF TEXT") as full_text, \
+             patch.object(self.analysis_papers, "_call_ai_raw", return_value=(fake_raw, {"finish_reason": "stop"})) as call:
             _, result, error = self.analyzer.analyze_paper_full(paper)
 
         self.assertIsNone(error)
@@ -119,7 +129,7 @@ class AiCallRoutingTests(unittest.TestCase):
             "recommendation_reason": "与 VLA 研究兴趣高度相关。",
         }
 
-        with patch.object(self.analyzer, "_call_ai", return_value=(fake_result, None)) as call:
+        with patch.object(self.analysis_papers, "_call_ai", return_value=(fake_result, None)) as call:
             _, result, error = self.analyzer.analyze_paper_recommendation(
                 paper,
                 research_interests="VLA and robot learning",
@@ -144,9 +154,9 @@ class AiCallRoutingTests(unittest.TestCase):
             "pdf_url": "https://arxiv.org/pdf/2601.00001",
         }
 
-        with patch.object(self.analyzer, "get_cached_pdf_path", return_value="/tmp/cached.pdf"), \
-             patch.object(self.analyzer, "extract_text_from_pdf", return_value="PDF TEXT") as extract_text, \
-             patch.object(self.analyzer, "download_pdf") as download_pdf:
+        with patch.object(self.analysis_core, "get_cached_pdf_path", return_value="/tmp/cached.pdf"), \
+             patch.object(self.analysis_core, "extract_text_from_pdf", return_value="PDF TEXT") as extract_text, \
+             patch.object(self.analysis_core, "download_pdf") as download_pdf:
             info = self.analyzer.get_learning_paper_text(paper)
 
         self.assertEqual(info["paper_text"], "PDF TEXT")
@@ -165,9 +175,9 @@ class AiCallRoutingTests(unittest.TestCase):
             "pdf_url": "https://arxiv.org/pdf/2601.00001",
         }
 
-        with patch.object(self.analyzer, "get_cached_pdf_path", return_value=None), \
-             patch.object(self.analyzer, "download_pdf", return_value="/tmp/missing.pdf"), \
-             patch.object(self.analyzer, "extract_text_from_pdf", side_effect=RuntimeError("bad pdf")):
+        with patch.object(self.analysis_core, "get_cached_pdf_path", return_value=None), \
+             patch.object(self.analysis_core, "download_pdf", return_value="/tmp/missing.pdf"), \
+             patch.object(self.analysis_core, "extract_text_from_pdf", side_effect=RuntimeError("bad pdf")):
             info = self.analyzer.get_learning_paper_text(paper)
 
         self.assertEqual(info["paper_text"], "Abstract fallback")
@@ -221,11 +231,11 @@ class AiCallRoutingTests(unittest.TestCase):
             ]
         }, ensure_ascii=False)
 
-        with patch.object(self.analyzer, "get_learning_paper_text", return_value={
+        with patch.object(self.analysis_core, "get_learning_paper_text", return_value={
             "paper_text": "FULL PDF TEXT",
             "used_pdf_cache": True,
             "used_pdf_full_text": True,
-        }), patch.object(self.analyzer, "_call_ai_raw", return_value=(response, {
+        }), patch.object(self.analysis_learning, "_call_ai_raw", return_value=(response, {
             "prompt_tokens": 100,
             "completion_tokens": 20,
             "total_tokens": 120,
@@ -251,7 +261,7 @@ class AiCallRoutingTests(unittest.TestCase):
             prompt_cache_hit_tokens=90,
             prompt_cache_miss_tokens=30,
         )
-        extracted = self.analyzer._extract_usage(types.SimpleNamespace(usage=usage))
+        extracted = self.analysis_usage._extract_usage(types.SimpleNamespace(usage=usage))
 
         self.assertEqual(extracted["cached_tokens"], 90)
         self.assertEqual(extracted["cache_miss_tokens"], 30)
