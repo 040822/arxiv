@@ -6,10 +6,10 @@ import threading
 import time
 from datetime import datetime
 
-from analyzer import analyze_pending_papers, generate_report_ai_summary, recommend_pending_papers
-from backup import run_webdav_backup
-from email_report import send_report_email
-from fetcher import fetch_latest_papers
+from source.analysis import analyze_pending_papers, generate_report_ai_summary, recommend_pending_papers
+from source.backups import run_webdav_backup
+from source.reports.email import send_report_email
+from source.ingestion import fetch_latest_papers
 from source.reports import generate_report_content
 from source.settings import (
     get_concurrency,

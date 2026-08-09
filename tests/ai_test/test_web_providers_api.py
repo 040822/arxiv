@@ -207,9 +207,10 @@ class ProviderApiTests(unittest.TestCase):
         self.assertIn("boom", result["message"])
 
     def test_openai_client_uses_matching_proxy_and_ignores_env(self):
-        import analyzer
+        import source.analysis as analyzer
+        import source.analysis.client as analysis_client
 
-        with patch.object(analyzer, "get_proxy_config", return_value={
+        with patch.object(analysis_client, "get_proxy_config", return_value={
             "enabled": True,
             "http": "http://proxy.local:8080",
             "https": "http://secure-proxy.local:7890",
@@ -224,9 +225,10 @@ class ProviderApiTests(unittest.TestCase):
         self.assertIs(DummyOpenAI.last_init_kwargs["http_client"].__class__, DummyHttpxClient)
 
     def test_openai_client_disables_environment_proxy_when_proxy_is_off(self):
-        import analyzer
+        import source.analysis as analyzer
+        import source.analysis.client as analysis_client
 
-        with patch.object(analyzer, "get_proxy_config", return_value={
+        with patch.object(analysis_client, "get_proxy_config", return_value={
             "enabled": False,
             "http": "http://proxy.local:8080",
             "https": "http://secure-proxy.local:7890",

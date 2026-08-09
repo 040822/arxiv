@@ -3,6 +3,7 @@
 from .connection import (
     get_connection,
 )
+from .info import format_bytes, get_database_file_sizes
 from .schema import (
     init_db,
 )
@@ -99,6 +100,7 @@ __all__ = [
     "create_paper_quiz_session",
     "delete_paper",
     "finish_task_log",
+    "format_bytes",
     "get_ai_usage_summary",
     "get_all_categories",
     "get_all_dates",
@@ -107,6 +109,7 @@ __all__ = [
     "get_average_rating",
     "get_analyzed_count",
     "get_connection",
+    "get_database_file_sizes",
     "get_daily_stats",
     "get_date_range_for_category",
     "get_earliest_date",

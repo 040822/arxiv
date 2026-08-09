@@ -111,7 +111,10 @@ class EmailReportTests(unittest.TestCase):
             settings_store.SETTINGS_PATH = original_path
 
     def test_report_email_html_uses_digest_layout_and_site_links(self):
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
         def paper(arxiv_id, score, rating=3):
             return {
@@ -140,7 +143,7 @@ class EmailReportTests(unittest.TestCase):
             "analyzed_count": len(papers),
             "avg_rating": 4.5,
         }
-        with patch.object(email_report, "_load_report_papers", return_value=papers):
+        with patch.object(email_content, "_load_report_papers", return_value=papers):
             data = email_report.build_report_email_data(
                 report,
                 {"site_url": "https://papers.example.com/"},
@@ -159,7 +162,10 @@ class EmailReportTests(unittest.TestCase):
         self.assertNotIn("legacy web report should not be reused", html)
 
     def test_report_email_without_recommendations_uses_overview_only(self):
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
         papers = [
             {
@@ -181,7 +187,7 @@ class EmailReportTests(unittest.TestCase):
         ]
         report = {"report_date": "2026-06-17", "paper_count": 1, "analyzed_count": 1, "avg_rating": 5}
 
-        with patch.object(email_report, "_load_report_papers", return_value=papers):
+        with patch.object(email_content, "_load_report_papers", return_value=papers):
             data = email_report.build_report_email_data(report, {"site_url": ""}, ai_summary=None, ai_summary_error="boom")
             html = email_report.build_report_email_html(report, email_data=data)
 
@@ -192,7 +198,10 @@ class EmailReportTests(unittest.TestCase):
         self.assertIn("High rating without recommendation", html)
 
     def test_email_thresholds_from_config_override_defaults(self):
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
         def paper(arxiv_id, score, rating=3):
             return {
@@ -216,7 +225,7 @@ class EmailReportTests(unittest.TestCase):
         papers.extend(paper(f"2606.{i:05d}", 60) for i in range(10))
         report = {"report_date": "2026-07-12", "paper_count": len(papers), "analyzed_count": len(papers), "avg_rating": 3.5}
 
-        with patch.object(email_report, "_load_report_papers", return_value=papers):
+        with patch.object(email_content, "_load_report_papers", return_value=papers):
             data = email_report.build_report_email_data(
                 report,
                 {"site_url": "", "important_score_threshold": 60, "overview_limit": 5},
@@ -233,7 +242,10 @@ class EmailReportTests(unittest.TestCase):
         self.assertIn("最多 5 篇", html)
 
     def test_email_threshold_zero_is_not_swallowed_by_falsy_short_circuit(self):
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
         def paper(arxiv_id, score):
             return {
@@ -256,7 +268,7 @@ class EmailReportTests(unittest.TestCase):
         papers = [paper("2606.00001", 5), paper("2606.00002", 0), paper("2606.00003", None)]
         report = {"report_date": "2026-07-12", "paper_count": 3, "analyzed_count": 3, "avg_rating": 0}
 
-        with patch.object(email_report, "_load_report_papers", return_value=papers):
+        with patch.object(email_content, "_load_report_papers", return_value=papers):
             data = email_report.build_report_email_data(
                 report,
                 {"site_url": "", "important_score_threshold": 0, "overview_limit": 0},
@@ -277,7 +289,7 @@ class EmailReportTests(unittest.TestCase):
 
         # 全部论文 score<=0：重点为空时 text 文案也用阈值 0
         no_important_papers = [paper("2606.00010", 0), paper("2606.00011", None)]
-        with patch.object(email_report, "_load_report_papers", return_value=no_important_papers):
+        with patch.object(email_content, "_load_report_papers", return_value=no_important_papers):
             empty_text = email_report.build_report_email_text(
                 report,
                 {"site_url": "", "important_score_threshold": 0, "overview_limit": 0},
@@ -314,7 +326,10 @@ class EmailReportTests(unittest.TestCase):
         self.assertEqual(below["overview_limit"], 0)
 
     def test_send_report_email_supports_starttls_ssl_and_plain_smtp(self):
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
         report = {
             "report_date": "2026-06-17",
@@ -371,10 +386,10 @@ class EmailReportTests(unittest.TestCase):
         ):
             calls = []
             config = {**base_config, "security": security, "smtp_port": 465 if security == "ssl" else 587}
-            with patch.object(email_report, "get_proxy_config", return_value={"enabled": False, "http": "", "https": ""}), \
-                 patch.object(email_report, "build_report_email_data", return_value=self._sample_email_data(config)), \
-                 patch.object(email_report.smtplib, "SMTP", smtp_factory("smtp")), \
-                 patch.object(email_report.smtplib, "SMTP_SSL", smtp_factory("ssl")):
+            with patch.object(email_transport, "get_proxy_config", return_value={"enabled": False, "http": "", "https": ""}), \
+                 patch.object(email_service, "build_report_email_data", return_value=self._sample_email_data(config)), \
+                 patch.object(email_transport.smtplib, "SMTP", smtp_factory("smtp")), \
+                 patch.object(email_transport.smtplib, "SMTP_SSL", smtp_factory("ssl")):
                 result = email_report.send_report_email(config=config, report=report, force=True, record_status=False)
 
             self.assertEqual(result["status"], "ok")
@@ -384,7 +399,10 @@ class EmailReportTests(unittest.TestCase):
             self.assertTrue(any(call[0] == "send" and call[1] == expected_kind for call in calls))
 
     def test_test_send_does_not_update_automatic_deduplication_date(self):
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
         report = {
             "report_date": "2026-06-17",
@@ -405,9 +423,9 @@ class EmailReportTests(unittest.TestCase):
             "site_url": "",
         }
 
-        with patch.object(email_report, "build_report_email_data", return_value=self._sample_email_data(config)), \
-             patch.object(email_report, "_send_message"), \
-             patch.object(email_report, "update_email_report_status") as update_status:
+        with patch.object(email_service, "build_report_email_data", return_value=self._sample_email_data(config)), \
+             patch.object(email_service, "_send_message"), \
+             patch.object(email_service, "update_email_report_status") as update_status:
             result = email_report.send_report_email(
                 report,
                 config=config,
@@ -419,7 +437,10 @@ class EmailReportTests(unittest.TestCase):
         update_status.assert_called_once_with("success", report_date="")
 
     def test_automatic_send_records_report_date_and_failure_does_not(self):
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
         report = {
             "report_date": "2026-06-17",
@@ -440,35 +461,38 @@ class EmailReportTests(unittest.TestCase):
             "site_url": "",
         }
 
-        with patch.object(email_report, "build_report_email_data", return_value=self._sample_email_data(config)), \
-             patch.object(email_report, "_send_message"), \
-             patch.object(email_report, "update_email_report_status") as update_status:
+        with patch.object(email_service, "build_report_email_data", return_value=self._sample_email_data(config)), \
+             patch.object(email_service, "_send_message"), \
+             patch.object(email_service, "update_email_report_status") as update_status:
             email_report.send_report_email(report, config=config, force=False, record_status=True)
 
         update_status.assert_called_once_with("success", report_date="2026-06-17")
 
-        with patch.object(email_report, "build_report_email_data", return_value=self._sample_email_data(config)), \
-             patch.object(email_report, "_send_message", side_effect=RuntimeError("smtp down")), \
-             patch.object(email_report, "update_email_report_status") as update_status:
+        with patch.object(email_service, "build_report_email_data", return_value=self._sample_email_data(config)), \
+             patch.object(email_service, "_send_message", side_effect=RuntimeError("smtp down")), \
+             patch.object(email_service, "update_email_report_status") as update_status:
             with self.assertRaisesRegex(RuntimeError, "smtp down"):
                 email_report.send_report_email(report, config=config, force=False, record_status=True)
 
         update_status.assert_called_once_with("error", error="smtp down")
 
     def test_smtp_proxy_url_prefers_https_and_falls_back_to_http(self):
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
-        self.assertEqual(email_report._resolve_smtp_proxy_url({
+        self.assertEqual(email_transport._resolve_smtp_proxy_url({
             "enabled": True,
             "http": "http://http-proxy.local:7890",
             "https": "http://https-proxy.local:7890",
         }), "http://https-proxy.local:7890")
-        self.assertEqual(email_report._resolve_smtp_proxy_url({
+        self.assertEqual(email_transport._resolve_smtp_proxy_url({
             "enabled": True,
             "http": "http://http-proxy.local:7890",
             "https": "",
         }), "http://http-proxy.local:7890")
-        self.assertEqual(email_report._resolve_smtp_proxy_url({
+        self.assertEqual(email_transport._resolve_smtp_proxy_url({
             "enabled": False,
             "http": "http://http-proxy.local:7890",
             "https": "http://https-proxy.local:7890",
@@ -476,7 +500,10 @@ class EmailReportTests(unittest.TestCase):
 
     def test_proxy_tunnel_sends_connect_request_and_basic_auth(self):
         import base64
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
         class FakeSocket:
             def __init__(self):
@@ -493,8 +520,8 @@ class EmailReportTests(unittest.TestCase):
                 self.closed = True
 
         fake_socket = FakeSocket()
-        with patch.object(email_report.socket, "create_connection", return_value=fake_socket) as create_connection:
-            sock = email_report._create_proxy_tunnel(
+        with patch.object(email_transport.socket, "create_connection", return_value=fake_socket) as create_connection:
+            sock = email_transport._create_proxy_tunnel(
                 "smtp.example.com",
                 587,
                 30,
@@ -511,7 +538,10 @@ class EmailReportTests(unittest.TestCase):
         self.assertFalse(fake_socket.closed)
 
     def test_send_report_email_routes_security_modes_through_proxy_classes(self):
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
         report = {
             "report_date": "2026-06-17",
@@ -564,14 +594,14 @@ class EmailReportTests(unittest.TestCase):
         ):
             calls = []
             config = {**base_config, "security": security, "smtp_port": 465 if security == "ssl" else 587}
-            with patch.object(email_report, "get_proxy_config", return_value={
+            with patch.object(email_transport, "get_proxy_config", return_value={
                 "enabled": True,
                 "http": "http://http-proxy.local:7890",
                 "https": "http://https-proxy.local:7891",
             }), \
-                 patch.object(email_report, "build_report_email_data", return_value=self._sample_email_data(config)), \
-                 patch.object(email_report, "_ProxySMTP", smtp_factory("smtp")), \
-                 patch.object(email_report, "_ProxySMTP_SSL", smtp_factory("ssl")):
+                 patch.object(email_service, "build_report_email_data", return_value=self._sample_email_data(config)), \
+                 patch.object(email_transport, "_ProxySMTP", smtp_factory("smtp")), \
+                 patch.object(email_transport, "_ProxySMTP_SSL", smtp_factory("ssl")):
                 result = email_report.send_report_email(config=config, report=report, force=True, record_status=False)
 
             self.assertEqual(result["status"], "ok")
@@ -580,7 +610,10 @@ class EmailReportTests(unittest.TestCase):
             self.assertTrue(any(call[0] == "send" and call[1] == expected_kind for call in calls))
 
     def test_proxy_errors_are_readable_and_record_status(self):
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
         report = {
             "report_date": "2026-06-17",
@@ -604,16 +637,16 @@ class EmailReportTests(unittest.TestCase):
 
         class RaisingProxySMTP:
             def __init__(self, host, port, **kwargs):
-                email_report._create_proxy_tunnel(host, port, kwargs.get("timeout"), kwargs.get("proxy_url"))
+                email_transport._create_proxy_tunnel(host, port, kwargs.get("timeout"), kwargs.get("proxy_url"))
 
-        with patch.object(email_report, "get_proxy_config", return_value={
+        with patch.object(email_transport, "get_proxy_config", return_value={
             "enabled": True,
             "http": "socks5://127.0.0.1:1080",
             "https": "",
         }), \
-             patch.object(email_report, "build_report_email_data", return_value=self._sample_email_data(config)), \
-             patch.object(email_report, "_ProxySMTP", RaisingProxySMTP), \
-             patch.object(email_report, "update_email_report_status") as update_status:
+             patch.object(email_service, "build_report_email_data", return_value=self._sample_email_data(config)), \
+             patch.object(email_transport, "_ProxySMTP", RaisingProxySMTP), \
+             patch.object(email_service, "update_email_report_status") as update_status:
             with self.assertRaisesRegex(ValueError, "仅支持 HTTP CONNECT"):
                 email_report.send_report_email(config=config, report=report, force=True, record_status=True)
 
@@ -622,7 +655,10 @@ class EmailReportTests(unittest.TestCase):
         self.assertIn("仅支持 HTTP CONNECT", update_status.call_args.kwargs["error"])
 
     def test_proxy_tunnel_rejects_non_200_connect_response(self):
-        import email_report
+        import source.reports.email as email_report
+        import source.reports.email.content as email_content
+        import source.reports.email.service as email_service
+        import source.reports.email.transport as email_transport
 
         class FakeSocket:
             def __init__(self):
@@ -638,9 +674,9 @@ class EmailReportTests(unittest.TestCase):
                 self.closed = True
 
         fake_socket = FakeSocket()
-        with patch.object(email_report.socket, "create_connection", return_value=fake_socket):
+        with patch.object(email_transport.socket, "create_connection", return_value=fake_socket):
             with self.assertRaisesRegex(ConnectionError, "407 Proxy Authentication Required"):
-                email_report._create_proxy_tunnel(
+                email_transport._create_proxy_tunnel(
                     "smtp.example.com",
                     587,
                     30,

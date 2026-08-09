@@ -512,3 +512,5 @@ def fetch_paper_by_id(arxiv_id):
     except Exception as e:
         logger.error(f"Error fetching paper {arxiv_id}: {e}")
         return None
+
+__all__ = ["fetch_latest_papers", "fetch_batch", "fetch_by_date", "lookup_paper_by_id", "fetch_paper_by_id", "parse_arxiv_id"]

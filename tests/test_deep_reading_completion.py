@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 class DeepReadingCompletionTests(unittest.TestCase):
     def setUp(self):
-        import analyzer
+        import source.analysis as analyzer
         self.analyzer = analyzer
         self.paper = {
             "id": 1,

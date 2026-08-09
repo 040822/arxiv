@@ -14,7 +14,8 @@ from unittest.mock import patch
 
 class BackupServiceTests(unittest.TestCase):
     def test_database_file_sizes_include_wal_and_shm(self):
-        import backup
+        import source.backups as backup
+        from source.storage import get_database_file_sizes
 
         with tempfile.TemporaryDirectory() as tmp:
             db_path = os.path.join(tmp, "papers.db")
@@ -25,13 +26,13 @@ class BackupServiceTests(unittest.TestCase):
             with open(db_path + "-shm", "wb") as f:
                 f.write(b"c" * 30)
 
-            sizes = backup.get_database_file_sizes(db_path)
+            sizes = get_database_file_sizes(db_path)
 
         self.assertEqual(sizes["total_bytes"], 60)
         self.assertEqual([f["name"] for f in sizes["files"]], ["papers.db", "papers.db-wal", "papers.db-shm"])
 
     def test_backup_archive_contains_database_settings_and_manifest(self):
-        import backup
+        import source.backups as backup
 
         with tempfile.TemporaryDirectory() as tmp:
             db_path = os.path.join(tmp, "papers.db")
@@ -72,7 +73,7 @@ class BackupServiceTests(unittest.TestCase):
         self.assertNotIn("report_files", manifest_data)
 
     def test_webdav_backup_uploads_latest_and_cleans_expired_history(self):
-        import backup
+        import source.backups as backup
 
         class FakeResponse:
             def __init__(self, status_code=200, content=b""):

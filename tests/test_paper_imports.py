@@ -9,7 +9,7 @@ import fitz
 import unittest
 
 from source.imports import PaperImportError, preview_import, validate_public_http_url
-from pdf_reader import remove_paper_pdf_files, store_uploaded_pdf
+from source.documents import remove_paper_pdf_files, store_uploaded_pdf
 
 
 class FakeResponse:
@@ -98,7 +98,7 @@ class PaperImportPreviewTests(unittest.TestCase):
                 }
             })
 
-        with patch("fetcher.lookup_paper_by_id") as arxiv_lookup:
+        with patch("source.ingestion.lookup_paper_by_id") as arxiv_lookup:
             draft = preview_import("https://doi.org/10.1234/2025.12345", http_get=fake_get)
         self.assertEqual(draft["source_type"], "doi")
         self.assertEqual(draft["title"], "Numeric DOI Paper")
@@ -110,7 +110,7 @@ class PaperImportPreviewTests(unittest.TestCase):
         def fake_get(url, **kwargs):
             return FakeResponse(text=page)
 
-        with patch("fetcher.lookup_paper_by_id") as arxiv_lookup:
+        with patch("source.ingestion.lookup_paper_by_id") as arxiv_lookup:
             draft = preview_import(
                 "https://publisher.example/papers/2025.12345",
                 http_get=fake_get,
@@ -121,7 +121,7 @@ class PaperImportPreviewTests(unittest.TestCase):
         arxiv_lookup.assert_not_called()
 
     def test_publisher_pdf_with_arxiv_shaped_number_stays_a_pdf_link(self):
-        with patch("fetcher.lookup_paper_by_id") as arxiv_lookup:
+        with patch("source.ingestion.lookup_paper_by_id") as arxiv_lookup:
             draft = preview_import(
                 "https://publisher.example/files/2025.12345.pdf",
             )
@@ -182,7 +182,7 @@ class PaperImportPreviewTests(unittest.TestCase):
             "arxiv_id": "2607.12345",
             "title": "An arXiv Paper",
         }
-        with patch("fetcher.lookup_paper_by_id", return_value=metadata) as lookup:
+        with patch("source.ingestion.lookup_paper_by_id", return_value=metadata) as lookup:
             draft = preview_import("https://arxiv.org/abs/2607.12345")
         self.assertEqual(draft, metadata)
         lookup.assert_called_once_with("2607.12345")
@@ -204,7 +204,7 @@ class UploadedPdfTests(unittest.TestCase):
         document.close()
 
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "pdf_reader.PAPER_FILES_DIR", os.path.join(tmp, "paper_files")
+            "source.documents.PAPER_FILES_DIR", os.path.join(tmp, "paper_files")
         ):
             info = store_uploaded_pdf(io.BytesIO(payload), "p_example", "paper.pdf")
             absolute_path = os.path.join(tmp, info["local_path"])
@@ -222,8 +222,8 @@ class UploadedPdfTests(unittest.TestCase):
         document.close()
 
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "pdf_reader.PAPER_FILES_DIR", tmp
-        ), patch("pdf_reader.os.replace", side_effect=OSError("disk full")):
+            "source.documents.PAPER_FILES_DIR", tmp
+        ), patch("source.documents.os.replace", side_effect=OSError("disk full")):
             target = os.path.join(tmp, "p_existing.pdf")
             with open(target, "wb") as handle:
                 handle.write(b"original")
@@ -243,7 +243,7 @@ class UploadedPdfTests(unittest.TestCase):
             with open(outside, "wb") as handle:
                 handle.write(b"keep")
 
-            with patch("pdf_reader.DB_DIR", data_dir):
+            with patch("source.documents.DB_DIR", data_dir):
                 remove_paper_pdf_files({
                     "paper_key": "",
                     "pdf_local_path": "../outside.pdf",
@@ -340,7 +340,7 @@ class PaperImportRollbackTests(unittest.TestCase):
             with self.app.test_request_context(
                 "/api/paper/import", method="POST", data=data,
                 content_type="multipart/form-data",
-            ), patch("pdf_reader.PAPER_FILES_DIR", tmp), patch.object(
+            ), patch("source.documents.PAPER_FILES_DIR", tmp), patch.object(
                 import_api, "get_paper_by_key", return_value={"paper_key": "2607.12345"}
             ), patch.object(import_api, "insert_paper", return_value=None) as insert:
                 response, status = import_api.api_confirm_paper_import()
@@ -384,8 +384,8 @@ class PaperImportRollbackTests(unittest.TestCase):
             with self.app.test_request_context(
                 "/api/paper/import", method="POST", data=data,
                 content_type="multipart/form-data",
-            ), patch("pdf_reader.DB_DIR", tmp), patch(
-                "pdf_reader.PAPER_FILES_DIR", paper_dir
+            ), patch("source.documents.DB_DIR", tmp), patch(
+                "source.documents.PAPER_FILES_DIR", paper_dir
             ), patch.object(
                 import_api.uuid, "uuid4", return_value=fake_uuid
             ), patch.object(

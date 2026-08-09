@@ -17,195 +17,31 @@ AI 论文分析模块
 import json
 import logging
 import re
-from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from openai import DefaultHttpxClient, OpenAI
-from source.config import TAG_CANDIDATES, RATING_CRITERIA
 from source.settings import (
     build_chat_completion_kwargs, get_ai_config, get_ai_task_config, get_prompt_profile,
-    get_concurrency, get_personalization_config, get_proxy_config, get_research_interest_hash
+    get_concurrency, get_personalization_config, get_research_interest_hash
 )
 from source.storage import (
     get_connection, insert_analysis, update_analysis, get_unanalyzed_papers, record_ai_usage,
     get_papers_for_recommendation, update_recommendation_result
 )
-from pdf_reader import (
+from source.documents import (
     download_pdf, extract_text_from_pdf, get_cached_pdf_path,
     get_paper_full_text, get_paper_pdf_path,
 )
-from source.value_coercion import as_int
+from .client import get_openai_client
+from .json_support import _clean_json_content, _repair_invalid_json_escapes
+from .messages import _authors_text, _build_task_messages
+from .usage import _extract_usage, _value
 
 # 模块级日志记录器
 logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# 客户端初始化
-# ============================================================
-
-def _select_proxy_for_base_url(base_url, proxy_config=None):
-    """按供应商 base_url 的 scheme 选择全局代理地址。"""
-    proxy = proxy_config if proxy_config is not None else get_proxy_config()
-    if not proxy.get("enabled"):
-        return ""
-    scheme = urlparse(str(base_url or "")).scheme.lower()
-    if scheme == "http":
-        return str(proxy.get("http") or proxy.get("https") or "").strip()
-    return str(proxy.get("https") or proxy.get("http") or "").strip()
-
-
-def _build_openai_http_client(cfg):
-    """创建不读取环境变量代理的 OpenAI HTTP 客户端。"""
-    kwargs = {"trust_env": False}
-    proxy_url = _select_proxy_for_base_url(cfg.get("base_url", ""))
-    if proxy_url:
-        kwargs["proxy"] = proxy_url
-    return DefaultHttpxClient(**kwargs)
-
-
-def get_openai_client(cfg=None):
-    """
-    创建并返回 OpenAI 客户端实例。
-
-    从运行时配置（data/settings.json）中读取当前激活供应商的 API 密钥和基础 URL，
-    创建一个 OpenAI SDK 客户端。该客户端支持所有 OpenAI 兼容 API
-    （如 DeepSeek、通义千问、Moonshot 等）。
-
-    Returns:
-        OpenAI: 配置好的 OpenAI 客户端实例
-    """
-    cfg = cfg or get_ai_config()
-    return OpenAI(
-        api_key=cfg["api_key"],
-        base_url=cfg["base_url"],
-        http_client=_build_openai_http_client(cfg),
-    )
-
-
-# ============================================================
 # 核心 AI 调用逻辑
 # ============================================================
-
-def _clean_json_content(content):
-    """清理 AI 返回的 JSON 内容，修复常见的格式问题。
-
-    AI 模型返回的 JSON 可能存在以下问题：
-    1. 包裹在 markdown 代码块中：```json ... ```
-    2. 包含无效的反斜杠转义：\\_、\\[、\\] 等
-    3. 前后包含多余文本（解释说明等）
-
-    Args:
-        content (str): AI 返回的原始文本
-
-    Returns:
-        str: 清理后的 JSON 字符串
-    """
-    import re
-
-    # 步骤 1：去除 markdown 代码块标记
-    # AI 有时会将 JSON 包裹在 ```json ... ``` 中
-    if content.startswith("```"):
-        lines = content.split("\n")
-        # 去除首尾的 ``` 行
-        content = "\n".join(lines[1:])
-        if content.endswith("```"):
-            content = content[:-3].strip()
-
-    # 步骤 2：提取 JSON 对象
-    # 如果响应中包含非 JSON 文本（如解释说明），只提取 { ... } 部分
-    json_match = re.search(r'\{[\s\S]*\}', content)
-    if json_match:
-        content = json_match.group(0)
-
-    # 步骤 3：修复 JSON 字符串内部的无效反斜杠转义。
-    # 不能用简单正则全局替换：合法的 "\\alpha" 会被误改成 "\alpha"。
-    content = _repair_invalid_json_escapes(content)
-
-    return content
-
-
-def _repair_invalid_json_escapes(content):
-    """只移除 JSON 字符串内无效 escape 的反斜杠，保留合法转义。"""
-    result = []
-    in_string = False
-    escaped = False
-    i = 0
-    valid_simple_escapes = set('"\\/bfnrt')
-
-    while i < len(content):
-        char = content[i]
-
-        if not in_string:
-            result.append(char)
-            if char == '"':
-                in_string = True
-            i += 1
-            continue
-
-        if escaped:
-            if char in valid_simple_escapes:
-                result.append(char)
-            elif char == "u":
-                hex_part = content[i + 1:i + 5]
-                if len(hex_part) == 4 and all(c in "0123456789abcdefABCDEF" for c in hex_part):
-                    result.append(char)
-                    result.append(hex_part)
-                    i += 4
-                else:
-                    result.pop()
-                    result.append(char)
-            else:
-                result.pop()
-                result.append(char)
-            escaped = False
-            i += 1
-            continue
-
-        if char == "\\":
-            result.append(char)
-            escaped = True
-            i += 1
-            continue
-
-        result.append(char)
-        if char == '"':
-            in_string = False
-        i += 1
-
-    if escaped and result and result[-1] == "\\":
-        result.pop()
-    return "".join(result)
-
-
-def _value(obj, key, default=None):
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
-
-
-def _extract_usage(response):
-    """从 OpenAI SDK 响应中提取 token 用量，兼容 dict 和对象响应。"""
-    usage = _value(response, "usage", {}) or {}
-    prompt_tokens = as_int(_value(usage, "prompt_tokens", 0))
-    completion_tokens = as_int(_value(usage, "completion_tokens", 0))
-    total_tokens = as_int(_value(usage, "total_tokens", 0))
-    details = _value(usage, "prompt_tokens_details", None) or _value(usage, "input_tokens_details", None) or {}
-    cached_tokens = (
-        as_int(_value(usage, "prompt_cache_hit_tokens", 0))
-        or as_int(_value(details, "cached_tokens", 0))
-        or as_int(_value(details, "cache_read_input_tokens", 0))
-    )
-    cache_miss_tokens = as_int(_value(usage, "prompt_cache_miss_tokens", 0))
-    if not cache_miss_tokens and prompt_tokens:
-        cache_miss_tokens = max(prompt_tokens - cached_tokens, 0)
-    return {
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": total_tokens,
-        "cached_tokens": cached_tokens,
-        "cache_miss_tokens": cache_miss_tokens,
-    }
-
 
 def _record_usage(task_key, cfg, paper_data, response):
     """记录一次 AI 调用的 token 用量；失败不影响主流程。"""
@@ -223,45 +59,6 @@ def _record_usage(task_key, cfg, paper_data, response):
     except Exception as e:
         logger.debug(f"Failed to record AI usage: {e}")
 
-
-def _authors_text(paper_data):
-    authors = paper_data.get("authors", "")
-    if isinstance(authors, list):
-        return ", ".join(authors)
-    return authors
-
-
-def _render_instruction(instruction):
-    """渲染稳定 prompt 前缀；论文动态数据会放在单独 message 中。"""
-    return (instruction or "").replace(
-        "{tag_candidates}",
-        ", ".join(TAG_CANDIDATES[:30]),
-    ).replace(
-        "{rating_criteria}",
-        RATING_CRITERIA,
-    )
-
-
-def _build_task_messages(task_key, payload):
-    """
-    构建任务消息列表，包含稳定的 system + instruction 前缀和动态论文 JSON 数据。
-    
-    2026-08-06
-    对于深度阅读和手动导入任务，我们发现deepseek v4 flash会在原有的长文本前缀中“淹没”指令，导致漏答问题。为提升指令遵循率，我们将 instruction 放在动态数据之后。
-    其余任务通常无长文本数据（chat任务使用build_paper_learning_messages），所以说明 instruction 放在前面更符合直觉。
-    """
-    
-    profile = get_prompt_profile(task_key)
-    system = {"role": "system", "content": profile.get("system", "")}
-    instruction = {"role": "user", "content": _render_instruction(profile.get("instruction", ""))}
-    data = {
-        "role": "user",
-        "content": "动态输入数据（JSON，固定字段顺序）：\n" + json.dumps(payload, ensure_ascii=False, indent=2),
-    }
-
-    if task_key in {"deep_reading", "paper_import"}:
-        return [system, data, instruction]
-    return [system, instruction, data]
 
 
 def _paper_context_payload(paper_data, text_info):
@@ -925,78 +722,7 @@ def socratic_reply(paper_data, session_history=None, user_answer=None):
         return None, str(e), _learning_meta(text_info, {})
 
 
-def _get_report_summary_context(report_date, limit=30):
-    """读取报告导读所需的轻量论文上下文，避免把全文再次送给模型。"""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        interest_hash = get_research_interest_hash()
-        cursor.execute("""
-            SELECT p.arxiv_id, p.title, p.authors, p.categories,
-                   a.tags, a.rating, a.value_comment, a.summary_cn,
-                   a.recommendation_score, a.recommendation_interest_hash
-            FROM papers p
-            LEFT JOIN analysis a ON p.id = a.paper_id
-            WHERE p.published_date = ? AND p.ingest_mode = 'feed'
-            ORDER BY
-                CASE
-                    WHEN ? <> ''
-                     AND a.recommendation_interest_hash = ?
-                     AND a.recommendation_score IS NOT NULL
-                    THEN a.recommendation_score
-                    ELSE -1
-                END DESC,
-                COALESCE(a.rating, 0) DESC,
-                p.arxiv_id
-            LIMIT ?
-        """, (report_date, interest_hash, interest_hash, limit))
-        rows = cursor.fetchall()
-
-
-    papers = []
-    for row in rows:
-        item = dict(row)
-        for field in ("authors", "categories", "tags"):
-            if item.get(field) and isinstance(item[field], str):
-                try:
-                    item[field] = json.loads(item[field])
-                except json.JSONDecodeError:
-                    item[field] = []
-        papers.append({
-            "arxiv_id": item.get("arxiv_id", ""),
-            "title": item.get("title", ""),
-            "authors": item.get("authors") or [],
-            "categories": item.get("categories") or [],
-            "tags": item.get("tags") or [],
-            "rating": item.get("rating") or 0,
-            "recommendation_score": item.get("recommendation_score")
-            if interest_hash and item.get("recommendation_interest_hash") == interest_hash
-            else None,
-            "value_comment": item.get("value_comment") or "",
-            "summary_cn": item.get("summary_cn") or "",
-        })
-    return papers
-
-
-def generate_report_ai_summary(report_date):
-    """使用 report_summary 任务模型生成一段可选的日报导读。"""
-    papers = _get_report_summary_context(report_date)
-    if not papers:
-        return None, "无论文数据"
-
-    payload = {
-        "report_date": report_date,
-        "paper_count": len(papers),
-        "papers": papers,
-    }
-    paper_data = {"id": None, "arxiv_id": f"report:{report_date}"}
-    messages = _build_task_messages("report_summary", payload)
-    result, error = _call_ai(messages, paper_data, "report_summary")
-    if error:
-        return None, error
-    summary = (result or {}).get("summary", "")
-    if not summary:
-        return None, "模型未返回 summary 字段"
-    return summary.strip(), None
+from .report_summary import generate_report_ai_summary
 
 
 # ============================================================
@@ -1215,3 +941,5 @@ def analyze_pending_papers(limit=50, concurrency=None, progress_callback=None, i
     """
     papers = get_unanalyzed_papers(limit=limit, ingest_mode=ingest_mode)
     return analyze_papers(papers, concurrency=concurrency, progress_callback=progress_callback)
+
+__all__ = ["get_openai_client", "extract_paper_import_metadata", "analyze_paper_basic", "analyze_paper_full", "analyze_paper_recommendation", "get_learning_paper_text", "build_paper_learning_messages", "chat_about_paper", "generate_paper_quiz", "grade_quiz_answer", "socratic_reply", "generate_report_ai_summary", "analyze_papers", "recommend_papers", "recommend_pending_papers", "analyze_pending_papers"]

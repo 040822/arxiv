@@ -104,10 +104,10 @@ def install_import_stubs():
     openai_mod.OpenAI = DummyOpenAI
     openai_mod.DefaultHttpxClient = DummyHttpxClient
     sys.modules["openai"] = openai_mod
-    analyzer_mod = sys.modules.get("analyzer")
-    if analyzer_mod is not None:
-        analyzer_mod.OpenAI = DummyOpenAI
-        analyzer_mod.DefaultHttpxClient = DummyHttpxClient
+    client_mod = sys.modules.get("source.analysis.client")
+    if client_mod is not None:
+        client_mod.OpenAI = DummyOpenAI
+        client_mod.DefaultHttpxClient = DummyHttpxClient
 
 
 def _plain_jsonify(*args, **kwargs):

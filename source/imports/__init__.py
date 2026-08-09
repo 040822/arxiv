@@ -290,7 +290,7 @@ def _preview_openreview(source_url, http_get):
 
 
 def _preview_pdf(pdf_path, metadata_extractor=None):
-    from pdf_reader import extract_text_from_pdf
+    from source.documents import extract_text_from_pdf
 
     draft = _base_draft("upload", "", "")
     text = extract_text_from_pdf(pdf_path) or ""
@@ -298,7 +298,7 @@ def _preview_pdf(pdf_path, metadata_extractor=None):
         draft["warnings"].append("PDF 没有可提取文本，请手工填写元数据；扫描件暂不支持全文分析")
         return draft
     if metadata_extractor is None:
-        from analyzer import extract_paper_import_metadata
+        from source.analysis import extract_paper_import_metadata
         metadata_extractor = extract_paper_import_metadata
     extracted = metadata_extractor(text)
     error = None
@@ -342,7 +342,7 @@ def preview_import(source_url="", pdf_path=None, http_get=None, metadata_extract
         return _preview_doi(source_url, http_get)
     arxiv_id = _manual_arxiv_id(source_url)
     if arxiv_id:
-        from fetcher import lookup_paper_by_id
+        from source.ingestion import lookup_paper_by_id
         draft = lookup_paper_by_id(arxiv_id)
         if not draft:
             raise PaperImportError("未能从 arXiv 读取论文元数据")

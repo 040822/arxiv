@@ -16,7 +16,7 @@ class FetchBatchTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         install_import_stubs()
-        import fetcher
+        import source.ingestion as fetcher
         cls.fetcher = fetcher
 
     def test_recent_fetch_does_not_skip_because_old_data_exists(self):

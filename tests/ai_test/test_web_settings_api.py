@@ -270,13 +270,11 @@ class SettingsTasksApiTests(unittest.TestCase):
         web_settings_api.request = FakeRequest({"research_interests": "robotics"})
 
         with patch.object(web_settings_api, "save_personalization_config", return_value=True) as save_personalization, \
-             patch.object(web_settings_api, "get_personalization_config", return_value={"research_interests": "robotics"}), \
-             patch.object(web_settings_api, "recommend_pending_papers") as recommend:
+             patch.object(web_settings_api, "get_personalization_config", return_value={"research_interests": "robotics"}):
             result = web_settings_api.api_save_personalization()
 
         self.assertEqual(result["status"], "ok")
         save_personalization.assert_called_once_with({"research_interests": "robotics"})
-        recommend.assert_not_called()
 
     def test_recalculate_recommendations_calls_recommendation_task(self):
         web_tasks_api = self.web_tasks_api

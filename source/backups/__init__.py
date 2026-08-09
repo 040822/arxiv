@@ -22,45 +22,12 @@ import requests
 
 from source.config import DB_DIR, DB_PATH
 from source.settings import SETTINGS_PATH, get_webdav_backup_config, update_webdav_backup_status
+from source.storage.info import format_bytes, get_database_file_sizes
 from source.storage.snapshot import copy_sqlite_snapshot
 
 
 LATEST_BACKUP_NAME = "arxiv-backup-latest.zip"
 BACKUP_NAME_RE = re.compile(r"^arxiv-backup-(\d{8})-(\d{6})\.zip$")
-
-
-def format_bytes(size_bytes):
-    """格式化字节数。"""
-    size = int(size_bytes or 0)
-    if size < 1024:
-        return f"{size} B"
-    if size < 1024 * 1024:
-        return f"{size / 1024:.1f} KB"
-    if size < 1024 * 1024 * 1024:
-        return f"{size / 1024 / 1024:.1f} MB"
-    return f"{size / 1024 / 1024 / 1024:.1f} GB"
-
-
-def get_database_file_sizes(db_path=DB_PATH):
-    """统计 SQLite 主文件、WAL 和 SHM 文件占用。"""
-    files = []
-    total = 0
-    for path in (db_path, f"{db_path}-wal", f"{db_path}-shm"):
-        if not os.path.exists(path):
-            continue
-        size = os.path.getsize(path)
-        total += size
-        files.append({
-            "path": path,
-            "name": os.path.basename(path),
-            "size_bytes": size,
-            "size": format_bytes(size),
-        })
-    return {
-        "total_bytes": total,
-        "total": format_bytes(total),
-        "files": files,
-    }
 
 
 def _timestamp(now=None):
@@ -267,3 +234,5 @@ def run_webdav_backup(config=None, force=False, record_status=True, now=None):
         if record_status:
             update_webdav_backup_status("error", error=str(exc))
         raise
+
+__all__ = ["create_backup_archive", "ensure_webdav_directory", "upload_file", "list_webdav_files", "cleanup_old_backups", "run_webdav_backup"]

@@ -2,8 +2,8 @@
 
 from datetime import datetime
 
-from analyzer import analyze_pending_papers, recommend_pending_papers
-from fetcher import fetch_latest_papers
+from source.analysis import analyze_pending_papers, recommend_pending_papers
+from source.ingestion import fetch_latest_papers
 from source.reports import generate_report_content
 from source.settings import get_concurrency, get_schedule_config
 from source.storage import (

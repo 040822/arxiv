@@ -6,13 +6,11 @@ import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 ROOT_ENTRY_MODULES = {"app.py"}
-# 1B 待迁入 source/ 的根模块；迁完后再收紧为仅 ROOT_ENTRY_MODULES
-ROOT_PENDING_MODULES = {
-    "analyzer.py", "backup.py",
-    "email_report.py", "fetcher.py", "pdf_reader.py",
+EXPECTED_ROOT_PY = ROOT_ENTRY_MODULES
+BANNED_ROOT_MODULES = {
+    "main", "settings", "database",
+    "analyzer", "backup", "email_report", "fetcher", "pdf_reader",
 }
-EXPECTED_ROOT_PY = ROOT_ENTRY_MODULES | ROOT_PENDING_MODULES
-BANNED_ROOT_MODULES = {"main", "settings", "database"}
 
 
 def _iter_python_files(base):
@@ -28,7 +26,7 @@ class RootBoundaryTests(unittest.TestCase):
         root_py_files = {p.name for p in REPO_ROOT.glob("*.py")}
         self.assertEqual(root_py_files, EXPECTED_ROOT_PY)
 
-    def test_source_and_tests_do_not_import_banned_root_modules(self):
+    def test_source_and_tests_do_not_import_deleted_root_modules(self):
         for base in (REPO_ROOT, REPO_ROOT / "source", REPO_ROOT / "tests"):
             for path in _iter_python_files(base):
                 with self.subTest(path=path):

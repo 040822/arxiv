@@ -10,8 +10,8 @@ import uuid
 
 from flask import Blueprint, jsonify, request
 
-from analyzer import analyze_paper_basic, analyze_paper_full
-from pdf_reader import get_paper_pdf_path, remove_paper_pdf_files, store_uploaded_pdf, validate_pdf_file
+from source.analysis import analyze_paper_basic, analyze_paper_full
+from source.documents import get_paper_pdf_path, remove_paper_pdf_files, store_uploaded_pdf, validate_pdf_file
 from source.imports import PaperImportError, preview_import
 from source.storage import (
     get_analysis_by_paper_id, get_paper_by_key,

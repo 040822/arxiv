@@ -440,3 +440,5 @@ def get_paper_full_text(pdf_url, arxiv_id, max_chars=6000000):
         logger.info(f"Truncated paper text for {arxiv_id} to {max_chars} chars")
 
     return text
+
+__all__ = ["validate_pdf_file", "store_uploaded_pdf", "get_paper_pdf_path", "remove_paper_pdf_files", "get_cached_pdf_path", "download_pdf", "extract_text_from_pdf", "get_paper_full_text"]

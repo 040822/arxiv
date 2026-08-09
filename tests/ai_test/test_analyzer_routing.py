@@ -16,7 +16,7 @@ class AiCallRoutingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         install_import_stubs()
-        import analyzer
+        import source.analysis as analyzer
         cls.analyzer = analyzer
 
     def test_basic_analysis_uses_short_profile_without_qa(self):
