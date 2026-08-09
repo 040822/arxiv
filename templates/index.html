@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI 论文数据库 - 具身智能 & 人工智能</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/css/core.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/pages/library.css">
 </head>
 <body>
     <div class="container">
@@ -174,7 +176,7 @@
             {% endif %}
             <span class="page-jump">
                 跳转到 <input type="number" id="page-input" min="1" max="{{ total_pages }}" value="{{ page }}" onkeydown="if(event.key==='Enter')goPage()"> 页
-                <button class="action-btn" onclick="goPage()">Go</button>
+                <button class="btn" onclick="goPage()">Go</button>
             </span>
             <span class="page-per-page">
                 <select id="per-page-select" onchange="changePerPage(this.value)">

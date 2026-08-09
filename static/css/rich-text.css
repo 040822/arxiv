@@ -1,0 +1,232 @@
+/* ===== 论文学习页：Markdown / LaTeX 富文本渲染 ===== */
+/* 作用域：仅影响 AI 生成的富文本容器，避免污染全站 */
+.learning-message-body,
+.improved-body,
+.feedback-text,
+.learning-question-title {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* 段落：首尾不留多余空白 */
+.learning-message-body p,
+.improved-body p,
+.feedback-text p {
+    margin: 0 0 8px;
+}
+.learning-message-body p:last-child,
+.improved-body p:last-child,
+.feedback-text p:last-child {
+    margin-bottom: 0;
+}
+/* 题目标题内的段落不另起边距 */
+.learning-question-title p {
+    margin: 0;
+    display: inline;
+}
+
+/* 行内代码：补齐除 .learning-message-body 外的容器样式 */
+.improved-body code,
+.feedback-text code,
+.learning-question-title code {
+    background: #f1f5f9;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+    font-size: 0.88em;
+    color: #e11d48;
+}
+
+/* 标题：仅在正文容器内缩放，避免题目标题里出现大号标题 */
+.learning-message-body h1,
+.improved-body h1,
+.feedback-text h1 { font-size: 1.25em; margin: 14px 0 8px; }
+.learning-message-body h2,
+.improved-body h2,
+.feedback-text h2 { font-size: 1.15em; margin: 14px 0 8px; }
+.learning-message-body h3,
+.improved-body h3,
+.feedback-text h3 { font-size: 1.05em; margin: 12px 0 6px; }
+.learning-message-body h4,
+.improved-body h4,
+.feedback-text h4 { font-size: 1em; margin: 10px 0 6px; }
+.learning-message-body h5,
+.learning-message-body h6,
+.improved-body h5,
+.improved-body h6,
+.feedback-text h5,
+.feedback-text h6 { font-size: 0.95em; margin: 10px 0 6px; }
+.learning-message-body h1, .learning-message-body h2, .learning-message-body h3,
+.learning-message-body h4, .learning-message-body h5, .learning-message-body h6,
+.improved-body h1, .improved-body h2, .improved-body h3,
+.improved-body h4, .improved-body h5, .improved-body h6,
+.feedback-text h1, .feedback-text h2, .feedback-text h3,
+.feedback-text h4, .feedback-text h5, .feedback-text h6 {
+    font-weight: 700;
+    color: #1e293b;
+    line-height: 1.4;
+}
+.learning-message-body h1:first-child, .learning-message-body h2:first-child, .learning-message-body h3:first-child,
+.improved-body h1:first-child, .improved-body h2:first-child, .improved-body h3:first-child,
+.feedback-text h1:first-child, .feedback-text h2:first-child, .feedback-text h3:first-child {
+    margin-top: 0;
+}
+
+/* 强调 */
+.learning-message-body strong,
+.improved-body strong,
+.feedback-text strong,
+.learning-question-title strong {
+    font-weight: 700;
+    color: #1e293b;
+}
+.learning-message-body em,
+.improved-body em,
+.feedback-text em { font-style: italic; }
+
+/* 列表 */
+.learning-message-body ul,
+.learning-message-body ol,
+.improved-body ul,
+.improved-body ol,
+.feedback-text ul,
+.feedback-text ol {
+    margin: 6px 0 10px;
+    padding-left: 24px;
+}
+.learning-message-body li,
+.improved-body li,
+.feedback-text li {
+    margin: 3px 0;
+}
+.learning-message-body li > ul,
+.learning-message-body li > ol,
+.improved-body li > ul,
+.improved-body li > ol,
+.feedback-text li > ul,
+.feedback-text li > ol {
+    margin: 3px 0 0;
+}
+
+/* 代码块 */
+.learning-message-body pre,
+.improved-body pre,
+.feedback-text pre {
+    background: #1e293b;
+    color: #e2e8f0;
+    padding: 12px 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 8px 0 12px;
+    font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+    font-size: 0.86em;
+    line-height: 1.55;
+}
+.learning-message-body pre code,
+.improved-body pre code,
+.feedback-text pre code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+    border-radius: 0;
+}
+
+/* 引用 */
+.learning-message-body blockquote,
+.improved-body blockquote,
+.feedback-text blockquote {
+    margin: 8px 0 12px;
+    padding: 6px 14px;
+    border-left: 3px solid #cbd5e1;
+    color: #64748b;
+    background: #f8fafc;
+    border-radius: 0 6px 6px 0;
+}
+.learning-message-body blockquote p:last-child,
+.improved-body blockquote p:last-child,
+.feedback-text blockquote p:last-child {
+    margin-bottom: 0;
+}
+
+/* 表格 */
+.learning-message-body table,
+.improved-body table,
+.feedback-text table {
+    border-collapse: collapse;
+    margin: 8px 0 12px;
+    font-size: 0.9em;
+    display: block;
+    overflow-x: auto;
+}
+.learning-message-body th,
+.learning-message-body td,
+.improved-body th,
+.improved-body td,
+.feedback-text th,
+.feedback-text td {
+    border: 1px solid #d0d7de;
+    padding: 6px 12px;
+    text-align: left;
+}
+.learning-message-body th,
+.improved-body th,
+.feedback-text th {
+    background: #f1f5f9;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+/* 链接 / 分隔线 / 图片 */
+.learning-message-body a,
+.improved-body a,
+.feedback-text a {
+    color: #1a73e8;
+    text-decoration: none;
+}
+.learning-message-body a:hover,
+.improved-body a:hover,
+.feedback-text a:hover {
+    text-decoration: underline;
+}
+.learning-message-body hr,
+.improved-body hr,
+.feedback-text hr {
+    border: none;
+    border-top: 1px solid #e2e8f0;
+    margin: 12px 0;
+}
+.learning-message-body img,
+.improved-body img,
+.feedback-text img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* KaTeX 公式 */
+.learning-message-body .katex,
+.improved-body .katex,
+.feedback-text .katex,
+.learning-question-title .katex {
+    font-size: 1.08em;
+}
+.learning-message-body .katex-display,
+.improved-body .katex-display,
+.feedback-text .katex-display {
+    margin: 10px 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 2px 0;
+}
+.learning-message-body .katex-display > .katex,
+.improved-body .katex-display > .katex,
+.feedback-text .katex-display > .katex {
+    white-space: nowrap;
+}
+/* 公式渲染失败时保留的原文不要乱跑 */
+.learning-message-body .katex-error,
+.improved-body .katex-error,
+.feedback-text .katex-error {
+    color: #ef4444;
+    font-style: italic;
+}

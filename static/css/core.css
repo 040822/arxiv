@@ -1,0 +1,132 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #f5f7fa;
+    color: #333;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    text-align: center;
+    padding: 30px 0;
+    border-bottom: 2px solid #e1e4e8;
+    margin-bottom: 20px;
+    position: relative;
+}
+
+.header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.settings-btn {
+    padding: 6px 14px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    text-decoration: none;
+    color: #555;
+    font-size: 0.85em;
+    transition: all 0.2s;
+}
+
+.settings-btn:hover {
+    background: #f0f4f8;
+    border-color: #90b8e0;
+    color: #1a73e8;
+}
+
+header h1 {
+    font-size: 2em;
+    color: #1a1a2e;
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: #666;
+    font-size: 1.1em;
+    margin-bottom: 12px;
+}
+
+.stats {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.stats span {
+    background: #e8f4f8;
+    padding: 4px 12px;
+    border-radius: 15px;
+    font-size: 0.9em;
+}
+
+.nav-bar {
+    display: flex;
+    gap: 10px;
+    padding: 15px 0;
+    flex-wrap: wrap;
+}
+
+.nav-link {
+    padding: 8px 16px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    text-decoration: none;
+    color: #555;
+    transition: all 0.2s;
+}
+
+.nav-link:hover {
+    background: #f0f0f0;
+    border-color: #bbb;
+}
+
+.nav-link.active {
+    background: #1a73e8;
+    color: white;
+    border-color: #1a73e8;
+}
+
+footer {
+    text-align: center;
+    padding: 30px 0;
+    color: #888;
+    font-size: 0.85em;
+}
+
+
+@media (max-width: 768px) {
+    .container {
+        padding: 10px;
+    }
+
+    header h1 {
+        font-size: 1.5em;
+    }
+
+    .stats {
+        flex-direction: column;
+        gap: 5px;
+    }
+}
+
+:where(a, button, input, select, textarea):focus-visible {
+    outline: 3px solid rgba(26, 115, 232, 0.35);
+    outline-offset: 2px;
+}

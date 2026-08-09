@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>阅读清单 - AI 论文数据库</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/css/core.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/pages/library.css">
 </head>
 <body>
     <div class="container">
@@ -28,9 +30,9 @@
         <div class="action-panel">
             <h3>📌 阅读清单 <span class="todo-count-badge">未读 {{ counts.unread }}</span></h3>
             <div class="action-buttons">
-                <a href="/reading-list" class="action-btn {% if not current_status %}btn-primary{% endif %}">全部 ({{ counts.total }})</a>
-                <a href="/reading-list?status=unread" class="action-btn {% if current_status == 'unread' %}btn-primary{% endif %}">未读 ({{ counts.unread }})</a>
-                <a href="/reading-list?status=read" class="action-btn {% if current_status == 'read' %}btn-primary{% endif %}">已读 ({{ counts.total - counts.unread }})</a>
+                <a href="/reading-list" class="btn {% if not current_status %}btn-primary{% endif %}">全部 ({{ counts.total }})</a>
+                <a href="/reading-list?status=unread" class="btn {% if current_status == 'unread' %}btn-primary{% endif %}">未读 ({{ counts.unread }})</a>
+                <a href="/reading-list?status=read" class="btn {% if current_status == 'read' %}btn-primary{% endif %}">已读 ({{ counts.total - counts.unread }})</a>
             </div>
         </div>
 

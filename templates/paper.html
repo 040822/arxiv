@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ paper.title }} - AI 论文数据库</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/css/core.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/rich-text.css">\n    <link rel="stylesheet" href="/static/css/pages/paper.css">
     <link rel="stylesheet" href="/static/vendor/katex.min.css">
 </head>
 <body>
@@ -48,7 +50,7 @@
                 {% if paper.venue %}<span class="meta-item">🏛️ {{ paper.venue }}</span>{% endif %}
                 <span class="meta-item">📌 <a href="javascript:void(0)" class="meta-link" id="todo-toggle" onclick='toggleTodo({{ paper.paper_key | tojson }})'>加入阅读清单</a></span>
                 {% if paper.hidden %}
-                <span class="meta-item" style="color:#dc3545;">🚫 已隐藏</span>
+                <span class="meta-item meta-hidden">🚫 已隐藏</span>
                 {% endif %}
             </div>
 
@@ -126,14 +128,14 @@
                     {% if analysis and analysis.summary_cn %}
                     <p>{{ analysis.summary_cn }}</p>
                     {% else %}
-                    <p class="no-data">暂无中文摘要</p>
+                    <p class="empty-state compact">暂无中文摘要</p>
                     {% endif %}
                 </div>
                 <div id="summary-edit" style="display:none;">
                     <textarea id="summary-textarea" rows="4" placeholder="输入中文摘要">{{ analysis.summary_cn if analysis and analysis.summary_cn else '' }}</textarea>
                     <div class="edit-actions">
-                        <button class="action-btn btn-primary" onclick="saveSummary()">💾 保存</button>
-                        <button class="action-btn" onclick="toggleSummaryEdit()">取消</button>
+                        <button class="btn btn-primary" onclick="saveSummary()">💾 保存</button>
+                        <button class="btn" onclick="toggleSummaryEdit()">取消</button>
                     </div>
                 </div>
             </div>
@@ -149,14 +151,14 @@
                     {% if analysis and analysis.qa_analysis %}
                     <div class="qa-content" id="qa-content"></div>
                     {% else %}
-                    <p class="no-data">暂无 AI 深度阅读内容</p>
+                    <p class="empty-state compact">暂无 AI 深度阅读内容</p>
                     {% endif %}
                 </div>
                 <div id="qa-edit" style="display:none;">
                     <textarea id="qa-textarea" rows="15" placeholder="输入 AI 深度阅读内容（Markdown 格式）">{{ analysis.qa_analysis if analysis and analysis.qa_analysis else '' }}</textarea>
                     <div class="edit-actions">
-                        <button class="action-btn btn-primary" onclick="saveQaAnalysis()">💾 保存</button>
-                        <button class="action-btn" onclick="toggleQaEdit()">取消</button>
+                        <button class="btn btn-primary" onclick="saveQaAnalysis()">💾 保存</button>
+                        <button class="btn" onclick="toggleQaEdit()">取消</button>
                     </div>
                 </div>
             </div>
@@ -168,14 +170,14 @@
                     {% if analysis and analysis.value_comment %}
                     <p class="value-comment">{{ analysis.value_comment }}</p>
                     {% else %}
-                    <p class="no-data">暂无评价</p>
+                    <p class="empty-state compact">暂无评价</p>
                     {% endif %}
                 </div>
                 <div id="comment-edit" style="display:none;">
                     <textarea id="comment-textarea" rows="3" placeholder="输入评价">{{ analysis.value_comment if analysis and analysis.value_comment else '' }}</textarea>
                     <div class="edit-actions">
-                        <button class="action-btn btn-primary" onclick="saveComment()">💾 保存</button>
-                        <button class="action-btn" onclick="toggleCommentEdit()">取消</button>
+                        <button class="btn btn-primary" onclick="saveComment()">💾 保存</button>
+                        <button class="btn" onclick="toggleCommentEdit()">取消</button>
                     </div>
                 </div>
             </div>
@@ -413,7 +415,7 @@
             const result = await saveField({summary_cn: val});
             if (result.status === 'ok') {
                 toggleSummaryEdit();
-                document.getElementById('summary-view').innerHTML = val ? `<p>${escapeHtml(val)}</p>` : '<p class="no-data">暂无中文摘要</p>';
+                document.getElementById('summary-view').innerHTML = val ? `<p>${escapeHtml(val)}</p>` : '<p class="empty-state compact">暂无中文摘要</p>';
             }
         }
 
@@ -430,7 +432,7 @@
             const result = await saveField({value_comment: val});
             if (result.status === 'ok') {
                 toggleCommentEdit();
-                document.getElementById('comment-view').innerHTML = val ? `<p class="value-comment">${escapeHtml(val)}</p>` : '<p class="no-data">暂无评价</p>';
+                document.getElementById('comment-view').innerHTML = val ? `<p class="value-comment">${escapeHtml(val)}</p>` : '<p class="empty-state compact">暂无评价</p>';
             }
         }
 

@@ -1,0 +1,11 @@
+.import-fields { margin-top: 14px; }
+.import-option,
+.import-confirm { margin-left: 16px; }
+
+@media (max-width: 768px) {
+    .import-option,
+    .import-confirm {
+        display: block;
+        margin: 10px 0 0;
+    }
+}

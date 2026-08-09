@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>论文处理 - AI 论文数据库</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/css/core.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/pages/tasks.css">
 </head>
 <body>
     <div class="container">
@@ -29,7 +31,7 @@
         <div class="action-panel">
             <h3>📥 抓取论文</h3>
             <div class="form-row">
-                <div class="form-group" style="flex:1;">
+                <div class="form-group form-grow">
                     <label>分类</label>
                     <select id="fetch-category">
                         <option value="">使用默认配置</option>
@@ -45,23 +47,23 @@
                 </div>
             </div>
             <div class="form-row">
-                <div class="form-group" style="flex:1;">
+                <div class="form-group form-grow">
                     <label>抓取天数（留空则抓最近 1 天）</label>
                     <input type="number" id="fetch-days" min="1" max="3650" placeholder="例如: 30 表示最近30天（最大10年）">
                 </div>
-                <div class="form-group" style="flex:1;">
+                <div class="form-group form-grow">
                     <label>指定日期（精确抓取某一天）</label>
                     <input type="date" id="fetch-date">
                 </div>
             </div>
-            <p class="section-desc" style="margin-bottom:10px;">
+            <p class="section-desc section-desc-tight">
                 <strong>优先级：</strong>指定日期 > 抓取天数 > 默认最近 1 天。<br>
                 <strong>抓取天数：</strong>抓取最近 N 天的全部论文；系统会重叠查询窗口并依靠数据库去重，从而支持失败补抓。<br>
                 <strong>指定日期：</strong>精确抓取某一天的全部论文，适合补抓遗漏。<br>
                 <strong>分批配置：</strong>请求间隔、每批天数、批次间隔请在「⚙️ 设置 → 📥 抓取配置」中调整。
             </p>
             <div class="settings-actions">
-                <button class="action-btn btn-primary" onclick="runFetch(this)">📥 开始抓取</button>
+                <button class="btn btn-primary" onclick="runFetch(this)">📥 开始抓取</button>
             </div>
             <div id="fetch-status" class="action-status"></div>
         </div>
@@ -69,16 +71,16 @@
         <!-- AI 分析 -->
         <div class="action-panel">
             <h3>🤖 AI 分析</h3>
-            <div class="form-group" style="max-width:200px;">
+            <div class="form-group form-width-200">
                 <label>分析数量上限</label>
                 <input type="number" id="analyze-limit" min="1" max="10000" value="50">
             </div>
             <p class="section-desc">超过 20 篇时请留意 API 账单；基础分析会使用设置页中的“基础分析”任务模型。</p>
             <div class="settings-actions">
-                <button class="action-btn btn-primary" onclick="runAnalyze(this)">🤖 开始分析</button>
+                <button class="btn btn-primary" onclick="runAnalyze(this)">🤖 开始分析</button>
             </div>
             <div id="analyze-status" class="action-status"></div>
-            <div id="progress-container" style="display:none;margin-top:12px;">
+            <div id="progress-container" style="display:none">
                 <div class="progress-header">
                     <span id="progress-title">正在执行...</span>
                     <span id="progress-count">0/0</span>
@@ -95,18 +97,18 @@
         <div class="action-panel">
             <h3>📝 生成报告</h3>
             <div class="form-row">
-                <div class="form-group" style="flex:1;">
+                <div class="form-group form-grow">
                     <label>指定日期（留空则生成最新日期的报告）</label>
                     <input type="date" id="report-date">
                 </div>
-                <div class="form-group" style="flex:1;">
-                    <label><input type="checkbox" id="report-ai-summary" style="margin-right:6px;">生成 AI 导读</label>
+                <div class="form-group form-grow">
+                    <label><input type="checkbox" id="report-ai-summary" class="check-input">生成 AI 导读</label>
                     <p class="section-desc">默认不调用 LLM；勾选后使用“报告导读”任务模型额外生成一段摘要。</p>
                 </div>
             </div>
             <div class="action-buttons">
-                <button class="action-btn" onclick="runGenerate(this)">📝 生成报告</button>
-                <button class="action-btn btn-primary" onclick="runAll(this)">🚀 抓取、分析并生成报告</button>
+                <button class="btn" onclick="runGenerate(this)">📝 生成报告</button>
+                <button class="btn btn-primary" onclick="runAll(this)">🚀 抓取、分析并生成报告</button>
             </div>
             <div id="run-status" class="action-status"></div>
         </div>
@@ -118,26 +120,26 @@
             <div class="add-paper-row">
                 <input type="text" id="import-source-url" class="add-paper-input" placeholder="论文页、OpenReview、DOI 或 PDF 链接">
                 <input type="file" id="import-pdf-file" accept="application/pdf,.pdf">
-                <button class="action-btn" type="button" onclick="previewPaperImport(this)">🔍 解析论文</button>
+                <button class="btn" type="button" onclick="previewPaperImport(this)">🔍 解析论文</button>
             </div>
-            <div id="import-fields" style="display:none; margin-top:14px;">
+            <div id="import-fields" class="import-fields" style="display:none">
                 <div class="form-group"><label>标题 *</label><input type="text" id="import-title"></div>
                 <div class="form-group"><label>作者（每行一位）</label><textarea id="import-authors" rows="3"></textarea></div>
                 <div class="form-group"><label>摘要</label><textarea id="import-abstract" rows="7"></textarea></div>
                 <div class="form-row">
-                    <div class="form-group" style="flex:1"><label>会议/期刊</label><input type="text" id="import-venue"></div>
-                    <div class="form-group" style="flex:1"><label>发布日期</label><input type="date" id="import-published-date"></div>
+                    <div class="form-group form-grow"><label>会议/期刊</label><input type="text" id="import-venue"></div>
+                    <div class="form-group form-grow"><label>发布日期</label><input type="date" id="import-published-date"></div>
                 </div>
                 <div class="form-row">
-                    <div class="form-group" style="flex:1"><label>来源页面</label><input type="url" id="import-confirm-source-url"></div>
-                    <div class="form-group" style="flex:1"><label>PDF 直链</label><input type="url" id="import-pdf-url"></div>
+                    <div class="form-group form-grow"><label>来源页面</label><input type="url" id="import-confirm-source-url"></div>
+                    <div class="form-group form-grow"><label>PDF 直链</label><input type="url" id="import-pdf-url"></div>
                 </div>
                 <label><input type="checkbox" id="import-run-basic" checked> 基础分析</label>
-                <label style="margin-left:16px"><input type="checkbox" id="import-run-deep" checked> 深度阅读</label>
-                <button class="action-btn btn-primary" type="button" onclick="confirmPaperImport(this)" style="margin-left:16px">➕ 确认导入</button>
+                <label class="import-option"><input type="checkbox" id="import-run-deep" checked> 深度阅读</label>
+                <button class="btn btn-primary import-confirm" type="button" onclick="confirmPaperImport(this)">➕ 确认导入</button>
             </div>
             <div id="add-paper-status" class="action-status"></div>
-            <div id="add-paper-progress" style="display:none;">
+            <div id="add-paper-progress" style="display:none">
                 <div class="progress-bar-bg">
                     <div id="add-paper-bar" class="progress-bar-fill" style="width: 0%"></div>
                 </div>

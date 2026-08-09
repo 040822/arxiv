@@ -45,7 +45,7 @@ class TemplateSafetyTests(unittest.TestCase):
     def test_paper_detail_handles_flexible_qa_headings_and_visible_warnings(self):
         with open("templates/paper.html", "r", encoding="utf-8") as f:
             paper = f.read()
-        with open("static/style.css", "r", encoding="utf-8") as f:
+        with open("static/css/components.css", "r", encoding="utf-8") as f:
             style = f.read()
 
         self.assertIn("/^###\\s*Q(\\d+)\\s*:\\s*([\\s\\S]*)/i", paper)

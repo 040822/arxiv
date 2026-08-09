@@ -1,0 +1,132 @@
+.paper-detail {
+    background: #fff;
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.paper-detail h1 {
+    font-size: 1.5em;
+    margin-bottom: 15px;
+    line-height: 1.4;
+}
+
+.detail-meta {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #eee;
+}
+
+.meta-link {
+    color: #1a73e8;
+    text-decoration: none;
+}
+
+.meta-link:hover {
+    text-decoration: underline;
+}
+
+.detail-section {
+    margin-bottom: 20px;
+}
+
+.detail-section h3 {
+    font-size: 1em;
+    color: #555;
+    margin-bottom: 8px;
+}
+
+.detail-section p {
+    line-height: 1.6;
+}
+
+.abstract-text {
+    font-size: 0.9em;
+    color: #555;
+    line-height: 1.7;
+}
+
+.rating-display {
+    font-size: 1.5em;
+    color: #f59e0b;
+}
+
+.rating-text {
+    font-size: 0.7em;
+    color: #888;
+    vertical-align: middle;
+}
+
+.detail-top-row {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.value-comment {
+    font-style: italic;
+    color: #666;
+    font-size: 0.95em;
+}
+
+.qa-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.qa-item {
+    background: #f8f9fb;
+    border-left: 3px solid #1a73e8;
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+}
+
+.qa-question {
+    font-weight: 700;
+    color: #1a73e8;
+    margin-bottom: 6px;
+    font-size: 0.95em;
+}
+
+.qa-answer {
+    color: #444;
+    font-size: 0.9em;
+    line-height: 1.7;
+}
+
+.qa-question p {
+    margin: 0;
+}
+
+.qa-answer strong {
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.qa-answer em {
+    font-style: italic;
+}
+
+.qa-answer code {
+    background: #f1f5f9;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.85em;
+    color: #e11d48;
+}
+
+
+@media (max-width: 768px) {
+    .paper-detail {
+        padding: 20px 15px;
+    }
+}
+
+.meta-hidden { color: #dc3545; }

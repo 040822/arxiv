@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>设置 - AI 论文数据库</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/css/core.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/pages/settings.css">
 </head>
 <body>
     <div class="container">
@@ -26,12 +28,12 @@
         </div>
 
         {% if not auth_enabled %}
-        <div class="action-status error" style="display:block;margin:12px 0;">
+        <div class="action-status error auth-warning">
             ⚠️ 尚未设置管理密码，设置页和写接口当前未受保护。请在「管理」中设置密码。
         </div>
         {% else %}
-        <div class="settings-actions" style="justify-content:flex-end;">
-            <button class="action-btn" onclick="logout()">退出登录</button>
+        <div class="settings-actions actions-end">
+            <button class="btn" onclick="logout()">退出登录</button>
         </div>
         {% endif %}
 
@@ -62,11 +64,11 @@
                             </div>
 
                             <div class="settings-section">
-                                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-                                    <h3 style="margin:0;">➕ 添加新供应商</h3>
-                                    <button class="action-btn" id="add-provider-toggle-btn" onclick="toggleAddProviderSection()">展开</button>
+                                <div class="section-heading-row">
+                                    <h3 class="section-heading">➕ 添加新供应商</h3>
+                                    <button class="btn" id="add-provider-toggle-btn" onclick="toggleAddProviderSection()">展开</button>
                                 </div>
-                                <div id="add-provider-body" style="display:none;margin-top:12px;">
+                                <div id="add-provider-body" class="collapsible-body" style="display:none">
                                     <p class="section-desc">从预设供应商快速添加，或添加自定义 OpenAI 兼容接口</p>
                                     <div class="provider-grid" id="preset-grid"></div>
                                     <div id="add-form" class="add-form" style="display:none;">
@@ -75,10 +77,10 @@
                                         <div class="form-group"><label>显示名称</label><input type="text" id="add-name" placeholder="例如: DeepSeek"></div>
                                         <div class="form-group"><label>API Key</label><div class="input-group"><input type="password" id="add-api-key" placeholder="输入 API Key" onchange="scheduleModelFetch()"><button class="btn-small" onclick="togglePwd('add-api-key')">👁</button></div></div>
                                         <div class="form-group"><label>Base URL</label><input type="text" id="add-base-url" placeholder="https://api.deepseek.com" onchange="scheduleModelFetch()"></div>
-                                        <div class="settings-actions"><button class="action-btn" type="button" onclick="fetchModelsForForm()">🔗 验证连接并刷新模型列表</button></div>
+                                        <div class="settings-actions"><button class="btn" type="button" onclick="fetchModelsForForm()">🔗 验证连接并刷新模型列表</button></div>
                                         <div id="model-list-status" class="field-hint"></div>
                                         <div id="provider-model-preview" class="field-hint"></div>
-                                        <div class="settings-actions"><button class="action-btn btn-primary" onclick="submitAdd()">💾 保存供应商</button><button class="action-btn" onclick="cancelAdd()">取消</button></div>
+                                        <div class="settings-actions"><button class="btn btn-primary" onclick="submitAdd()">💾 保存供应商</button><button class="btn" onclick="cancelAdd()">取消</button></div>
                                     </div>
                                 </div>
                             </div>
@@ -93,14 +95,14 @@
                         </div>
                         <div class="settings-group-body">
                             <div class="settings-section">
-                                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-                                    <h3 style="margin:0;">🧭 功能模型路由</h3>
-                                    <button class="action-btn" id="ai-task-toggle-btn" onclick="toggleAiTaskRoutes()">展开</button>
+                                <div class="section-heading-row">
+                                    <h3 class="section-heading">🧭 功能模型路由</h3>
+                                    <button class="btn" id="ai-task-toggle-btn" onclick="toggleAiTaskRoutes()">展开</button>
                                 </div>
-                                <div id="ai-task-route-body" style="display:none;margin-top:12px;">
+                                <div id="ai-task-route-body" class="collapsible-body" style="display:none">
                                     <p class="section-desc">为不同 AI 功能单独选择供应商、模型和参数。基础分析负责标签、中文摘要、简评和 AI 初评，建议廉价模型；深度阅读只补充 Q&A，可使用高智能/高思考模型；报告导读默认只在任务页勾选时调用。</p>
                                     <div id="ai-task-routes"></div>
-                                    <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveAiTasks()">💾 保存功能模型路由</button></div>
+                                    <div class="settings-actions"><button class="btn btn-primary" onclick="saveAiTasks()">💾 保存功能模型路由</button></div>
                                     <div id="ai-task-status" class="action-status"></div>
                                 </div>
                             </div>
@@ -108,8 +110,8 @@
                             <div class="settings-section">
                                 <h3>⚡ 并发设置</h3>
                                 <p class="section-desc">AI 分析时的并发线程数，建议 3~10</p>
-                                <div class="form-group" style="max-width:200px;"><label>并发数</label><input type="number" id="concurrency" min="1" max="20" step="1" value="5"></div>
-                                <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveConcurrency()">💾 保存</button></div>
+                                <div class="form-group form-width-200"><label>并发数</label><input type="number" id="concurrency" min="1" max="20" step="1" value="5"></div>
+                                <div class="settings-actions"><button class="btn btn-primary" onclick="saveConcurrency()">💾 保存</button></div>
                                 <div id="concurrency-status" class="action-status"></div>
                             </div>
 
@@ -131,14 +133,14 @@
                                     <textarea id="research-interests" rows="6" maxlength="4000" placeholder="例如：我关注机器人基础模型、VLA、长时序任务规划、具身智能评测，以及能迁移到真实机械臂的模仿学习方法。"></textarea>
                                 </div>
                                 <div class="form-row">
-                                    <div class="form-group" style="max-width:220px;">
+                                    <div class="form-group form-width-220">
                                         <label>手动重算数量</label>
                                         <input type="number" id="recommend-limit" min="1" max="1000" step="10" value="200">
                                     </div>
                                 </div>
                                 <div class="settings-actions">
-                                    <button class="action-btn btn-primary" onclick="savePersonalization()">💾 保存研究兴趣</button>
-                                    <button class="action-btn" onclick="recalculateRecommendations(this)">🎯 手动重算推荐评分</button>
+                                    <button class="btn btn-primary" onclick="savePersonalization()">💾 保存研究兴趣</button>
+                                    <button class="btn" onclick="recalculateRecommendations(this)">🎯 手动重算推荐评分</button>
                                 </div>
                                 <div id="personalization-status" class="action-status"></div>
                             </div>
@@ -146,7 +148,7 @@
                             <div class="settings-section">
                                 <h3>📝 Prompt 设置</h3>
                                 <p class="section-desc">按功能维护稳定 Prompt 前缀。论文标题、摘要、PDF 全文等动态内容会作为独立 JSON 消息放在最后，以提高缓存命中率；基础分析可使用 <code>{tag_candidates}</code>，深度阅读只需描述 Q&A 输出。</p>
-                                <div class="form-group" style="max-width:280px;">
+                                <div class="form-group form-width-280">
                                     <label>Prompt Profile</label>
                                     <select id="prompt-profile-select" onchange="switchPromptProfile()">
                                         <option value="basic_analysis">基础分析</option>
@@ -160,7 +162,7 @@
                                 </div>
                                 <div class="form-group"><label>System Prompt</label><textarea id="system-prompt" rows="4"></textarea></div>
                                 <div class="form-group"><label>Instruction Prompt</label><textarea id="user-prompt" rows="16"></textarea></div>
-                                <div class="settings-actions"><button class="action-btn btn-primary" onclick="savePrompts()">💾 保存</button><button class="action-btn" onclick="resetPrompts()">🔄 恢复默认</button></div>
+                                <div class="settings-actions"><button class="btn btn-primary" onclick="savePrompts()">💾 保存</button><button class="btn" onclick="resetPrompts()">🔄 恢复默认</button></div>
                                 <div id="prompt-status" class="action-status"></div>
                             </div>
 
@@ -168,8 +170,8 @@
                                 <h3>❓ Q&A 问题管理</h3>
                                 <p class="section-desc">管理 AI 深度阅读的问题列表，修改后点击「应用到 Prompt」同步</p>
                                 <div id="qa-questions-list" class="qa-questions-list"></div>
-                                <div class="qa-add-row"><input type="text" id="qa-new-question" placeholder="输入新问题"><button class="action-btn" onclick="addQuestion()">➕</button></div>
-                                <div class="settings-actions" style="margin-top:12px;"><button class="action-btn btn-primary" onclick="applyQuestionsToPrompt()">📝 应用到 Prompt</button><button class="action-btn" onclick="resetQuestions()">🔄 恢复默认</button></div>
+                                <div class="qa-add-row"><input type="text" id="qa-new-question" placeholder="输入新问题"><button class="btn" onclick="addQuestion()">➕</button></div>
+                                <div class="settings-actions mt-12"><button class="btn btn-primary" onclick="applyQuestionsToPrompt()">📝 应用到 Prompt</button><button class="btn" onclick="resetQuestions()">🔄 恢复默认</button></div>
                                 <div id="qa-status" class="action-status"></div>
                             </div>
                         </div>
@@ -186,23 +188,23 @@
                                 <h3>📥 抓取配置</h3>
                                 <p class="section-desc">配置 arXiv 论文抓取的速率和分批策略</p>
                                 <div class="form-row">
-                                    <div class="form-group" style="flex:1;">
+                                    <div class="form-group form-grow">
                                         <label>请求间隔（秒）</label>
                                         <input type="number" id="fetch-request-delay" min="3" max="300" step="0.5" value="5">
                                         <p class="section-desc">每次 API 请求之间的间隔，arXiv 要求至少 3 秒；实测连续翻页在 3 秒间隔下仍可能触发 429 软限流，默认 5 秒；遇到 429 建议 30~60 秒</p>
                                     </div>
-                                    <div class="form-group" style="flex:1;">
+                                    <div class="form-group form-grow">
                                         <label>每批天数</label>
                                         <input type="number" id="fetch-batch-days" min="1" max="365" step="1" value="30">
                                         <p class="section-desc">分批抓取时每批覆盖的天数</p>
                                     </div>
-                                    <div class="form-group" style="flex:1;">
+                                    <div class="form-group form-grow">
                                         <label>批次间隔（秒）</label>
                                         <input type="number" id="fetch-batch-delay" min="1" max="1800" step="1" value="10">
                                         <p class="section-desc">分批抓取时批次之间的等待时间；默认 10 秒；遇到 429 建议 300 秒以上</p>
                                     </div>
                                 </div>
-                                <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveFetchConfig()">💾 保存</button></div>
+                                <div class="settings-actions"><button class="btn btn-primary" onclick="saveFetchConfig()">💾 保存</button></div>
                                 <div id="fetch-config-status" class="action-status"></div>
                             </div>
                         </div>
@@ -228,7 +230,7 @@
                             <div class="form-group"><label>HTTPS 代理</label><input type="text" id="proxy-https" placeholder="http://127.0.0.1:7890"></div>
                         </div>
                         <div class="settings-actions">
-                            <button class="action-btn btn-primary" onclick="saveProxy()">💾 保存代理配置</button>
+                            <button class="btn btn-primary" onclick="saveProxy()">💾 保存代理配置</button>
                         </div>
                         <div id="proxy-status" class="action-status"></div>
                     </div>
@@ -237,7 +239,7 @@
                         <h3>连接测试</h3>
                         <p class="section-desc">使用当前代理配置测试 arXiv 外网链路；LLM 连接请在对应功能模型路由中测试。</p>
                         <div class="settings-actions">
-                            <button class="action-btn" onclick="testProxy()">🔗 测试 arXiv 连接</button>
+                            <button class="btn" onclick="testProxy()">🔗 测试 arXiv 连接</button>
                         </div>
                         <div id="network-test-status" class="action-status"></div>
                     </div>
@@ -256,10 +258,10 @@
                         <p class="section-desc">系统仅提供这一条内置任务，不支持添加自定义任务。服务停机错过触发后不会自动补跑。</p>
                         <div id="schedule-runtime-status" class="db-info-grid schedule-runtime-grid"></div>
                         <div class="form-row">
-                            <div class="form-group" style="flex:1;">
+                            <div class="form-group form-grow">
                                 <label><input type="checkbox" id="schedule-enabled"> 启用 AI 论文日报</label>
                             </div>
-                            <div class="form-group" style="flex:2;">
+                            <div class="form-group form-grow-2">
                                 <label>执行时间</label>
                                 <div class="schedule-time-row">
                                     <select id="schedule-hour">
@@ -303,8 +305,8 @@
                             </div>
                         </div>
                         <div class="settings-actions">
-                            <button class="action-btn btn-primary" onclick="saveSchedule()">💾 保存定时任务</button>
-                            <a class="action-btn" href="/tasks">📋 前往论文处理</a>
+                            <button class="btn btn-primary" onclick="saveSchedule()">💾 保存定时任务</button>
+                            <a class="btn" href="/tasks">📋 前往论文处理</a>
                         </div>
                         <div id="schedule-save-status" class="action-status"></div>
                     </div>
@@ -333,9 +335,9 @@
                         <p class="section-desc">日报生成后使用这一份共享 SMTP 配置发送邮件。测试发送使用最近一份已生成报告。</p>
                         <div class="form-group"><label><input type="checkbox" id="email-report-enabled"> 启用日报邮件步骤</label></div>
                         <div class="form-row">
-                            <div class="form-group" style="flex:2;"><label>SMTP 服务器</label><input type="text" id="email-smtp-host" placeholder="smtp.example.com"></div>
-                            <div class="form-group" style="max-width:140px;"><label>端口</label><input type="number" id="email-smtp-port" min="1" max="65535" step="1" value="587"></div>
-                            <div class="form-group" style="max-width:160px;"><label>加密方式</label><select id="email-security"><option value="starttls">STARTTLS</option><option value="ssl">SSL/TLS</option><option value="none">不加密</option></select></div>
+                            <div class="form-group form-grow-2"><label>SMTP 服务器</label><input type="text" id="email-smtp-host" placeholder="smtp.example.com"></div>
+                            <div class="form-group form-width-140"><label>端口</label><input type="number" id="email-smtp-port" min="1" max="65535" step="1" value="587"></div>
+                            <div class="form-group form-width-160"><label>加密方式</label><select id="email-security"><option value="starttls">STARTTLS</option><option value="ssl">SSL/TLS</option><option value="none">不加密</option></select></div>
                         </div>
                         <div class="form-row">
                             <div class="form-group"><label>SMTP 用户名</label><input type="text" id="email-username" autocomplete="username"></div>
@@ -344,16 +346,16 @@
                         </div>
                         <div class="form-group"><label>收件人</label><textarea id="email-recipients" rows="3" placeholder="多个邮箱可用逗号、分号或换行分隔"></textarea></div>
                         <div class="form-row">
-                            <div class="form-group" style="flex:2;"><label>主题模板</label><input type="text" id="email-subject-template" placeholder="AI 论文日报 {date} - {paper_count} 篇论文"></div>
+                            <div class="form-group form-grow-2"><label>主题模板</label><input type="text" id="email-subject-template" placeholder="AI 论文日报 {date} - {paper_count} 篇论文"></div>
                             <div class="form-group"><label>站点地址</label><input type="text" id="email-site-url" placeholder="https://your-domain.example"></div>
                         </div>
                         <div class="form-row">
-                            <div class="form-group" style="max-width:160px;"><label>重点精读阈值</label><input type="number" id="email-important-score-threshold" min="0" max="100" step="1" value="80"><small class="field-hint">推荐分高于此值进入重点精读（0-100，默认 80）</small></div>
-                            <div class="form-group" style="max-width:160px;"><label>速览上限</label><input type="number" id="email-overview-limit" min="0" max="50" step="1" value="20"><small class="field-hint">重点之外最多展示的速览条数（0-50，默认 20）</small></div>
+                            <div class="form-group form-width-160"><label>重点精读阈值</label><input type="number" id="email-important-score-threshold" min="0" max="100" step="1" value="80"><small class="field-hint">推荐分高于此值进入重点精读（0-100，默认 80）</small></div>
+                            <div class="form-group form-width-160"><label>速览上限</label><input type="number" id="email-overview-limit" min="0" max="50" step="1" value="20"><small class="field-hint">重点之外最多展示的速览条数（0-50，默认 20）</small></div>
                         </div>
                         <div class="settings-actions">
-                            <button class="action-btn btn-primary" onclick="saveEmailReport()">💾 保存邮件配置</button>
-                            <button class="action-btn" onclick="testEmailReport(this)">✉️ 测试发送</button>
+                            <button class="btn btn-primary" onclick="saveEmailReport()">💾 保存邮件配置</button>
+                            <button class="btn" onclick="testEmailReport(this)">✉️ 测试发送</button>
                         </div>
                         <div id="email-report-status" class="db-info-grid webdav-status-grid"></div>
                         <div id="email-report-action-status" class="action-status"></div>
@@ -377,8 +379,8 @@
                                 <option value="email_report">报告邮件</option>
                                 <option value="webdav_backup">WebDAV 备份</option>
                             </select>
-                            <button class="action-btn" onclick="loadTaskLogs()">🔄 刷新</button>
-                            <button class="action-btn" onclick="clearTaskLogs()">🗑️ 清理 30 天前日志</button>
+                            <button class="btn" onclick="loadTaskLogs()">🔄 刷新</button>
+                            <button class="btn" onclick="clearTaskLogs()">🗑️ 清理 30 天前日志</button>
                         </div>
                         <div id="schedule-task-logs" class="task-log-list"></div>
                         <div id="schedule-log-pagination" class="pagination"></div>
@@ -417,7 +419,7 @@
                         <p class="section-desc">每天定时任务结束后自动备份数据库快照、<code>settings.json</code> 和 manifest。Web 日报存储在数据库中，会随快照备份。注意：备份包会包含 API Key、管理密码哈希和 session secret 等敏感配置。</p>
                         <div class="form-group"><label><input type="checkbox" id="webdav-enabled"> 启用每日自动 WebDAV 备份</label></div>
                         <div class="form-row">
-                            <div class="form-group" style="flex:2;">
+                            <div class="form-group form-grow-2">
                                 <label>WebDAV 地址</label>
                                 <input type="text" id="webdav-url" placeholder="https://example.com/remote.php/dav/files/user">
                             </div>
@@ -435,14 +437,14 @@
                                 <label>密码 / 应用密码</label>
                                 <div class="input-group"><input type="password" id="webdav-password" autocomplete="new-password" placeholder="留空表示不修改"><button class="btn-small" onclick="togglePwd('webdav-password')">👁</button></div>
                             </div>
-                            <div class="form-group" style="max-width:180px;">
+                            <div class="form-group form-width-180">
                                 <label>历史保留天数</label>
                                 <input type="number" id="webdav-history-days" min="1" max="3650" step="1" value="3">
                             </div>
                         </div>
                         <div class="settings-actions">
-                            <button class="action-btn btn-primary" onclick="saveWebdavBackup()">💾 保存云备份配置</button>
-                            <button class="action-btn" onclick="runWebdavBackup(this)">☁️ 立即备份</button>
+                            <button class="btn btn-primary" onclick="saveWebdavBackup()">💾 保存云备份配置</button>
+                            <button class="btn" onclick="runWebdavBackup(this)">☁️ 立即备份</button>
                         </div>
                         <div id="webdav-backup-status" class="db-info-grid webdav-status-grid"></div>
                         <div id="webdav-backup-action-status" class="action-status"></div>
@@ -456,19 +458,19 @@
             <div class="settings-section">
                 <h3>🔒 管理密码</h3>
                 <p class="section-desc">设置管理页面密码，保护设置不被未授权修改</p>
-                <div class="form-group" style="max-width:360px;">
+                <div class="form-group form-width-360">
                     <label>当前密码</label>
                     <div class="input-group"><input type="password" id="admin-current-pwd" placeholder="当前密码（首次设置可留空）"><button class="btn-small" onclick="togglePwd('admin-current-pwd')">👁</button></div>
                 </div>
-                <div class="form-group" style="max-width:360px;">
+                <div class="form-group form-width-360">
                     <label>新密码</label>
                     <div class="input-group"><input type="password" id="admin-new-pwd" placeholder="新密码"><button class="btn-small" onclick="togglePwd('admin-new-pwd')">👁</button></div>
                 </div>
-                <div class="form-group" style="max-width:360px;">
+                <div class="form-group form-width-360">
                     <label>确认新密码</label>
                     <div class="input-group"><input type="password" id="admin-confirm-pwd" placeholder="再次输入新密码"><button class="btn-small" onclick="togglePwd('admin-confirm-pwd')">👁</button></div>
                 </div>
-                <div class="settings-actions"><button class="action-btn btn-primary" onclick="saveAdminPassword()">💾 保存密码</button><button class="action-btn" onclick="clearAdminPassword()">🗑️ 清除密码</button></div>
+                <div class="settings-actions"><button class="btn btn-primary" onclick="saveAdminPassword()">💾 保存密码</button><button class="btn" onclick="clearAdminPassword()">🗑️ 清除密码</button></div>
                 <div id="admin-status" class="action-status"></div>
             </div>
             <div class="settings-section">
@@ -495,7 +497,7 @@
                             <option value="90">近 90 天</option>
                         </select>
                     </div>
-                    <button class="action-btn" onclick="loadAiUsage()">刷新</button>
+                    <button class="btn" onclick="loadAiUsage()">刷新</button>
                 </div>
                 <div class="usage-chart-card">
                     <div class="usage-chart-title">
@@ -742,7 +744,7 @@
                 const meta = AI_TASK_META[taskKey];
                 const cfg = tasks[taskKey] || {};
                 const providerKey = cfg.provider_key || '';
-                html += `<div class="advanced-box" style="margin-bottom:14px;">
+                html += `<div class="advanced-box mb-14">
                     <h5>${escapeHtml(meta.title)}</h5>
                     <p class="section-desc">${escapeHtml(meta.desc)}</p>
                     <div class="form-row">
@@ -757,7 +759,7 @@
                         <div class="form-group"><label><input type="checkbox" id="${taskFieldId(taskKey, 'temperature-enabled')}" onchange="toggleTaskSampling('${taskKey}', 'temperature')" ${cfg.temperature_enabled ? 'checked' : ''}> Temperature</label><input type="number" id="${taskFieldId(taskKey, 'temperature')}" min="0" max="2" step="0.1" value="${escapeHtml(cfg.temperature ?? 0.3)}"></div>
                     </div>
                     <p class="field-hint">非思考模型推荐：Temperature ${escapeHtml(meta.temperature)}；其他采样行为采用模型默认。</p>
-                    <div class="settings-actions"><button class="action-btn" type="button" onclick="refreshTaskModels('${taskKey}')">刷新模型列表</button><button class="action-btn" type="button" onclick="testAiTaskRoute('${taskKey}', this)">测试此路由</button></div>
+                    <div class="settings-actions"><button class="btn" type="button" onclick="refreshTaskModels('${taskKey}')">刷新模型列表</button><button class="btn" type="button" onclick="testAiTaskRoute('${taskKey}', this)">测试此路由</button></div>
                     <div id="${taskFieldId(taskKey, 'status')}" class="action-status"></div>
                 </div>`;
             }

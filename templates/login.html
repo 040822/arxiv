@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>登录 - AI 论文数据库</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/css/core.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/pages/auth.css">
 </head>
 <body>
     <div class="container">
@@ -12,7 +14,7 @@
             <h1>🔒 管理登录</h1>
         </header>
 
-        <div class="settings-section" style="max-width:420px;margin:40px auto;">
+        <div class="settings-section login-card">
             <h3>输入管理密码</h3>
             <p class="section-desc">设置页、任务执行和配置接口需要登录后访问。</p>
             <div class="form-group">
@@ -20,8 +22,8 @@
                 <input type="password" id="password" autofocus onkeydown="if(event.key==='Enter')login()">
             </div>
             <div class="settings-actions">
-                <button class="action-btn btn-primary" onclick="login()">登录</button>
-                <a class="action-btn" href="/">返回首页</a>
+                <button class="btn btn-primary" onclick="login()">登录</button>
+                <a class="btn" href="/">返回首页</a>
             </div>
             <div id="login-status" class="action-status"></div>
         </div>

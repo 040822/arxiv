@@ -1,0 +1,378 @@
+.learning-page {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+/* hero 区：面包屑 + 标题 + meta 单行 */
+.learning-hero {
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 16px;
+}
+.learning-breadcrumb {
+    font-size: 0.85em;
+    color: #94a3b8;
+    margin-bottom: 10px;
+}
+.learning-breadcrumb a {
+    color: #1a73e8;
+    text-decoration: none;
+}
+.learning-breadcrumb a:hover {
+    text-decoration: underline;
+}
+.learning-breadcrumb .bc-sep {
+    margin: 0 6px;
+    color: #cbd5e1;
+}
+.learning-hero h1 {
+    margin: 0 0 8px;
+    font-size: 1.5em;
+    line-height: 1.4;
+}
+.learning-hero .detail-meta {
+    margin: 0;
+}
+.learning-hero .rating {
+    color: #f59e0b;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+/* Tab 栏（复用 settings-tabs，加 sticky） */
+.learning-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #f5f7fa;
+    margin: 0 -30px;
+    padding: 8px 30px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+
+/* Tab 内容区宽度约束 */
+.learning-content {
+    max-width: 760px;
+    margin: 0 auto;
+    padding-top: 18px;
+}
+.learning-content .section-desc {
+    margin-bottom: 14px;
+}
+
+/* 聊天区 */
+.learning-chat {
+    max-height: 460px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    background: #f8f9fb;
+    border: 1px solid #edf2f7;
+    border-radius: 12px;
+    margin: 0 0 14px;
+}
+.learning-message {
+    max-width: 86%;
+    padding: 11px 14px;
+    border-radius: 14px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.learning-message.assistant {
+    border-bottom-left-radius: 4px;
+}
+.learning-message.user {
+    align-self: flex-end;
+    background: #e8f0fe;
+    border-color: #c7dafc;
+    border-bottom-right-radius: 4px;
+}
+.learning-message-role {
+    font-size: 0.75em;
+    font-weight: 700;
+    color: #64748b;
+    margin-bottom: 5px;
+}
+.learning-message-body {
+    font-size: 0.92em;
+    line-height: 1.7;
+    color: #334155;
+}
+.learning-message-body p {
+    margin: 0 0 8px;
+}
+.learning-message-body p:last-child {
+    margin-bottom: 0;
+}
+.learning-message-body strong {
+    font-weight: 700;
+    color: #1e293b;
+}
+.learning-message-body code {
+    background: #f1f5f9;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+    font-size: 0.88em;
+    color: #e11d48;
+}
+
+/* 聊天输入区 */
+.learning-input-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+.learning-input-row textarea {
+    flex: 1;
+    min-height: 72px;
+}
+.learning-input-row .btn {
+    margin-top: 2px;
+}
+
+/* 学习页统一 textarea 样式（自由讨论 / 问答练习 / 苏格拉底） */
+.learning-input-row textarea,
+.learning-question textarea,
+.socratic-input textarea {
+    padding: 10px 14px;
+    border: 1px solid #d0d7de;
+    border-radius: 10px;
+    font-size: 0.92em;
+    line-height: 1.6;
+    font-family: inherit;
+    color: #334155;
+    background: #fff;
+    outline: none;
+    resize: vertical;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.learning-input-row textarea:focus,
+.learning-question textarea:focus,
+.socratic-input textarea:focus {
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 3px rgba(26,115,232,0.12);
+}
+.learning-input-row textarea::placeholder,
+.learning-question textarea::placeholder,
+.socratic-input textarea::placeholder {
+    color: #94a3b8;
+}
+
+/* 最近练习胶囊 */
+.learning-session-list {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin: 14px 0;
+}
+.session-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    border: 1px solid #d0d7de;
+    border-radius: 16px;
+    background: #fff;
+    color: #475569;
+    font-size: 0.85em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.session-chip:hover {
+    background: #f0f4f8;
+    border-color: #90b8e0;
+    color: #1a365d;
+}
+
+/* quiz 题目卡片 */
+.learning-question {
+    padding: 16px 18px;
+    border: 1px solid #e5e7eb;
+    border-left: 4px solid #1a73e8;
+    border-radius: 8px;
+    background: #f8f9fb;
+    margin-top: 14px;
+}
+.learning-question.q-done {
+    border-left-color: #10b981;
+}
+.learning-question-title {
+    font-weight: 700;
+    color: #1a73e8;
+    margin-bottom: 10px;
+    font-size: 0.98em;
+}
+.learning-answer {
+    font-size: 0.9em;
+    line-height: 1.65;
+    color: #334155;
+    background: #fff;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 10px 0;
+}
+.learning-question textarea {
+    width: 100%;
+    margin: 10px 0;
+}
+
+/* quiz 反馈 */
+.learning-feedback {
+    font-size: 0.9em;
+    line-height: 1.65;
+    color: #334155;
+    background: #fff;
+    border-radius: 8px;
+    border-left: 3px solid #10b981;
+    padding: 12px 14px;
+    margin: 10px 0;
+}
+.feedback-head {
+    margin-bottom: 8px;
+}
+.quiz-score-badge {
+    display: inline-block;
+    padding: 3px 11px;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: 800;
+    color: #fff;
+}
+.quiz-score-badge.high { background: #10b981; }
+.quiz-score-badge.mid { background: #f59e0b; }
+.quiz-score-badge.low { background: #ef4444; }
+.feedback-text {
+    margin: 6px 0 10px;
+}
+.feedback-section {
+    margin-top: 8px;
+}
+.learning-feedback ul {
+    margin: 6px 0 8px 20px;
+}
+.improved-answer {
+    background: #f0f7ff;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 10px;
+}
+.improved-body {
+    margin-top: 6px;
+    color: #1e3a8a;
+    line-height: 1.7;
+}
+.improved-body p {
+    margin: 0 0 6px;
+}
+.improved-body p:last-child {
+    margin-bottom: 0;
+}
+
+/* 苏格拉底追问：对话气泡流 */
+.socratic-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    background: #f8f9fb;
+    border: 1px solid #edf2f7;
+    border-radius: 12px;
+    margin-top: 14px;
+}
+.socratic-flow .learning-message {
+    margin: 0;
+}
+.socratic-flow .learning-feedback {
+    margin: 0;
+    max-width: 86%;
+    align-self: flex-start;
+}
+.socratic-input {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 4px;
+}
+.socratic-input textarea {
+    width: 100%;
+}
+
+/* 空态紧凑版（修复 JS 引用无 CSS 的 bug） */
+.empty-state.compact {
+    padding: 24px 16px;
+    font-size: 0.88em;
+    color: #94a3b8;
+}
+.empty-state.compact p {
+    margin: 0;
+}
+
+
+@media (max-width: 768px) {
+    .learning-tabs {
+        margin: 0 -10px;
+        padding: 8px 10px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .learning-content {
+        max-width: 100%;
+    }
+}
+/* AI 正在输入气泡 */
+.learning-message.typing .learning-message-body {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 0;
+}
+.typing-dots {
+    display: inline-flex;
+    gap: 5px;
+}
+.typing-dots span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #1a73e8;
+    opacity: 0.35;
+    animation: typing-bounce 1.2s infinite ease-in-out;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typing-bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+    30% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* 通用行内加载 spinner */
+.inline-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #b0c4e0;
+    border-top-color: #1a73e8;
+    border-radius: 50%;
+    animation: inline-spin 0.6s linear infinite;
+    vertical-align: text-bottom;
+    margin-right: 6px;
+}
+@keyframes inline-spin {
+    to { transform: rotate(360deg); }
+}
+
+.learning-quiz { min-height: 80px; }
+.field-label {
+    display: block;
+    margin-bottom: 4px;
+    color: #475569;
+    font-size: 0.82em;
+    font-weight: 700;
+}

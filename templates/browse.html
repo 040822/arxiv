@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>分类浏览 - AI 论文数据库</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/css/core.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/pages/library.css">
 </head>
 <body>
     {% macro stars(value) -%}
@@ -124,7 +126,7 @@
                         </select>
                     </div>
 
-                    <noscript><button type="submit" class="action-btn btn-primary" style="width:100%">应用筛选</button></noscript>
+                    <noscript><button type="submit" class="btn btn-primary btn-block">应用筛选</button></noscript>
                 </form>
 
                 <a href="/browse" class="clear-filter-btn">清除全部筛选</a>
@@ -153,14 +155,14 @@
                     <label class="select-all-label">
                         <input type="checkbox" id="select-all-checkbox" onchange="toggleAll(this)"> 全选
                     </label>
-                    <button class="action-btn" onclick="selectAll()">☑️ 全选</button>
-                    <button class="action-btn" onclick="deselectAll()">❎ 取消</button>
-                    <button class="action-btn" onclick="batchHide()">👁️ 批量隐藏 (<span id="selected-count">0</span>)</button>
-                    <button class="action-btn" onclick="batchAnalyze()">🤖 批量分析</button>
-                    <button class="action-btn btn-danger" onclick="batchDelete()">🗑️ 批量删除</button>
-                    <div id="batch-status" class="action-status" style="display:inline-block;margin:0;padding:4px 10px;font-size:0.85em;"></div>
+                    <button class="btn" onclick="selectAll()">☑️ 全选</button>
+                    <button class="btn" onclick="deselectAll()">❎ 取消</button>
+                    <button class="btn" onclick="batchHide()">👁️ 批量隐藏 (<span id="selected-count">0</span>)</button>
+                    <button class="btn" onclick="batchAnalyze()">🤖 批量分析</button>
+                    <button class="btn btn-danger" onclick="batchDelete()">🗑️ 批量删除</button>
+                    <div id="batch-status" class="action-status batch-status"></div>
                 </div>
-                <p class="section-desc" style="margin:8px 0 0;font-size:0.82em;color:#64748b;">
+                <p class="section-desc batch-help">
                     🤖 批量分析 = 普通 AI 报告（标签/中文摘要/AI 评级/简评，不下载 PDF）。深度分析（Q&A）请在论文详情页点击「📝 生成报告」。
                 </p>
 
@@ -186,7 +188,7 @@
                                         {% endfor %}
                                     </span>
                                     {% else %}
-                                    <span class="meta-item" style="color:#ccc">未分析</span>
+                                    <span class="meta-item meta-muted">未分析</span>
                                     {% endif %}
                                 </div>
                                 {% if paper.categories %}
@@ -269,7 +271,7 @@
                     {% endif %}
                     <span class="page-jump">
                         跳转到 <input type="number" id="page-input" min="1" max="{{ total_pages }}" value="{{ page }}" onkeydown="if(event.key==='Enter')goPage()"> 页
-                        <button class="action-btn" onclick="goPage()">Go</button>
+                        <button class="btn" onclick="goPage()">Go</button>
                     </span>
                     <span class="page-per-page">
                         <select id="per-page-select" onchange="changePerPage(this.value)">

@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>讨论论文 - {{ paper.title }}</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/css/core.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/rich-text.css">\n    <link rel="stylesheet" href="/static/css/pages/learning.css">
     <link rel="stylesheet" href="/static/vendor/katex.min.css">
 </head>
 <body>
@@ -55,7 +57,7 @@
                         <textarea id="chat-input" rows="3" placeholder="例如：这篇论文的方法和 VLA 有什么关系？
 
 (Ctrl/ Cmd + Enter 快速发送)"></textarea>
-                        <button class="action-btn btn-primary" id="chat-send-btn" onclick="sendChat()">发送</button>
+                        <button class="btn btn-primary" id="chat-send-btn" onclick="sendChat()">发送</button>
                     </div>
                     <div id="chat-status" class="action-status"></div>
                 </div>
@@ -66,8 +68,8 @@
                 <div class="learning-content">
                     <p class="section-desc">先自己答，再看模型评分、纠错和改进版答案。</p>
                     <div class="action-buttons" id="quiz-gen-buttons">
-                        <button class="action-btn btn-primary" id="quiz-quick3-btn" onclick="createQuiz('quick3')">⚡ 生成 3 题快速练习</button>
-                        <button class="action-btn" id="quiz-standard6-btn" onclick="createQuiz('standard6')">
+                        <button class="btn btn-primary" id="quiz-quick3-btn" onclick="createQuiz('quick3')">⚡ 生成 3 题快速练习</button>
+                        <button class="btn" id="quiz-standard6-btn" onclick="createQuiz('standard6')">
                             📖 生成 6 题标准练习
                         </button>
                     </div>
@@ -92,7 +94,7 @@
                 <div class="learning-content">
                     <p class="section-desc">不预设题目，模型会根据你的回答继续追问，适合重要论文精读。</p>
                     <div class="action-buttons">
-                        <button class="action-btn btn-primary" id="socratic-start-btn" onclick="startSocratic()">开始追问</button>
+                        <button class="btn btn-primary" id="socratic-start-btn" onclick="startSocratic()">开始追问</button>
                     </div>
                     <div id="socratic-status" class="action-status"></div>
                     <div id="socratic-session" class="learning-quiz"></div>
@@ -301,7 +303,7 @@
                         </div>
                         ${q.answer_text ? `<div class="learning-message user"><div class="learning-message-role">你</div><div class="learning-message-body">${escapeHtml(q.answer_text).replace(/\n/g, '<br>')}</div></div>` : ''}
                         ${feedbackHtml(q.feedback)}
-                        ${canAnswer ? `<div class="socratic-input"><textarea id="answer-${q.id}" rows="4" placeholder="先用自己的话回答，AI 会继续追问"></textarea><button class="action-btn btn-primary" id="socratic-reply-${q.id}" onclick="replySocratic(${session.id}, ${q.id})">提交回答</button></div>` : ''}
+                        ${canAnswer ? `<div class="socratic-input"><textarea id="answer-${q.id}" rows="4" placeholder="先用自己的话回答，AI 会继续追问"></textarea><button class="btn btn-primary" id="socratic-reply-${q.id}" onclick="replySocratic(${session.id}, ${q.id})">提交回答</button></div>` : ''}
                     `;
                 }).join('') + '</div>';
                 renderMathInContainer(box);
@@ -316,7 +318,7 @@
                     ${q.answer_text ? `<div class="learning-answer"><strong>你的回答：</strong><br>${escapeHtml(q.answer_text).replace(/\n/g, '<br>')}</div>` : ''}
                     ${feedbackHtml(q.feedback)}
                     ${canAnswer ? `<textarea id="answer-${q.id}" rows="4" placeholder="先用自己的话回答，再提交给模型反馈"></textarea>
-                    <button class="action-btn btn-primary" id="quiz-answer-${q.id}" onclick="submitQuizAnswer(${q.id})">提交回答</button>` : ''}
+                    <button class="btn btn-primary" id="quiz-answer-${q.id}" onclick="submitQuizAnswer(${q.id})">提交回答</button>` : ''}
                 </div>`;
             }).join('');
             renderMathInContainer(box);
@@ -327,7 +329,7 @@
             const box = document.getElementById('quiz-session');
             disableQuizGenButtons(true);
             statusSpinner(status, '正在生成练习题...');
-            box.innerHTML = '<div class="action-status info" style="display:block;padding:20px;text-align:center;"><span class="inline-spinner"></span>正在生成练习题...</div>';
+            box.innerHTML = '<div class="action-status info loading-status"><span class="inline-spinner"></span>正在生成练习题...</div>';
             try {
                 const data = await fetchJson(`/api/paper/${ARXIV_ID}/quiz/sessions`, {
                     method: 'POST',
@@ -393,7 +395,7 @@
             const box = document.getElementById('socratic-session');
             disableSocraticStartButton(true);
             statusSpinner(status, '正在生成第一问...');
-            box.innerHTML = '<div class="action-status info" style="display:block;padding:20px;text-align:center;"><span class="inline-spinner"></span>正在生成第一问...</div>';
+            box.innerHTML = '<div class="action-status info loading-status"><span class="inline-spinner"></span>正在生成第一问...</div>';
             try {
                 const data = await fetchJson(`/api/paper/${ARXIV_ID}/socratic/sessions`, {method: 'POST'});
                 activeSocraticSession = data.session;
