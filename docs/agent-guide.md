@@ -122,8 +122,8 @@ APScheduler cron(day_of_week, hour, minute)
 
 ### 3. arXiv API 注意事项
 
-- `submittedDate:[... TO ...]` 过滤器**不工作**，不要使用
-- 正确做法：`cat:xxx` + `sortBy=submittedDate` + 代码中按 `published` 日期过滤
+- `submittedDate:[YYYYMMDDTTTT TO YYYYMMDDTTTT]` 是可用的官方日期过滤字段；与 `cat:xxx` 组合后按日期窗口查询
+- 查询仍需按 `submittedDate` 降序翻页，并在代码中保留 `[start, end)` 的 `published` 日期边界兜底
 - `cat:cs.RO` 比 `primary_category:cs.RO` 更可靠
 - arXiv 返回的 `published` 是带 UTC 时区的 datetime，比较时必须用 `datetime.now(timezone.utc)`
 

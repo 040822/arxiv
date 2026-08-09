@@ -30,7 +30,7 @@
             <h3>📥 抓取论文</h3>
             <div class="form-row">
                 <div class="form-group" style="flex:1;">
-                    <label>主分类</label>
+                    <label>分类</label>
                     <select id="fetch-category">
                         <option value="">使用默认配置</option>
                         <option value="cs.AI">cs.AI - Artificial Intelligence</option>
@@ -43,6 +43,7 @@
                         <option value="cs.IR">cs.IR - Information Retrieval</option>
                     </select>
                 </div>
+            </div>
             <div class="form-row">
                 <div class="form-group" style="flex:1;">
                     <label>抓取天数（留空则抓最近 1 天）</label>
@@ -54,10 +55,9 @@
                 </div>
             </div>
             <p class="section-desc" style="margin-bottom:10px;">
-                <strong>优先级：</strong>指定日期 > 抓取天数 > 最大数量（每分类）。三项都留空则按默认数量抓取最新论文。<br>
-                <strong>抓取天数：</strong>抓取最近 N 天的全部论文，已抓取过的日期会自动跳过，不会重复抓取。<br>
+                <strong>优先级：</strong>指定日期 > 抓取天数 > 默认最近 1 天。<br>
+                <strong>抓取天数：</strong>抓取最近 N 天的全部论文；系统会重叠查询窗口并依靠数据库去重，从而支持失败补抓。<br>
                 <strong>指定日期：</strong>精确抓取某一天的全部论文，适合补抓遗漏。<br>
-                <strong>最大数量：</strong>仅在天数和日期都留空时生效，按数量限制抓取。<br>
                 <strong>分批配置：</strong>请求间隔、每批天数、批次间隔请在「⚙️ 设置 → 📥 抓取配置」中调整。
             </p>
             <div class="settings-actions">

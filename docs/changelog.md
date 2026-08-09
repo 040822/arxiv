@@ -1,6 +1,13 @@
 # 更新日志
 
 ## 未发布
+### Standards 修复与 `/api/fetch` 契约收口
+- `/api/fetch` 对废弃的 `max_results` 参数执行严格拒绝：参数只要出现（含空值或与 `days`/`date` 混传）即返回 HTTP 400，且不创建任务日志、不调用 arXiv；正常优先级保持 `date > days > 默认最近 1 天`
+- 修复论文处理页抓取分类 `.form-row` 缺失闭合标签，删除最大数量与“已抓取日期跳过”旧说明，改为重叠日期窗口 + 数据库去重的失败补抓语义
+- 抓取设置部分 POST 会保留未提交的当前值；设置页加载与空输入统一回退到 `request_delay=5`、`batch_days=30`、`batch_delay=10`，不改写已有 `data/settings.json`
+- 测试基座新增 context 泄漏检测与 `jsonify` 恢复，统一测试脚本同时解析 unittest/pytest 失败摘要，并在名称无法解析时输出明确诊断
+
+
 
 ### 抓取完整性修复：日期窗口抓全（4.1 第 1B-3 轮）
 - 修复手动抓取固定 50 条上限：`fetch_latest_papers` 统一按日期窗口抓全（默认最近 1 天），删除按条数抓取的非分批路径与 `MAX_PAPERS_PER_CATEGORY` 常量；`/api/fetch` 默认抓最近 1 天并删除 `max_results` 参数，tasks 页同步移除「最大数量」输入

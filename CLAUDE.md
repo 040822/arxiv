@@ -33,7 +33,7 @@ python -m unittest tests.ai_test.test_request_builder.ProviderRequestBuilderTest
 python -c "from source.storage import *; init_db(); print(get_paper_count(), 'papers,', get_analyzed_count(), 'analyzed')"
 ```
 
-无 lint/format/CI 配置；测试位于 `tests/`（顶层 11 个文件 + `tests/ai_test/` 17 个文件，按模块拆分自原 `test_ai_provider_config.py`，覆盖配置/认证/抓取/分析路由/模板安全/论文学习；共享桩与 Web 测试基座在 `tests/ai_test/common.py`）。
+无 lint/format 配置；CI 通过 `.github/workflows/tests.yml` 运行完整测试与覆盖率。测试位于 `tests/`（顶层 13 个文件 + `tests/ai_test/` 20 个文件；其中 17 个来自原 `test_ai_provider_config.py` 拆分，其余为后续回归测试；共享桩与 Web 测试基座在 `tests/ai_test/common.py`）。
 
 ## 架构要点（需跨文件阅读）
 
@@ -50,7 +50,7 @@ python -c "from source.storage import *; init_db(); print(get_paper_count(), 'pa
 ## 关键陷阱（已踩过的坑）
 
 - **`settings.json` 字段合并**：在 `load_settings()` 新增字段时，必须在合并逻辑里显式加 `if "key" in migrated: merged["key"] = migrated["key"]`，否则读取时新字段会被丢弃。
-- **arXiv API**：`submittedDate:[... TO ...]` 查询语法实际不返回结果——改用 `cat:cs.RO` 查询 + `sortBy=submittedDate&sortOrder=descending`，再在代码里按 `published` 日期过滤。`published` 带 UTC 时区，比较必须用 `datetime.now(timezone.utc)`，否则报 offset-naive/aware 错误。
+- **arXiv API**：`submittedDate:[YYYYMMDDTTTT TO YYYYMMDDTTTT]` 是可用的官方日期过滤字段，与 `cat:cs.RO` 组合后按 `submittedDate` 降序翻页；代码中仍保留 `[start, end)` 边界过滤。`published` 带 UTC 时区，比较必须用 `datetime.now(timezone.utc)`，否则报 offset-naive/aware 错误。
 - **认证模型**：设置管理密码后，`/settings`、`/tasks`、所有写接口和敏感设置读接口都需登录；阅读清单加入/移除接口是公开例外；`GET /api/providers` 只能返回 `api_key_masked`，绝不返回明文 `api_key`。
 - **数据库迁移**：在 `init_db()` 里用 `PRAGMA table_info(table)` 检查列是否存在再 `ALTER TABLE ADD COLUMN`。SQLite 已开 WAL 模式。
 - **新增标签**：加到 `source/config.py` 的 `TAG_CANDIDATES`，避免过宽泛的标签（如 "Transformer"/"LLM"），优先具体技术方法名。

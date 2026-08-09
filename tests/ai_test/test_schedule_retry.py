@@ -1,5 +1,5 @@
 """
-test_schedule_retry.py — 由 tests/test_ai_provider_config.py 拆分迁入（Q20），方法体逐字节一致。
+test_schedule_retry.py — 由旧测试拆分迁入，并包含调度重试与生命周期回归测试。
 """
 
 import unittest
@@ -14,6 +14,7 @@ from unittest.mock import patch
 from source.settings import store as settings_store
 from .common import (
     setup_web_test_base,
+    teardown_web_test_base,
 )
 
 
@@ -29,6 +30,9 @@ web_settings_api = None
 web_tasks_api = None
 
 class ScheduleRetryTests(unittest.TestCase):
+    def tearDown(self):
+        teardown_web_test_base()
+
     def import_app_with_temp_settings(self, tmp):
 
         settings_store.SETTINGS_PATH = os.path.join(tmp, "settings.json")

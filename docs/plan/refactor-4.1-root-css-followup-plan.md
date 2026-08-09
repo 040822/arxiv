@@ -9,7 +9,7 @@
 - 有必要迁移剩余根目录 Python 文件。最终根目录只保留正式 Web 入口 `app.py`，不保留兼容 shim。
 - 可以删除 `main.py`。抓取、分析、推荐和组合流水线全部以 Web 页面及现有 API 为唯一正式入口。
 - 有必要拆分 `static/style.css`。采用“共享基础层 + 场景页面层”，同时去重和统一组件类名，但保持现有浅色视觉风格。
-- 不修改 `promo.css`，不增加深色模式，不改变 HTTP API、SQLite schema、`settings.json` 格式或业务行为。
+- 不修改 `promo.css`，不增加深色模式；除经批准的 1B-3 抓取完整性与 `/api/fetch` 废弃参数契约外，不改变 HTTP API、SQLite schema、`settings.json` 格式或业务行为。
 
 ## 分轮实施
 
@@ -52,7 +52,7 @@
 
 - 实测复核 arXiv API：`submittedDate` 日期过滤语法可用（推翻 AGENTS.md 旧记录），单查询上限 30000 条、2000 分片
 - 实弹审计确认：08-06 缺 35 篇系 08-07 定时日报抓取失败（arXiv 连接超时、重试 20 次耗尽）所致；滚动窗口重叠 + 入库去重自动补抓，已补回 42 篇缺失论文
-- `fetch_latest_papers` 统一按日期窗口抓全（默认 1 天），删除按条数抓取的非分批路径与 `MAX_PAPERS_PER_CATEGORY`（原批准的"2000 安全阀"基于被证伪的 API 2000 上限前提，删除以避免大窗口截断）；`/api/fetch` 删 `max_results` 参数、默认最近 1 天；`/api/run` 与手动流水线抓取窗口改用 `schedule.fetch_days`
+- `fetch_latest_papers` 统一按日期窗口抓全（默认 1 天），删除按条数抓取的非分批路径与 `MAX_PAPERS_PER_CATEGORY`（原批准的"2000 安全阀"基于被证伪的 API 2000 上限前提，删除以避免大窗口截断）；`/api/fetch` 不再支持 `max_results`，请求中出现该废弃参数即返回 HTTP 400，默认最近 1 天；`/api/run` 与手动流水线抓取窗口改用 `schedule.fetch_days`
 - `_fetch_date_range` 查询启用 `submittedDate` 日期窗口过滤（GMT 分钟精度）+ `max_results=30000`；代码内 `[start, end)` 过滤保留为分钟截断/秒级边界兜底
 - 防 429：请求间隔默认 3→5 秒、批次间隔默认 5→10 秒（实测连续翻页在 3 秒间隔下仍可能触发软限流）
 - 新增测试：日期过滤查询构造、窗口边界过滤、重复抓取去重（补抓语义）、默认窗口、`/api/run` 使用 `fetch_days`；215 项测试全绿

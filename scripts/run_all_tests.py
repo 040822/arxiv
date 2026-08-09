@@ -41,6 +41,26 @@ def extract_coverage_table(stdout):
     return "\n".join(lines[start:])
 
 
+def extract_failed_tests(stdout, stderr):
+    """提取 unittest 与 pytest 摘要中的失败测试名称。"""
+    failed = []
+    patterns = (
+        re.compile(r"^(?:ERROR|FAIL):\s+(\S+)"),
+        re.compile(r"^(?:FAILED|ERROR)\s+(\S+)"),
+    )
+    for line in stdout.splitlines() + stderr.splitlines():
+        stripped = line.strip()
+        for pattern in patterns:
+            match = pattern.match(stripped)
+            if not match:
+                continue
+            name = match.group(1)
+            if name not in failed:
+                failed.append(name)
+            break
+    return failed
+
+
 def run_command(cmd, label, verbose=False, cov=False):
     print(f"[{label}] $ {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -48,15 +68,13 @@ def run_command(cmd, label, verbose=False, cov=False):
     count = ""
     if result.returncode != 0:
         summary = "FAILED"
-        lines = result.stdout.splitlines() + result.stderr.splitlines()
-        failed = []
-        for line in lines:
-            match = re.match(r"^(?:ERROR|FAIL): (\S+)", line.strip())
-            if match and match.group(1) not in failed:
-                failed.append(match.group(1))
-        print(f"[{label}] FAILED ({len(failed)} failed):")
-        for name in failed:
-            print(f"    {name}")
+        failed = extract_failed_tests(result.stdout, result.stderr)
+        if failed:
+            print(f"[{label}] FAILED ({len(failed)} failed):")
+            for name in failed:
+                print(f"    {name}")
+        else:
+            print(f"[{label}] FAILED (unable to parse failing test names)")
         if verbose:
             print(result.stdout)
             print(result.stderr)

@@ -1,5 +1,5 @@
 """
-test_runtime_propagation.py — 由 tests/test_ai_provider_config.py 拆分迁入（Q20），方法体逐字节一致。
+test_runtime_propagation.py — 由旧测试拆分迁入，并包含运行时配置传播回归测试。
 """
 
 import unittest
@@ -11,6 +11,7 @@ from .common import (
     FakeRequest,
     install_import_stubs,
     setup_web_test_base,
+    teardown_web_test_base,
 )
 from source.settings.normalize import _normalize_fetch_config
 
@@ -32,6 +33,10 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
         setup_web_test_base()
         global web_papers_api
         web_papers_api = common.web_papers_api
+
+    @classmethod
+    def tearDownClass(cls):
+        teardown_web_test_base()
 
     def test_api_papers_uses_saved_per_page_setting(self):
         web_papers_api.request = FakeRequest(args={"page": "2"})
@@ -111,6 +116,16 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
             "http": "http://proxy.local:7890",
             "https": "http://proxy.local:7890",
         })
+
+    def test_fetch_config_defaults_match_ui_contract(self):
+        normalized = _normalize_fetch_config({})
+
+        self.assertEqual(normalized, {
+            "request_delay": 5.0,
+            "batch_days": 30,
+            "batch_delay": 10.0,
+        })
+
 
     def test_fetch_config_is_normalized(self):
         normalized = _normalize_fetch_config({

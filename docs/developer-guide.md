@@ -228,7 +228,6 @@ CREATE TABLE paper_quiz_attempts (
 | 配置项 | 说明 |
 |--------|------|
 | `ARXIV_CATEGORIES` | 监控的 arXiv 分类列表 |
-| `MAX_PAPERS_PER_CATEGORY` | 每分类每次拉取上限 |
 | `TAG_CANDIDATES` | AI 标签候选列表 |
 | `RATING_CRITERIA` | AI 基础分析评级标准（0-5 星校准锚点） |
 | `SCHEDULE_HOUR/MINUTE` | 定时任务首次默认时间；运行后以 `settings.json.schedule` 为准 |

@@ -67,10 +67,15 @@ def api_fetch():
     - days: 抓取最近 N 天的论文（按日期窗口抓全）；缺省为最近 1 天
     - date: 抓取指定日期的论文
     """
+    if "max_results" in request.args:
+        return jsonify({
+            "status": "error",
+            "message": "max_results 参数已废弃，请使用 days（默认 1 天）或 date",
+        }), 400
+
     task_id = request.args.get("task_id", "fetch")
     log_id = start_task_log("fetch", "手动抓取论文")
     try:
-        from fetcher import fetch_latest_papers, fetch_batch, fetch_by_date
         category = request.args.get("category", "").strip()
         days = request.args.get("days", type=int)
         date = request.args.get("date", "").strip()

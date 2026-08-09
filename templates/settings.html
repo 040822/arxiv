@@ -538,6 +538,11 @@
         let recommendationEventSource = null;
         let currentTaskLogPage = 1;
         let scheduleRefreshTimer = null;
+        const FETCH_CONFIG_DEFAULTS = Object.freeze({
+            requestDelay: 5,
+            batchDays: 30,
+            batchDelay: 10,
+        });
         let scheduleWebdavConfig = {};
 
         function escapeHtml(value) {
@@ -666,9 +671,9 @@
             document.getElementById('proxy-https').value = proxyData.https || '';
             toggleProxyFields();
 
-            document.getElementById('fetch-request-delay').value = fetchData.request_delay || 3;
-            document.getElementById('fetch-batch-days').value = fetchData.batch_days || 30;
-            document.getElementById('fetch-batch-delay').value = fetchData.batch_delay || 5;
+            document.getElementById('fetch-request-delay').value = fetchData.request_delay ?? FETCH_CONFIG_DEFAULTS.requestDelay;
+            document.getElementById('fetch-batch-days').value = fetchData.batch_days ?? FETCH_CONFIG_DEFAULTS.batchDays;
+            document.getElementById('fetch-batch-delay').value = fetchData.batch_delay ?? FETCH_CONFIG_DEFAULTS.batchDelay;
 
             initSidebar();
         }
@@ -1414,9 +1419,9 @@
         async function saveFetchConfig() {
             const statusEl = document.getElementById('fetch-config-status');
             const data = {
-                request_delay: parseFloat(document.getElementById('fetch-request-delay').value) || 3,
-                batch_days: parseInt(document.getElementById('fetch-batch-days').value) || 30,
-                batch_delay: parseFloat(document.getElementById('fetch-batch-delay').value) || 5,
+                request_delay: parseFloat(document.getElementById('fetch-request-delay').value) || FETCH_CONFIG_DEFAULTS.requestDelay,
+                batch_days: parseInt(document.getElementById('fetch-batch-days').value) || FETCH_CONFIG_DEFAULTS.batchDays,
+                batch_delay: parseFloat(document.getElementById('fetch-batch-delay').value) || FETCH_CONFIG_DEFAULTS.batchDelay,
             };
             try { const resp = await fetch('/api/settings/fetch', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
                 const result = await resp.json(); statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;

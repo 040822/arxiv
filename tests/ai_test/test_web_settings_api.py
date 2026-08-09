@@ -1,5 +1,5 @@
 """
-test_web_settings_api.py — 由 tests/test_ai_provider_config.py 拆分迁入（Q20），方法体逐字节一致。
+test_web_settings_api.py — 由旧测试拆分迁入，并包含设置与任务接口回归测试。
 """
 
 import unittest
@@ -55,6 +55,123 @@ class SettingsTasksApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         save_schedule.assert_called_once_with(saved)
         configure_daily_job.assert_called_once_with(saved)
+
+    def test_fetch_rejects_deprecated_max_results_before_side_effects(self):
+        web_tasks_api = self.web_tasks_api
+        cases = (
+            {"max_results": "1"},
+            {"max_results": ""},
+            {"max_results": "1", "days": "3"},
+            {"max_results": "1", "date": "2026-08-01"},
+        )
+        for args in cases:
+            with self.subTest(args=args):
+                web_tasks_api.request = FakeRequest(
+                    args=args,
+                    endpoint="api_fetch",
+                    path="/api/fetch",
+                )
+
+                with patch.object(web_tasks_api, "start_task_log") as start_log, \
+                     patch.object(web_tasks_api, "fetch_latest_papers") as fetch_latest, \
+                     patch.object(web_tasks_api, "fetch_batch") as fetch_batch, \
+                     patch.object(web_tasks_api, "fetch_by_date") as fetch_by_date:
+                    result, status = web_tasks_api.api_fetch()
+
+                self.assertEqual(status, 400)
+                self.assertEqual(result, {
+                    "status": "error",
+                    "message": "max_results 参数已废弃，请使用 days（默认 1 天）或 date",
+                })
+                start_log.assert_not_called()
+                fetch_latest.assert_not_called()
+                fetch_batch.assert_not_called()
+                fetch_by_date.assert_not_called()
+
+    def test_fetch_defaults_to_latest_one_day_route(self):
+        web_tasks_api = self.web_tasks_api
+        web_tasks_api.request = FakeRequest(args={})
+
+        with patch.object(web_tasks_api, "start_task_log", return_value=1) as start_log, \
+             patch.object(web_tasks_api, "finish_task_log") as finish_log, \
+             patch.object(web_tasks_api, "get_unanalyzed_count", return_value=0), \
+             patch.object(web_tasks_api, "get_fetch_config", return_value={"batch_days": 30, "batch_delay": 10}), \
+             patch.object(web_tasks_api, "fetch_latest_papers", return_value=[]) as fetch_latest, \
+             patch.object(web_tasks_api, "fetch_batch") as fetch_batch, \
+             patch.object(web_tasks_api, "fetch_by_date") as fetch_by_date:
+            result = web_tasks_api.api_fetch()
+
+        self.assertEqual(result["status"], "ok")
+        fetch_latest.assert_called_once_with(categories=None)
+        fetch_batch.assert_not_called()
+        fetch_by_date.assert_not_called()
+        start_log.assert_called_once()
+        finish_log.assert_called_once()
+
+    def test_fetch_uses_days_batch_route(self):
+        web_tasks_api = self.web_tasks_api
+        web_tasks_api.request = FakeRequest(
+            args={"days": "4"},
+        )
+
+        with patch.object(web_tasks_api, "start_task_log", return_value=1), \
+             patch.object(web_tasks_api, "finish_task_log"), \
+             patch.object(web_tasks_api, "get_unanalyzed_count", return_value=0), \
+             patch.object(web_tasks_api, "get_fetch_config", return_value={"batch_days": 30, "batch_delay": 10}), \
+             patch.object(web_tasks_api, "fetch_latest_papers") as fetch_latest, \
+             patch.object(web_tasks_api, "fetch_batch", return_value=[]) as fetch_batch, \
+             patch.object(web_tasks_api, "fetch_by_date") as fetch_by_date:
+            result = web_tasks_api.api_fetch()
+
+        self.assertEqual(result["status"], "ok")
+        fetch_latest.assert_not_called()
+        fetch_by_date.assert_not_called()
+        self.assertIsNone(fetch_batch.call_args.kwargs["categories"])
+        self.assertEqual(fetch_batch.call_args.kwargs["total_days"], 4)
+        self.assertEqual(fetch_batch.call_args.kwargs["batch_days"], 30)
+        self.assertEqual(fetch_batch.call_args.kwargs["batch_delay"], 10)
+
+    def test_fetch_date_takes_priority_over_days(self):
+        web_tasks_api = self.web_tasks_api
+        web_tasks_api.request = FakeRequest(
+            args={"days": "4", "date": "2026-08-01"},
+        )
+
+        with patch.object(web_tasks_api, "start_task_log", return_value=1), \
+             patch.object(web_tasks_api, "finish_task_log"), \
+             patch.object(web_tasks_api, "get_unanalyzed_count", return_value=0), \
+             patch.object(web_tasks_api, "get_fetch_config", return_value={"batch_days": 30, "batch_delay": 10}), \
+             patch.object(web_tasks_api, "fetch_latest_papers") as fetch_latest, \
+             patch.object(web_tasks_api, "fetch_batch") as fetch_batch, \
+             patch.object(web_tasks_api, "fetch_by_date", return_value=[]) as fetch_by_date:
+            result = web_tasks_api.api_fetch()
+
+        self.assertEqual(result["status"], "ok")
+        fetch_latest.assert_not_called()
+        fetch_batch.assert_not_called()
+        fetch_by_date.assert_called_once_with(
+            "2026-08-01", categories=None,
+        )
+
+    def test_save_fetch_config_preserves_omitted_current_values(self):
+        web_settings_api = self.web_settings_api
+        current = {
+            "request_delay": 9.0,
+            "batch_days": 30,
+            "batch_delay": 17.0,
+        }
+        web_settings_api.request = FakeRequest({"batch_days": 45})
+
+        with patch.object(web_settings_api, "get_fetch_config", return_value=current), \
+             patch.object(web_settings_api, "save_fetch_config", return_value=True) as save_fetch:
+            result = web_settings_api.api_save_fetch_config()
+
+        self.assertEqual(result["status"], "ok")
+        save_fetch.assert_called_once_with({
+            "request_delay": 9.0,
+            "batch_days": 45,
+            "batch_delay": 17.0,
+        })
 
     def test_scheduled_tasks_endpoint_includes_timezone_config_and_last_run(self):
         web_tasks_api = self.web_tasks_api

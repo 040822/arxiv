@@ -536,7 +536,7 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 ### 7.6 arXiv API 注意事项
 - **`submittedDate` 是官方日期过滤字段**：格式 `submittedDate:[YYYYMMDDTTTT TO YYYYMMDDTTTT]`（24 小时制、GMT、分钟精度），如 `cat:cs.RO AND submittedDate:[202608060000 TO 202608070000]`。抓取按日期窗口查询 + 翻页取完窗口内论文；代码内 `[start, end)` 日期过滤保留作为分钟截断与秒级边界的兜底
 - **查询上限**：单查询 `max_results` 上限 30000 条，分片返回；窗口内论文数由日期过滤天然限定
-- **请求节奏**：官方建议连续调用间隔 ≥ 3 秒（`request_delay` 默认 3）；过快请求会触发 429 软限流，需保持批次间 `batch_delay` 节奏
+- **请求节奏**：官方建议连续调用间隔 ≥ 3 秒（`request_delay` 默认 5）；过快请求会触发 429 软限流，需保持批次间 `batch_delay` 节奏
 - **分类查询**：`cat:cs.RO` 匹配分类列表含 cs.RO 的论文（含二级分类），比 `primary_category:cs.RO` 更可靠；抓取不按主分类过滤
 - **分批抓取**：大批量抓取时使用 `fetch_batch()` 自动分批，避免单次请求过大
 - **时区问题**：arXiv 返回的 `published` 是带 UTC 时区的 datetime，比较时必须使用 `datetime.now(timezone.utc)`，否则报 `can't compare offset-naive and offset-aware datetimes`
@@ -563,8 +563,8 @@ python -c "from source.storage import *; init_db(); print(get_paper_count(), 'pa
 python scripts/run_all_tests.py         # 标准流程：unittest + pytest(随机顺序) + 3 次模块乱序，失败即停
 python scripts/run_all_tests.py --quick # 只跑 pytest 一次（日常快速验证）
 # 等价裸命令（脚本内部使用）：python -m unittest discover -s tests / python -m pytest tests/
-# 测试布局：tests/ 顶层 11 个文件 + tests/ai_test/ 17 个文件（按模块拆分自原 test_ai_provider_config.py，
-# 143 个方法逐字节平移；共享桩 DummyOpenAI/FakeRequest/install_import_stubs 与 Web 测试基座在 tests/ai_test/common.py）
+# 测试布局：tests/ 顶层 13 个文件 + tests/ai_test/ 20 个文件（其中 17 个按模块拆分自原 test_ai_provider_config.py，
+# 另有后续回归模块；共享桩 DummyOpenAI/FakeRequest/install_import_stubs 与 Web 测试基座在 tests/ai_test/common.py）
 # 覆盖率：python -m pytest --cov=. --cov-report=term-missing tests/（.coveragerc 排除 tests/scripts/.venv，tests/* 通配覆盖 ai_test 子目录）
 # CI：push 到 dev/master 自动跑 tests.yml（完整套件 + 覆盖率），见 .github/workflows/tests.yml
 

@@ -295,12 +295,14 @@ def api_get_fetch_config():
 def api_save_fetch_config():
     """保存论文抓取配置"""
     try:
-        data = request.get_json()
-        fetch_config = {
-            "request_delay": float(data.get("request_delay", 3.0)),   # 单次请求间隔（秒）
-            "batch_days": int(data.get("batch_days", 30)),             # 每批抓取的天数跨度
-            "batch_delay": float(data.get("batch_delay", 5.0)),       # 批次间等待时间（秒）
-        }
+        data = request.get_json() or {}
+        fetch_config = dict(get_fetch_config())
+        if "request_delay" in data:
+            fetch_config["request_delay"] = float(data["request_delay"])
+        if "batch_days" in data:
+            fetch_config["batch_days"] = int(data["batch_days"])
+        if "batch_delay" in data:
+            fetch_config["batch_delay"] = float(data["batch_delay"])
         if save_fetch_config(fetch_config):
             return jsonify({"status": "ok", "message": "抓取配置已保存"})
         return jsonify({"status": "error", "message": "保存失败"}), 500

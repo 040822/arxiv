@@ -1,7 +1,8 @@
 """
-test_template_safety.py — 由 tests/test_ai_provider_config.py 拆分迁入（Q20），方法体逐字节一致。
+test_template_safety.py — 由旧测试拆分迁入，并包含模板结构与安全回归测试。
 """
 
+from html.parser import HTMLParser
 import unittest
 import os
 
@@ -62,6 +63,65 @@ class TemplateSafetyTests(unittest.TestCase):
         self.assertNotIn("task-stats", template)
         self.assertNotIn("/api/tasks/logs", template)
         self.assertNotIn("运行中的任务", template)
+
+    def test_paper_processing_panels_are_balanced_siblings(self):
+        class DivStructureParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.div_stack = []
+                self.unmatched_closing = 0
+                self.action_panel_depths = []
+                self.action_panel_parents = []
+
+            def handle_starttag(self, tag, attrs):
+                if tag != "div":
+                    return
+                attributes = dict(attrs)
+                classes = attributes.get("class", "").split()
+                if "action-panel" in classes:
+                    self.action_panel_depths.append(len(self.div_stack))
+                    self.action_panel_parents.append(self.div_stack[-1] if self.div_stack else None)
+                self.div_stack.append(attributes)
+
+            def handle_endtag(self, tag):
+                if tag != "div":
+                    return
+                if not self.div_stack:
+                    self.unmatched_closing += 1
+                    return
+                self.div_stack.pop()
+
+        with open("templates/tasks.html", "r", encoding="utf-8") as f:
+            parser = DivStructureParser()
+            parser.feed(f.read())
+
+        self.assertEqual(parser.unmatched_closing, 0)
+        self.assertEqual(parser.div_stack, [])
+        self.assertGreaterEqual(len(parser.action_panel_depths), 4)
+        self.assertEqual(len(set(parser.action_panel_depths)), 1)
+        first_parent = parser.action_panel_parents[0]
+        self.assertTrue(all(parent is first_parent for parent in parser.action_panel_parents))
+        # Viewport CSS can change layout, but not DOM parentage; this sibling
+        # invariant therefore holds for both desktop and mobile widths.
+
+    def test_settings_uses_one_fetch_default_object_for_load_and_save(self):
+        with open("templates/settings.html", "r", encoding="utf-8") as f:
+            html = f.read()
+
+        self.assertIn("const FETCH_CONFIG_DEFAULTS = Object.freeze({", html)
+        for expected in (
+            "requestDelay: 5",
+            "batchDays: 30",
+            "batchDelay: 10",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, html)
+        self.assertIn("fetchData.request_delay ?? FETCH_CONFIG_DEFAULTS.requestDelay", html)
+        self.assertIn("fetchData.batch_days ?? FETCH_CONFIG_DEFAULTS.batchDays", html)
+        self.assertIn("fetchData.batch_delay ?? FETCH_CONFIG_DEFAULTS.batchDelay", html)
+        self.assertIn("|| FETCH_CONFIG_DEFAULTS.requestDelay", html)
+        self.assertIn("|| FETCH_CONFIG_DEFAULTS.batchDays", html)
+        self.assertIn("|| FETCH_CONFIG_DEFAULTS.batchDelay", html)
 
     def test_settings_has_independent_schedule_tab_with_email_and_logs(self):
         with open("templates/settings.html", "r", encoding="utf-8") as f:

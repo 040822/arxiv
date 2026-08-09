@@ -115,12 +115,13 @@ POST /api/fetch
 | 参数（Query） | 类型 | 说明 |
 |---------------|------|------|
 | `category` | string | 分类（如 cs.RO），留空使用默认 |
-| `max_results` | int | 最大数量（仅在 days 和 date 都留空时生效） |
 | `days` | int | 抓取最近 N 天 |
 | `date` | string | 精确抓取某天（YYYY-MM-DD） |
 | `task_id` | string | SSE 进度任务 ID |
 
-优先级：date > days > max_results
+优先级：`date > days > 默认最近 1 天`。
+
+`max_results` 已废弃；请求中只要出现该参数（包括空值或与 `days`/`date` 混传），接口立即返回 HTTP 400，且不会创建任务日志或调用 arXiv。
 
 **响应：**
 ```json

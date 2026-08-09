@@ -66,7 +66,7 @@
 
 ### `tasks_api.py`
 手动任务执行（每次调用写 `task_logs` 日志 + 内存进度）：
-- `POST /api/fetch`（支持 category/max_results/days/date 参数）、`POST /api/analyze`（limit）、`POST /api/recommendations/recalculate`、`POST /api/generate`（date/ai_summary/recommend）、`POST /api/run`（完整流水线，`pipeline_lock` 非阻塞互斥，冲突返回 409）
+- `POST /api/fetch`（支持 category/days/date；优先级 `date > days > 默认最近 1 天`；废弃的 `max_results` 出现即返回 400）、`POST /api/analyze`（limit）、`POST /api/recommendations/recalculate`、`POST /api/generate`（date/ai_summary/recommend）、`POST /api/run`（完整流水线，`pipeline_lock` 非阻塞互斥，冲突返回 409）
 - `POST /api/backup/webdav/run`、`POST /api/email-report/test`（force 手动执行，不影响自动去重日期）
 - `GET /api/progress/<task_id>`：SSE 实时进度（completed/error 自动断开）
 - 日志：`/api/tasks/stats`、`/api/tasks/logs`、`/api/tasks/clear`、`/api/tasks/scheduled`

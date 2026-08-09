@@ -121,9 +121,11 @@ def _plain_jsonify(*args, **kwargs):
 
 
 def setup_web_test_base():
-    global _WEB_APP, _WEB_APP_CONTEXT
+    global _WEB_APP, _WEB_APP_CONTEXT, _ORIGINAL_JSONIFY
     global web_application, web_auth, web_pages, web_papers_api
     global web_providers_api, web_settings_api, web_tasks_api, web_learning_api
+    if _WEB_APP_CONTEXT is not None:
+        raise RuntimeError("web test app context was not torn down")
     if web_application is None:
         install_import_stubs()
         web_application = importlib.import_module("source.web.application")
@@ -142,14 +144,22 @@ def setup_web_test_base():
         web_settings_api, web_tasks_api, web_learning_api,
     ):
         if mod is not None:
+            _ORIGINAL_JSONIFY[mod] = mod.jsonify
             mod.jsonify = _plain_jsonify
 
 
 def teardown_web_test_base():
-    global _WEB_APP_CONTEXT
-    if _WEB_APP_CONTEXT is not None:
-        _WEB_APP_CONTEXT.pop()
-        _WEB_APP_CONTEXT = None
+    global _WEB_APP, _WEB_APP_CONTEXT, _ORIGINAL_JSONIFY
+    for mod, original_jsonify in _ORIGINAL_JSONIFY.items():
+        mod.jsonify = original_jsonify
+    _ORIGINAL_JSONIFY.clear()
+    context = _WEB_APP_CONTEXT
+    _WEB_APP_CONTEXT = None
+    try:
+        if context is not None:
+            context.pop()
+    finally:
+        _WEB_APP = None
 
 
 pipeline_orchestrator = None
@@ -164,3 +174,4 @@ web_settings_api = None
 web_tasks_api = None
 _WEB_APP = None
 _WEB_APP_CONTEXT = None
+_ORIGINAL_JSONIFY = {}
