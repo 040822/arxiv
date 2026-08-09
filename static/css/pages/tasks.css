@@ -9,3 +9,29 @@
         margin: 10px 0 0;
     }
 }
+
+/* 添加论文输入框 */
+.add-paper-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.add-paper-input {
+    flex: 1;
+    padding: 8px 14px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 0.9em;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.add-paper-input:focus {
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.1);
+}
+
+#add-paper-progress {
+    margin-top: 10px;
+}

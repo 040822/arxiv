@@ -888,3 +888,71 @@ details.log-item > summary::-webkit-details-marker {
 @media (max-width: 768px) {
     .schedule-runtime-grid { grid-template-columns: 1fr; }
 }
+
+/* Provider selection and advanced connection controls. */
+.provider-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+}
+
+.provider-card {
+    padding: 12px;
+    border: 2px solid #e1e4e8;
+    border-radius: 10px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: #fafbfc;
+}
+
+.provider-card:hover {
+    border-color: #90b8e0;
+    background: #f0f7ff;
+}
+
+.provider-card.active {
+    border-color: #1a73e8;
+    background: #e8f0fe;
+}
+
+.provider-name {
+    font-size: 0.9em;
+    font-weight: 600;
+    color: #333;
+}
+
+
+.advanced-box {
+    padding: 12px;
+    margin-bottom: 15px;
+    border: 1px solid #e1e4e8;
+    border-radius: 8px;
+    background: #fafbfc;
+}
+
+.advanced-box h5 {
+    margin: 0 0 10px;
+    font-size: 0.9em;
+    color: #444;
+}
+
+.advanced-box input:disabled,
+.form-group input:disabled,
+.form-group select:disabled {
+    background: #f3f4f6;
+    color: #888;
+}
+
+.btn-small {
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 0.9em;
+}
+
+.btn-small:hover {
+    background: #f0f0f0;
+}

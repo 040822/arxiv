@@ -130,3 +130,145 @@
 }
 
 .meta-hidden { color: #dc3545; }
+
+/* Paper editing and destructive actions. */
+.edit-rating {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.star-btn {
+    font-size: 1.6em;
+    cursor: pointer;
+    color: #ddd;
+    transition: color 0.15s;
+    user-select: none;
+}
+
+.star-btn.active,
+.star-btn:hover {
+    color: #f59e0b;
+}
+
+.edit-tags {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.tag-add-row {
+    display: flex;
+    gap: 6px;
+    max-width: 300px;
+}
+
+.tag-add-row input {
+    flex: 1;
+    padding: 5px 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 0.85em;
+    outline: none;
+}
+
+.tag-add-row input:focus {
+    border-color: #1a73e8;
+}
+
+.tag-remove {
+    cursor: pointer;
+    color: #999;
+    margin-left: 2px;
+    font-size: 0.85em;
+}
+
+.tag-remove:hover {
+    color: #dc3545;
+}
+
+.edit-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.detail-section textarea {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 0.85em;
+    line-height: 1.5;
+    resize: vertical;
+    outline: none;
+}
+
+.detail-section textarea:focus {
+    border-color: #1a73e8;
+}
+
+.danger-zone {
+    margin-top: 30px;
+    padding: 20px;
+    border: 2px solid #f8d7da;
+    border-radius: 12px;
+    background: #fff8f8;
+}
+
+.danger-zone h3 {
+    color: #dc3545;
+    margin-bottom: 10px;
+    font-size: 1em;
+}
+
+.danger-toggle {
+    cursor: pointer;
+    user-select: none;
+}
+
+.danger-toggle span {
+    font-size: 0.85em;
+    margin-left: 4px;
+}
+
+.danger-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.btn-warn {
+    color: #856404;
+    border-color: #ffc107;
+    background: #fff8e1;
+}
+
+.btn-warn:hover {
+    background: #fff3cd;
+}
+
+.btn-danger {
+    color: #fff;
+    border-color: #dc3545;
+    background: #dc3545;
+}
+
+.btn-danger:hover {
+    background: #c82333;
+}
+
+.danger-hint {
+    margin-top: 10px;
+    font-size: 0.82em;
+    color: #888;
+}
+
+.detail-links {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid #eee;
+}

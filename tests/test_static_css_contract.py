@@ -61,22 +61,27 @@ print(json.dumps({url: [client.get(url).status_code, client.get(url).content_typ
                 self.assertEqual(statuses[url][0], 200)
                 self.assertIn("text/css", statuses[url][1])
 
-    def test_static_template_and_dynamic_html_classes_have_rules(self):
-        css = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in (REPO_ROOT / "static").rglob("*.css")
-        )
-        used = set()
+    def test_each_template_class_is_defined_by_a_stylesheet_it_loads(self):
+        matrices = {
+            **EXPECTED,
+            "about.html": ["/static/promo.css"],
+            "vision.html": ["/static/promo.css"],
+        }
         dynamic_tokens = {"cat", "current_status", "endif", "i", "if", "not", "r", "tag_name"}
-        for template in TEMPLATES.glob("*.html"):
-            content = template.read_text(encoding="utf-8")
-            for raw in re.findall(r"class=[\"\x27`]([^\"\x27`]+)", content):
+        for template_name, urls in matrices.items():
+            content = (TEMPLATES / template_name).read_text(encoding="utf-8")
+            css = "\n".join(
+                (REPO_ROOT / url.removeprefix("/")).read_text(encoding="utf-8")
+                for url in urls
+            )
+            used = set()
+            for raw in re.findall(r"class=[\"\x27\`]([^\"\x27\`]+)", content):
                 for token in raw.split():
-                    if re.fullmatch(r"[A-Za-z_][\w-]*", token) and token not in dynamic_tokens:
+                    if re.fullmatch(r"[A-Za-z_][\\w-]*", token) and token not in dynamic_tokens:
                         used.add(token)
-        for class_name in sorted(used):
-            with self.subTest(class_name=class_name):
-                self.assertRegex(css, rf"\.{re.escape(class_name)}(?![-_a-zA-Z0-9])")
+            for class_name in sorted(used):
+                with self.subTest(template=template_name, class_name=class_name):
+                    self.assertRegex(css, rf"\\.{re.escape(class_name)}(?![-_a-zA-Z0-9])")
 
 
 if __name__ == "__main__":
