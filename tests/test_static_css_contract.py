@@ -67,7 +67,7 @@ print(json.dumps({url: [client.get(url).status_code, client.get(url).content_typ
             "about.html": ["/static/promo.css"],
             "vision.html": ["/static/promo.css"],
         }
-        dynamic_tokens = {"cat", "current_status", "endif", "i", "if", "not", "r", "tag_name"}
+        dynamic_tokens = {"cat", "current_status", "endif", "i", "if", "not", "r", "tag", "tag_name"}
         for template_name, urls in matrices.items():
             content = (TEMPLATES / template_name).read_text(encoding="utf-8")
             css = "\n".join(
@@ -77,11 +77,11 @@ print(json.dumps({url: [client.get(url).status_code, client.get(url).content_typ
             used = set()
             for raw in re.findall(r"class=[\"\x27\`]([^\"\x27\`]+)", content):
                 for token in raw.split():
-                    if re.fullmatch(r"[A-Za-z_][\\w-]*", token) and token not in dynamic_tokens:
+                    if re.fullmatch(r"[A-Za-z_][\w-]*", token) and token not in dynamic_tokens:
                         used.add(token)
             for class_name in sorted(used):
                 with self.subTest(template=template_name, class_name=class_name):
-                    self.assertRegex(css, rf"\\.{re.escape(class_name)}(?![-_a-zA-Z0-9])")
+                    self.assertRegex(css, rf"\.{re.escape(class_name)}(?![-_a-zA-Z0-9])")
 
 
 if __name__ == "__main__":

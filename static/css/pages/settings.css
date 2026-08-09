@@ -733,33 +733,6 @@ details.log-item > summary::-webkit-details-marker {
     gap: 6px;
 }
 
-.btn-sm {
-    padding: 4px 10px;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-    background: #fff;
-    font-size: 0.8em;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.btn-activate {
-    color: #1a73e8;
-    border-color: #1a73e8;
-}
-
-.btn-activate:hover {
-    background: #e8f0fe;
-}
-
-.btn-edit {
-    color: #555;
-}
-
-.btn-edit:hover {
-    background: #f0f0f0;
-}
-
 .btn-delete {
     color: #dc3545;
     border-color: #dc3545;
