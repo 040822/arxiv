@@ -3,11 +3,14 @@
 ## 未发布
 ### 4.1 根模块迁入、CSS 模块化与文档收口
 - 删除根目录 `analyzer.py`、`fetcher.py`、`pdf_reader.py`、`backup.py`、`email_report.py`；正式接口迁入 `source.analysis`、`source.ingestion`、`source.documents`、`source.backups` 与 `source.reports.email`，根目录仅保留 `app.py`
-- `source.analysis` 提取客户端/代理、稳定消息构建、JSON 修复、token 用量和报告导读模块；邮件拆为 config/content/transport/service，邮件 CSS 改由 `importlib.resources` 读取；SQLite 文件占用查询迁入 `source.storage.info`
+- `source.analysis` 按 core/papers/learning/report/batch 拆分业务实现，并独立提取客户端/代理、稳定消息构建、JSON 修复与 token 用量；邮件拆为 config/content/transport/service，邮件 CSS 改由 `importlib.resources` 读取；SQLite 文件占用查询迁入 `source.storage.info`
 - 清理 Web Blueprint 从旧巨石遗留的无用整块 import，调用方与测试统一使用 `source.*` 路径；边界测试禁止旧根模块 import，86 条非静态路由和认证契约保持不变
 - 删除 `static/style.css`，新增 core/components/rich-text 与七个页面 CSS；11 个业务模板按资源矩阵加载，统一 `.btn` 与 `.empty-state`，解决 danger 按钮冲突并补齐批量操作、学习和调度样式
 - 清理固定内联样式，增加 focus-visible、移动端堆叠和次要文字对比度修复；新增 CSS URL/加载矩阵/类覆盖契约和无 Selenium 的 Firefox/geckodriver 截图脚本
 - 同步 README、AGENTS、架构、开发者、用户、Agent 与模板维护文档；4.1 计划标记完成
+- 验收：执行前 227 项、最终 231 项测试；`--quick` 为 231 passed，完整入口的 unittest、随机顺序 pytest 与 3 次模块乱序均通过；全部 Python 文件通过 `py_compile`，`git diff --check` 无告警
+- Web/静态验收：86 条非静态路由契约不变，CSS 资源矩阵全部返回 200，逐模板所用类均由该页面实际加载的 CSS 定义；before/after 各 22 张截图覆盖 11 页桌面与移动端
+- 启动验收：因本机 5000 端口已有另一实例占用，使用不绑定端口的等价 `app.main()` 冒烟；连续初始化两次时 APScheduler 仅启动一次，且仅保留一个 `daily_pipeline` job
 
 ### Standards 修复与 `/api/fetch` 契约收口
 - `/api/fetch` 对废弃的 `max_results` 参数执行严格拒绝：参数只要出现（含空值或与 `days`/`date` 混传）即返回 HTTP 400，且不创建任务日志、不调用 arXiv；正常优先级保持 `date > days > 默认最近 1 天`

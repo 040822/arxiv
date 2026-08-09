@@ -70,10 +70,13 @@ static/css/
 ## 完成记录
 
 - 根目录仅保留 `app.py`；五个旧模块迁入正式包并由 AST 边界测试禁止回流。
-- 邮件拆为 config/content/transport/service，analysis 拆出 client/messages/usage/JSON/report summary；数据库文件信息独立到 `source.storage.info`。
+- 邮件拆为 config/content/transport/service；analysis 按 core/papers/learning/report/batch 分域，并独立拆出 client/messages/usage/JSON；数据库文件信息独立到 `source.storage.info`。
 - `style.css` 已删除，11 个业务模板采用模块化加载矩阵；资源 URL、类名覆盖与 86 路由契约均有回归测试。
 - Firefox/geckodriver 截图脚本已生成 11 个页面的 before/after 桌面与移动矩阵。
-- 最终验收结果记录在未发布 changelog。
+- 执行前 227 项、最终 231 项测试；快速套件 231 passed，完整 unittest/随机 pytest/三次模块乱序全部通过。
+- 全部 Python 文件通过 `py_compile`，`git diff --check` 无告警；86 条非静态路由、认证及逐页面 CSS 资源/类名契约通过。
+- before/after 各 22 张截图覆盖 11 页 × 桌面/移动端。5000 端口被既有服务占用，因此启动验收采用不绑定端口的 `app.main()` 冒烟，确认连续初始化时 APScheduler 仅启动一次且只有一个日报 job。
+- 最终验收结果同步记录在未发布 changelog。
 
 ## 非目标
 
