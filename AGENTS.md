@@ -24,42 +24,26 @@
 
 ## 2. 文件结构与职责
 
-```
+```text
 arxiv/
-├── fetcher.py          # arXiv API 论文抓取（去重、按分类拉取）
-├── analyzer.py         # AI 分析与论文学习逻辑（PDF全文、Q&A、对话、问答反馈）
-├── backup.py           # WebDAV 云同步备份（SQLite 快照、zip 打包、上传/清理）
-├── email_report.py     # 每日报告邮件发送（SMTP、邮件HTML包装、站内链接重写）
-├── pdf_reader.py       # PDF 下载与文本提取（PyMuPDF，缓存到 data/pdf_cache/）
-├── app.py              # 唯一 Web 入口（main() + 可导入的 Flask app）
+├── app.py                  # 唯一 Web 入口（main + 可导入 Flask app）
 ├── source/
-│   ├── config.py       # 硬编码配置（分类、标签候选、路径）
-│   ├── settings/       # 值转换、默认值、归一化、思考协议、store、供应商、Prompt、运行时配置
-│   ├── imports/        # 手动论文链接/PDF 元数据预览解析与安全 URL 校验
-│   ├── storage/        # 托管连接、顺序迁移/快照、论文、分析、日志、报告、学习记录
-│   ├── reports/        # Web 日报 HTML 渲染
-│   ├── pipeline/       # 定时/手动组合流水线与 APScheduler
-│   └── web/            # Flask application assembly、Blueprint 路由（含 import_api）、鉴权与进度
-├── requirements.txt    # Python 依赖
-├── README.md           # 用户文档
-├── AGENTS.md           # 本文件（AI维护文档）
-├── templates/          # Jinja2 HTML 模板
-│   ├── index.html      # 首页（论文列表、操作面板）
-│   ├── browse.html     # 分类浏览（多条件筛选）
-│   ├── search.html     # 搜索页
-│   ├── paper.html      # 论文详情（含编辑功能）
-│   ├── paper_chat.html # 论文学习页（对话、问答、苏格拉底追问）
-│   ├── about.html      # 公开项目宣传页（研究闭环、优势、竞品定位）
-│   ├── vision.html     # 实验室愿景页（科研价值、竞品格局、发展路线）
-│   ├── settings.html   # 设置页（含独立的定时任务、邮件和执行日志管理）
-│   └── tasks.html      # 论文处理页（抓取、分析、报告、两步手动导入）
-├── static/style.css    # 全局样式
-├── static/promo.css    # 宣传页独立样式（公开版 + 深色愿景版）
-├── data/               # 运行时数据（不提交到git）
-│   ├── papers.db       # SQLite 数据库
-│   ├── settings.json   # 运行时配置
-│   ├── pdf_cache/      # 可重建 PDF 缓存
-│   └── paper_files/    # 手动上传的持久 PDF（不随缓存清理）
+│   ├── analysis/         # LLM 客户端、消息、分析、学习、导读与批处理
+│   ├── backups/          # WebDAV 快照打包、上传、清理与编排
+│   ├── documents/        # PDF 校验、持久上传、缓存下载、删除与提取
+│   ├── ingestion/        # arXiv 日期窗口抓取、分批与单篇查询
+│   ├── reports/email/   # 邮件 config/content/transport/service 与 CSS 资源
+│   ├── config.py          # 硬编码分类、标签候选与路径
+│   ├── settings/         # 运行时配置
+│   ├── imports/          # 手动论文预览与安全 URL 校验
+│   ├── storage/          # 连接、迁移、快照、文件信息与业务存储
+│   ├── reports/          # Web 日报渲染
+│   ├── pipeline/         # 手动/定时流水线与 APScheduler
+│   └── web/              # Flask 应用装配、Blueprint、鉴权与进度
+├── templates/             # Jinja2 页面
+├── static/css/           # core/components/rich-text 与 pages/*
+├── static/promo.css       # about/vision 独立宣传样式
+└── data/                  # 运行时数据库、配置、PDF 缓存与持久上传
 ```
 
 ---
@@ -201,7 +185,7 @@ CREATE TABLE paper_quiz_attempts (
 
 ### 4.1 论文抓取流程
 ```
-fetcher.fetch_latest_papers(days)   # 默认 1 天；定时日报传 schedule.fetch_days
+source.ingestion.fetch_latest_papers(days)   # 默认 1 天；定时日报传 schedule.fetch_days
   → fetch_batch() 按 batch_days 分批（请求节奏/进度粒度）
   → _fetch_date_range() 按分类查询
     → 查询带 submittedDate 日期窗口过滤（GMT 分钟精度）+ cat:xxx
@@ -215,7 +199,7 @@ fetcher.fetch_latest_papers(days)   # 默认 1 天；定时日报传 schedule.fe
 
 ### 4.2 AI 分析流程
 ```
-analyzer.analyze_pending_papers(limit, concurrency)
+source.analysis.analyze_pending_papers(limit, concurrency)
   → get_unanalyzed_papers() 获取未分析论文
   → ThreadPoolExecutor 并发执行 analyze_paper()
     → get_ai_task_config("basic_analysis") 获取基础分析模型与参数
@@ -225,7 +209,7 @@ analyzer.analyze_pending_papers(limit, concurrency)
     → 解析 JSON 响应：{tags, summary_cn, value_comment}
   → insert_analysis() 写入 analysis 表（含重复检查）
 
-analyzer.analyze_paper_full(paper_data)
+source.analysis.analyze_paper_full(paper_data)
   → get_ai_task_config("deep_reading") 获取深度阅读模型与参数
   → get_paper_full_text(max_chars=None) 下载 PDF 并提取全文（不截断）
   → system + 动态论文全文 JSON message + 稳定 instruction（长输入任务指令后置，见 7.4）
@@ -377,7 +361,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `resolve_ai_task_config(task_key, task_config)` — 将已保存或未保存的功能路由草稿与供应商连接凭据合并并校验
 - `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存 PDF 元数据提取、基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的模型路由
 - `build_chat_completion_kwargs()` — 统一构建 Chat Completions 参数；功能路由只支持可选 Temperature 和输出长度，未启用 Temperature 或使用思考模型时不发送 Temperature，其他采样参数不发送并交给模型采用默认行为
-- LLM 客户端必须通过 `analyzer.get_openai_client()` 创建，以复用全局代理配置并禁用环境变量代理
+- LLM 客户端必须通过 `source.analysis.get_openai_client()` 创建，以复用全局代理配置并禁用环境变量代理
 - `normalize_provider_connection()` — 归一化供应商连接字段；`normalize_provider_config()` 仅用于合并后的实际调用配置
 - `get_prompt_profile()` / `get_prompt_profiles()` — 获取任务级 Prompt Profile；`get_prompts()` 保留旧接口兼容
 - `get_concurrency()` — 获取并发数
@@ -488,7 +472,7 @@ APScheduler cron(day_of_week, hour, minute)
 1. 如果涉及新数据库表/字段 → 在 `source/storage/migrations.py` 注册下一个连续版本的迁移函数
 2. 如果涉及新 API → 在对应的 `source/web/*_api.py` Blueprint 添加路由函数
 3. 如果涉及新页面 → 创建 `templates/xxx.html`，在 `source/web/pages.py` 添加页面路由
-4. 如果涉及新样式 → 通用业务页面在 `static/style.css` 添加；独立宣传页使用 `static/promo.css` 和 `.promo-*` 命名空间
+4. 如果涉及新样式 → 按 `templates/README.md` 的加载矩阵选择 `static/css/core.css`、`components.css`、`rich-text.css` 或 `pages/*.css`；独立宣传页继续使用 `static/promo.css` 和 `.promo-*` 命名空间
 5. 更新 `AGENTS.md` 记录变更
 
 ### 7.2 数据库迁移模式

@@ -92,14 +92,22 @@ journalctl -u arxiv-paper.service -f
 
 ## 项目结构
 
-```
-├── app.py              # Flask Web 服务 + APScheduler 定时任务
-├── fetcher.py          # arXiv API 论文抓取
-├── analyzer.py         # OpenAI API 论文分析（标签/翻译/摘要/简评）
-├── source/config.py    # 硬编码配置（分类、标签候选、路径、默认值）
-├── templates/          # Flask HTML 模板
-├── static/style.css    # Web 样式
-├── data/papers.db      # SQLite 数据库（自动创建）
+```text
+├── app.py                  # 唯一 Web 入口与开发服务器启动
+├── source/
+│   ├── analysis/         # LLM 客户端、分析、学习、导读与批处理
+│   ├── backups/          # WebDAV 备份编排
+│   ├── documents/        # PDF 校验、持久文件、缓存与文本提取
+│   ├── ingestion/        # arXiv 日期窗口抓取与单篇查询
+│   ├── reports/email/   # 邮件内容、传输与发送编排
+│   ├── settings/         # 运行时配置
+│   ├── storage/          # SQLite 迁移与业务存储
+│   ├── pipeline/         # 手动/定时流水线
+│   └── web/              # Flask Blueprints 与应用装配
+├── templates/             # Jinja2 页面
+├── static/css/           # 业务页模块化样式
+├── static/promo.css       # about/vision 独立宣传样式
+└── data/papers.db         # SQLite 数据库（自动创建）
 ```
 
 ## Web API

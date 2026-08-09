@@ -38,19 +38,17 @@ python app.py
 
 ## 📁 项目结构
 
-```
+```text
 arxiv/
-├── fetcher.py          # arXiv API 论文抓取
-├── analyzer.py         # AI 分析（基础/完整）
-├── backup.py           # WebDAV 云同步备份
-├── pdf_reader.py       # PDF 下载与文本提取
-├── app.py              # Flask Web 服务 + 定时任务
-├── source/config.py    # 硬编码配置（分类、标签、路径）
-├── templates/          # Jinja2 HTML 模板
-├── static/style.css    # 全局样式
-├── data/               # 运行时数据（不提交 git）
-│   ├── papers.db       # SQLite 数据库
-│   ├── settings.json   # 运行时配置
-│   └── pdf_cache/      # PDF 缓存
-└── docs/               # 本目录
+├── app.py                  # 唯一 Web 入口
+├── source/analysis/     # AI 分析与论文学习
+├── source/ingestion/    # arXiv 摄取
+├── source/documents/    # PDF 文档操作
+├── source/backups/      # WebDAV 备份
+├── source/reports/email/# 日报邮件
+├── source/storage/      # SQLite 存储
+├── source/web/          # Flask Web 层
+├── templates/             # Jinja2 页面
+├── static/css/           # 模块化业务样式
+└── docs/                  # 本目录
 ```

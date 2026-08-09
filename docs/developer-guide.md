@@ -29,40 +29,24 @@
 
 ## 项目结构
 
-```
+```text
 arxiv/
-├── fetcher.py          # arXiv API 论文抓取（支持分批）
-├── analyzer.py         # AI 分析与论文学习对话/问答
-├── backup.py           # WebDAV 云同步备份
-├── email_report.py     # 每日报告 SMTP 邮件发送
-├── pdf_reader.py       # PDF 下载与文本提取（令牌桶限速）
-├── app.py              # 唯一 Web 入口（main() + 可导入的 Flask app）
+├── app.py                  # 唯一 Web 入口
 ├── source/
-│   ├── config.py       # 硬编码配置（分类、标签、路径、延迟参数）
-│   └── settings/       # settings/storage/reports/pipeline/web 业务包
-├── requirements.txt    # Python 依赖
-├── templates/          # Jinja2 HTML 模板
-│   ├── index.html      # 首页（每日论文）
-│   ├── browse.html     # 分类浏览
-│   ├── search.html     # 搜索
-│   ├── paper.html      # 论文详情
-│   ├── settings.html   # 设置
-│   ├── tasks.html      # 论文处理（手动抓取/分析/报告/添加论文）
-│   ├── reports.html    # 报告列表
-│   ├── report_detail.html  # 报告详情
-│   ├── reading_list.html   # 阅读清单
-│   ├── paper_chat.html     # 单篇论文学习页
-│   ├── about.html          # 公开项目宣传页
-│   └── vision.html         # 实验室愿景页
-├── static/style.css    # 全局样式
-├── static/promo.css    # 宣传页独立样式（.promo-* 命名空间）
-├── data/               # 运行时数据（不提交 git）
-│   ├── papers.db       # SQLite 数据库
-│   ├── settings.json   # 运行时配置
-│   └── pdf_cache/      # PDF 缓存
-├── docs/               # 文档目录
-├── README.md           # 项目 README
-└── AGENTS.md           # AI Agent 维护文档
+│   ├── analysis/         # LLM 调用、分析、学习与批处理
+│   ├── backups/          # WebDAV 备份
+│   ├── documents/        # PDF 文档操作
+│   ├── ingestion/        # arXiv 摄取
+│   ├── reports/email/   # 报告邮件
+│   ├── settings/         # 运行时配置
+│   ├── storage/          # SQLite 存储
+│   ├── pipeline/         # 流水线与 scheduler
+│   └── web/              # Flask Blueprints
+├── templates/             # Jinja2 HTML
+├── static/css/           # 模块化业务样式
+├── static/promo.css       # 宣传页样式
+├── tests/                 # unittest/pytest 回归测试
+└── data/                  # 运行时数据（不提交）
 ```
 
 ---
@@ -261,13 +245,13 @@ CREATE TABLE paper_quiz_attempts (
 
 > `source/settings/store.py` 通过递归 deep merge 保留新增顶层字段，不再需要顶层白名单；需要归一化、迁移或密码保留语义的字段仍须显式处理并补测试。
 
-AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成；测试未保存的路由草稿使用 `resolve_ai_task_config()`。OpenAI 兼容客户端统一通过 `analyzer.get_openai_client()` 创建以复用全局代理并禁用环境变量代理。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要把模型或推理参数写回供应商连接。路由只保留可选 Temperature 控制和输出长度；未启用 Temperature 或使用思考模型时省略该参数，其他采样参数不发送并采用模型默认行为。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
+AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成；测试未保存的路由草稿使用 `resolve_ai_task_config()`。OpenAI 兼容客户端统一通过 `source.analysis.get_openai_client()` 创建以复用全局代理并禁用环境变量代理。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要把模型或推理参数写回供应商连接。路由只保留可选 Temperature 控制和输出长度；未启用 Temperature 或使用思考模型时省略该参数，其他采样参数不发送并采用模型默认行为。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
 
 设置管理密码后，写接口和敏感设置读取接口需要登录；管理登录默认通过签名 cookie 持久保存 180 天，修改管理密码后旧登录状态失效。供应商列表接口只能返回脱敏后的 `api_key_masked`。
 
-WebDAV 云备份由 `backup.py` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 manifest 打包上传。Web 日报位于数据库的 `reports` 表中，会随快照备份。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。当前 WebDAV 按内网服务处理，不接入全局代理。
+WebDAV 云备份由 `source/backups/` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 manifest 打包上传。Web 日报位于数据库的 `reports` 表中，会随快照备份。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。当前 WebDAV 按内网服务处理，不接入全局代理。
 
-报告邮件发送由 `email_report.py` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分高于 `important_score_threshold`（默认 80，0-100）的论文进入重点精读区，其余论文最多展示 `overview_limit`（默认 20，0-50）篇速览，并可按 `site_url` 生成论文详情和完整报告链接。两个阈值均可在设置页「定时任务 → 报告邮件」调整。每日任务会在生成 AI 导读前检查 `last_sent_report_date`，同一日报成功发送后直接跳过；发送失败不会更新该日期，因此仍可重试。手动测试发送允许重复执行，并且不参与自动任务去重。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。自动日报通过 `task_log_steps` 记录邮件/备份结果，附加步骤失败使父日志变为 `warning`；手动测试仍写独立顶级日志。
+报告邮件发送由 `source/reports/email/` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分高于 `important_score_threshold`（默认 80，0-100）的论文进入重点精读区，其余论文最多展示 `overview_limit`（默认 20，0-50）篇速览，并可按 `site_url` 生成论文详情和完整报告链接。两个阈值均可在设置页「定时任务 → 报告邮件」调整。每日任务会在生成 AI 导读前检查 `last_sent_report_date`，同一日报成功发送后直接跳过；发送失败不会更新该日期，因此仍可重试。手动测试发送允许重复执行，并且不参与自动任务去重。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。自动日报通过 `task_log_steps` 记录邮件/备份结果，附加步骤失败使父日志变为 `warning`；手动测试仍写独立顶级日志。
 
 定时日报固定为六步流程，`task_logs` 保存父任务，`task_log_steps` 保存步骤状态和耗时。抓取阶段异常时按 `settings.schedule.fetch_retry_interval_minutes` 等待重试，最多 `settings.schedule.fetch_max_retries` 次，默认 10 分钟/20 次且仅影响定时日报。核心步骤异常时后续步骤标记 `skipped`；服务启动时遗留 `running` 记录会被收口为 `interrupted`。`daily_pipeline` 与 `/api/run` 共用进程内非阻塞互斥锁。
 
@@ -311,7 +295,7 @@ def api_new_endpoint():
 
 ### 4. 添加新样式
 
-在 `static/style.css` 中添加，使用 kebab-case 命名。
+共享规则放入 `static/css/core.css` 或 `components.css`，富文本规则放入 `rich-text.css`，页面专属规则放入 `static/css/pages/`；使用 kebab-case 命名。
 
 宣传类独立页面使用 `static/promo.css`，所有类名以 `.promo-` 为前缀，避免影响现有业务页面。
 

@@ -24,7 +24,7 @@
             │              │
             ▼              ▼
 ┌───────────────┐ ┌───────────────┐
-│  fetcher.py   │ │  analyzer.py  │
+│  source/ingestion/   │ │  source/analysis/  │
 │  (arXiv API)  │ │ (OpenAI API)  │
 └───────┬───────┘ └───────┬───────┘
         │           ┌─────┴─────┐
@@ -57,7 +57,7 @@
 ### 1. 论文抓取流
 
 ```
-用户点击"抓取" → source/web/tasks_api.py /api/fetch → fetcher.py
+用户点击"抓取" → source/web/tasks_api.py /api/fetch → source/ingestion/
   → arxiv.Client 查询 arXiv API
   → 去重（内存 + 数据库）
   → insert_paper() 写入 papers 表
@@ -69,7 +69,7 @@
 #### 基础分析（批量）
 
 ```
-用户点击"分析" → source/web/tasks_api.py /api/analyze → analyzer.py
+用户点击"分析" → source/web/tasks_api.py /api/analyze → source/analysis/
   → get_unanalyzed_papers()
   → ThreadPoolExecutor 并发：
     → analyze_paper_basic(abstract)
@@ -81,9 +81,9 @@
 #### 深度阅读（单篇）
 
 ```
-用户点击"生成报告" → source/web/papers_api.py /api/paper/<id>/reanalyze → analyzer.py
+用户点击"生成报告" → source/web/papers_api.py /api/paper/<id>/reanalyze → source/analysis/
   → analyze_paper_full(paper_data)
-  → pdf_reader.download_pdf() + extract_text()
+  → source.documents.download_pdf() + extract_text()
   → OpenAI API 调用（只生成 Q&A）
   → 校验当前 Prompt 中所有 Q 编号，截断/缺题时最多自动续写一次
   → 完整才 update_analysis()；仍不完整则返回 warning 并保留旧 qa_analysis
@@ -93,7 +93,7 @@
 
 ```
 设置页保存研究兴趣 → 仅写入 settings.personalization
-手动重算 / 每日任务 / 一键执行 / 默认生成报告 → analyzer.recommend_pending_papers()
+手动重算 / 每日任务 / 一键执行 / 默认生成报告 → source.analysis.recommend_pending_papers()
   → get_papers_for_recommendation() 仅取已有基础分析且缺失/过期推荐分的非隐藏论文
   → recommendation 任务模型返回 recommendation_score/reason
   → update_recommendation_result() 写入当前兴趣 hash
@@ -104,11 +104,11 @@
 ```
 详情页点击“讨论论文” → GET /paper/<arxiv_id>/chat
   → 自由讨论 / 主动问答练习 / 苏格拉底追问
-  → analyzer.get_learning_paper_text()
+  → source.analysis.get_learning_paper_text()
     → 优先读取 data/pdf_cache/<arxiv_id>.pdf
     → 缓存不存在时 download_pdf()
     → PDF 下载或提取失败时回退 abstract
-  → analyzer.build_paper_learning_messages()
+  → source.analysis.build_paper_learning_messages()
     → system → 稳定任务说明 → 稳定论文上下文 → 动态历史/用户输入
   → paper_chat 或 paper_quiz 任务模型
   → paper_chat_messages / paper_quiz_sessions / paper_quiz_questions / paper_quiz_attempts
@@ -143,7 +143,7 @@ APScheduler（星期 + 时分）→ daily_pipeline()
 
 ```
 设置页保存 WebDAV 配置 → settings.webdav_backup
-手动备份 / 每日任务结束 → backup.run_webdav_backup()
+手动备份 / 每日任务结束 → source.backups.run_webdav_backup()
   → SQLite online backup 生成 papers.db 一致性快照
   → 打包 papers.db + settings.json + manifest.json（reports 表已包含 Web 日报）
   → WebDAV MKCOL/PUT 上传 latest 和日期历史文件
@@ -156,7 +156,7 @@ APScheduler（星期 + 时分）→ daily_pipeline()
 
 ```
 设置页保存 SMTP 配置 → settings.email_report
-每日任务生成并保存报告后 → email_report.send_report_email()
+每日任务生成并保存报告后 → source.reports.email.send_report_email()
   → 检查 last_sent_report_date；已发送的同日报直接记录 skipped
   → 按 report_date 从数据库读取论文轻量分析数据
   → 使用 report_summary 任务模型生成邮件导读（失败时降级）
@@ -198,14 +198,16 @@ APScheduler（星期 + 时分）→ daily_pipeline()
 
 ## 组件依赖关系
 
-```
+```text
 app.py -> source/web/application.py + Blueprints
-|-- source/pipeline/   # manual/daily orchestration and scheduler
-|-- source/storage/    # SQLite access
-|-- source/settings/   # runtime settings
-|-- fetcher.py         # arXiv fetch
-`-- analyzer.py        # AI analysis and learning
-    `-- pdf_reader.py
+|-- source/pipeline/       # manual/daily orchestration and scheduler
+|-- source/storage/        # SQLite access and file info
+|-- source/settings/       # runtime settings
+|-- source/ingestion/      # arXiv fetch
+|-- source/analysis/       # AI analysis and learning
+|   `-- source/documents/  # PDF operations
+|-- source/backups/        # WebDAV backup
+`-- source/reports/email/ # report email
 ```
 
 ---

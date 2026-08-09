@@ -24,14 +24,14 @@
 | `source/config.py` | ~96 | 硬编码配置（分类、标签、路径、延迟） | 低 |
 | `source/settings/*` | 8 个模块 | 值转换、默认值、归一化、思考协议、store、供应商、Prompt、运行时配置 | 中 |
 | `source/storage/*` | 10 个模块 | SQLite 托管连接、顺序迁移/快照、论文、分析、日志、报告与学习记录 | 中 |
-| `fetcher.py` | ~343 | arXiv 论文抓取 | 中 |
-| `analyzer.py` | ~204 | AI 分析（基础/完整） | 中 |
-| `pdf_reader.py` | ~107 | PDF 下载与文本提取 | 低 |
-| `app.py` | 14 | `source.web` 启动兼容 shim | 低 |
+| `source/ingestion/` | 包 | arXiv 论文抓取 | 中 |
+| `source/analysis/` | 包 | AI 分析（基础/完整） | 中 |
+| `source/documents/` | 包 | PDF 下载与文本提取 | 低 |
+| `app.py` | 单文件 | 唯一 Web 入口 | 低 |
 | `source/web/*` | 9 个模块 | Blueprint、鉴权、页面/API 与进度 | 高 |
 | `source/pipeline/*` | 3 个模块 | 定时/手动组合流水线与 scheduler | 中 |
 | `templates/*.html` | ~10+ 文件 | 前端页面 | 高 |
-| `static/style.css` | ~1860 | 全局样式 | 中 |
+| `static/css/` | 10 个文件 | 共享、富文本与页面样式 | 中 |
 
 ---
 
@@ -40,7 +40,7 @@
 ### 1. 论文抓取流程
 
 ```
-fetcher.fetch_latest_papers() / fetch_batch()
+source.ingestion.fetch_latest_papers() / fetch_batch()
   → arxiv.Client 查询 arXiv API
   → 去重：内存 seen_ids + paper_exists() 数据库去重
   → insert_paper() 写入 papers 表
@@ -50,7 +50,7 @@ fetcher.fetch_latest_papers() / fetch_batch()
 ### 2. 基础分析流程（批量）
 
 ```
-analyzer.analyze_pending_papers(limit, concurrency)
+source.analysis.analyze_pending_papers(limit, concurrency)
   → get_unanalyzed_papers() 获取未分析论文
   → ThreadPoolExecutor 并发执行 analyze_paper_basic()
     → 使用 abstract（不下载 PDF）
@@ -62,7 +62,7 @@ analyzer.analyze_pending_papers(limit, concurrency)
 ### 3. 深度阅读流程（单篇）
 
 ```
-analyzer.analyze_paper_full(paper_data)
+source.analysis.analyze_paper_full(paper_data)
   → get_paper_full_text() 下载 PDF 提取全文
   → 调用 OpenAI API（只生成 Q&A）
   → 解析 JSON：{qa_analysis}
@@ -178,12 +178,12 @@ Prompt 已拆为 `prompt_profiles`。学习功能必须通过 `build_paper_learn
 1. 创建 `templates/new_page.html`
 2. 在 `source/web/pages.py` 添加页面路由
 3. 在所有模板的 `.nav-bar` 中添加导航链接
-4. 在 `static/style.css` 中添加样式
+4. 按 `templates/README.md` 的加载矩阵，把共享样式放入 `core.css`/`components.css`，页面规则放入 `pages/`
 
 ### 场景 4：修改 AI 分析逻辑
 
-1. 基础分析：修改 `analyzer.py` 的 `analyze_paper_basic()`
-2. 深度阅读：修改 `analyze_paper_full()`
+1. 基础分析：修改 `source/analysis/` 的 `analyze_paper_basic()`
+2. 深度阅读：修改 `source/analysis/` 的 `analyze_paper_full()`
 3. Prompt：在 `source/settings/defaults.py` 的 `DEFAULT_SETTINGS` 中修改默认值，或通过 Web 设置页修改
 
 ### 场景 5：添加新的筛选条件
@@ -221,7 +221,7 @@ if r.get("authors") and isinstance(r["authors"], str):
 
 ### 4. 代理环境变量
 
-代理配置保存在 `settings.proxy`，设置页「网络与代理」可保存全局 HTTP/HTTPS 代理并测试 arXiv 与基础分析 LLM 连接。`fetcher.py` 的 `_apply_proxy()` 会设置/清除 `http_proxy` 和 `https_proxy` 环境变量，供 arXiv 客户端使用；LLM 调用不依赖环境变量，而是由 `analyzer.get_openai_client()` 显式创建 `DefaultHttpxClient(trust_env=False, proxy=...)`。PDF 下载和 SMTP 邮件也会读取全局代理；WebDAV 当前按内网服务处理，不接入代理。
+代理配置保存在 `settings.proxy`，设置页「网络与代理」可保存全局 HTTP/HTTPS 代理并测试 arXiv 与基础分析 LLM 连接。`source/ingestion/` 的 `_apply_proxy()` 会设置/清除 `http_proxy` 和 `https_proxy` 环境变量，供 arXiv 客户端使用；LLM 调用不依赖环境变量，而是由 `source.analysis.get_openai_client()` 显式创建 `DefaultHttpxClient(trust_env=False, proxy=...)`。PDF 下载和 SMTP 邮件也会读取全局代理；WebDAV 当前按内网服务处理，不接入代理。
 
 ### 5. SSE 进度推送
 
@@ -233,12 +233,12 @@ if r.get("authors") and isinstance(r["authors"], str):
 
 | 问题 | 检查文件 |
 |------|----------|
-| 论文抓取失败 | `fetcher.py` + 代理配置 + arXiv API 状态 |
-| AI 分析失败 | `analyzer.py` + API 配置 + 模型可用性 + 网络与代理页的 LLM 测试 |
-| PDF 下载失败 | `pdf_reader.py` + 代理配置 + 令牌桶限速 |
-| 页面显示异常 | `templates/*.html` + `static/style.css` |
+| 论文抓取失败 | `source/ingestion/` + 代理配置 + arXiv API 状态 |
+| AI 分析失败 | `source/analysis/` + API 配置 + 模型可用性 + 网络与代理页的 LLM 测试 |
+| PDF 下载失败 | `source/documents/` + 代理配置 + 令牌桶限速 |
+| 页面显示异常 | `templates/*.html` + `static/css/` |
 | 数据库问题 | `source/storage/*.py` + `data/papers.db` |
-| WebDAV 备份失败 | `backup.py` + `settings.webdav_backup` + 日报 backup 步骤/手动日志 |
+| WebDAV 备份失败 | `source/backups/` + `settings.webdav_backup` + 日报 backup 步骤/手动日志 |
 | 定时任务不执行 | `source/pipeline/orchestrator.py` + `scheduler.py` + `task_logs/task_log_steps` |
 | 配置不生效 | `source/settings/store.py` 的 `load_settings()` 与 normalize 逻辑 |
 
@@ -246,13 +246,14 @@ if r.get("authors") and isinstance(r["authors"], str):
 
 ## 依赖关系图
 
-```
+```text
 app.py -> source/web/application.py + Blueprints
-|-- source/pipeline/   # manual/daily orchestration and scheduler
-|-- source/storage/    # SQLite access
-|-- source/settings/   # runtime settings
-|-- fetcher.py         # arXiv fetch
-|-- analyzer.py        # AI analysis and learning
-|   `-- pdf_reader.py  # PDF download
-`-- backup.py / email_report.py
+|-- source/pipeline/       # 流水线与 scheduler
+|-- source/storage/        # SQLite 存储
+|-- source/settings/       # 运行时配置
+|-- source/ingestion/      # arXiv 摄取
+|-- source/analysis/       # 分析与学习
+|   `-- source/documents/  # PDF 文档
+|-- source/backups/        # WebDAV
+`-- source/reports/email/ # 报告邮件
 ```

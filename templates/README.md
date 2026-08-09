@@ -30,7 +30,7 @@
 
 ## 模板与 JS/样式约定
 
-- **静态资源**位于 `/static/`：全局样式 `style.css`、宣传页独立样式 `promo.css`（`.promo-*` 命名空间，供 `about.html`/`vision.html`）、富文本渲染 `rich_text.js`、第三方库 `vendor/`；
+- **业务页 CSS** 位于 `/static/css/`：所有业务页加载 `core.css` + `components.css`；首页/浏览/搜索/阅读清单加载 `pages/library.css`；论文详情与学习页再加载 `rich-text.css` 和各自页面 CSS；任务、设置、报告、登录加载对应 `pages/*.css`。`promo.css` 仅供 `about.html`/`vision.html`，第三方资源位于 `vendor/`；
 - **富文本渲染**：论文详情页与学习页中的 Markdown/数学公式必须通过 `static/rich_text.js` 的 `RichText.render()` / `RichText.renderMath()` 渲染，不要在模板里复制清洗逻辑；
 - **认证变量**：`auth.py` 的上下文处理器向所有模板注入 `auth_enabled`、`is_authenticated`、`now`（当前时间）、`_remove_param`/`_build_query`（分页 URL 辅助），模板可直接使用；
 - **动态页面模式**：`settings.html`/`tasks.html`/`paper_chat.html` 均采用「模板骨架 + 内嵌 JS 调 API」模式，页面逻辑改动优先看对应 Blueprint 的 API 端点与模板内 `<script>` 区块；
@@ -40,5 +40,5 @@
 
 1. 找对应模板文件（见上表）与 `source/web/pages.py` 中渲染它的路由；
 2. 静态数据改动直接改模板；动态数据改动需同时改后端 API（`source/web/*_api.py`）与模板内 JS；
-3. 新样式加入 `static/style.css`（业务页）或 `static/promo.css`（宣传页）；新页面在 `source/web/pages.py` 注册路由；
+3. 共享布局与组件分别加入 `static/css/core.css`、`components.css`；富文本加入 `rich-text.css`；页面专属规则加入 `static/css/pages/` 并只在对应模板加载。宣传页继续使用 `static/promo.css`；
 4. 改完在浏览器实际访问验证（本地 `python app.py`）。
