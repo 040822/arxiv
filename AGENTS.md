@@ -534,8 +534,8 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 - `data/` 下文件（`settings.json`、`*.db`、`pdf_cache/`、`paper_files/`）是 git 不追踪的运行时状态，不可再生；`settings.json` 含 API key、管理密码哈希和 session secret
 - **禁止**以"同步默认值/现值"为由重建或整体改写 `data/settings.json`，禁止用默认模板覆盖文件
 - 修改运行时配置的唯一正道：设置页对应 API（`/api/providers/*`、`/api/settings/*`、`/api/admin/password`）；AI 代理必须通过 API 修改，或逐字段编辑（保留其余字段）——逐字段编辑前必须先备份到 `data/settings-backup/`，编辑后向用户声明 diff 并运行守卫测试
-- 涉及 `data/` 的执行计划，完成清单必须包含"确认 settings.json 未被重建"：运行 `python -m unittest tests.test_settings_guardrail`（存在真实配置时断言无告警），或检查启动日志中的重建告警
-- 守卫机制：`source/settings/guardrail.py` 比较 providers/ai_tasks/email_report 三个分区与默认模板是否全等（仅只读）；`create_app()` 启动时对告警记 `logger.warning`，`tests/test_settings_guardrail.py` 对真实文件硬断言（主动清空配置时测试会红，属预期，失败消息会说明）
+- 涉及 `data/` 的执行计划，完成清单必须包含"确认 settings.json 未被重建"：运行 `python scripts/check_settings_guardrail.py`（退出码 0=OK、1=疑似重建），或检查启动日志中的重建告警
+- 守卫机制三层：① `tests/test_settings_guardrail.py` 只测判定逻辑本身（构造数据，不读真实文件，CI/本地一致）；② `create_app()` 启动时对真实文件告警记 `logger.warning`（只写日志、不阻断服务启动，systemctl 下见 `journalctl -u <服务名>`）；③ `scripts/check_settings_guardrail.py` 显式检查真实文件（仅只读，可挂 cron 或进计划清单）
 
 ---
 

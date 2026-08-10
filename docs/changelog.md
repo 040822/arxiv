@@ -3,11 +3,12 @@
 ## 未发布
 ### settings.json 重建守卫
 - 事故复盘：2026-08-08 执行 4.1 第 1B-3 轮时误以默认模板整体重建 `data/settings.json`，导致 xiaomi 供应商、deepseek api_key 与自定义模型路由丢失（已从每日快照恢复）
-- 新增 `source/settings/guardrail.py`（只读、无副作用）：比较 providers/ai_tasks/email_report 三个用户配置分区与默认模板是否全等，检测"疑似被默认模板重建"；email_report 比较时剔除 `last_*` 运行时状态字段
-- `create_app()` 启动时对重建告警记 `logger.warning`（不阻断启动）
-- 新增 `tests/test_settings_guardrail.py`：模板副本→3 条告警、健康配置→无告警、email_report 重置但残留 last_*→仍告警、仅 providers 重建→告警、真实文件硬断言（文件不存在时跳过，主动清空配置时测试红属预期）
-- AGENTS.md 新增 7.8「运行时数据操作规范」：禁止以"同步默认值/现值"为由重建或模板覆盖 `data/settings.json`，配置修改只能走设置页 API 或逐字段编辑（先备份、后声明 diff、跑守卫测试），涉及 `data/` 的计划完成清单必须包含守卫检查；运维章节补充手工编辑前备份说明
-- 验收：236 项测试全绿（原 231 + 新 5），unittest/pytest/3 次乱序通过，恢复后的真实配置守卫无告警，模拟重建文件启动输出 3 条 warning
+- 新增 `source/settings/guardrail.py`（只读、无副作用）：比较 providers/ai_tasks/email_report 三个用户配置分区与默认模板是否全等，检测"疑似被默认模板重建"；email_report 比较时剔除 `last_*` 运行时状态字段；不比较 prompts 等低频修改项
+- `create_app()` 启动时对重建告警记 `logger.warning`（只写日志、不阻断服务启动，systemctl 下见 journalctl）
+- 新增 `scripts/check_settings_guardrail.py`：显式检查真实文件，退出码 0=OK / 1=疑似重建（可挂 cron 或写进计划完成清单）
+- 新增 `tests/test_settings_guardrail.py`（4 项）：只验证判定逻辑本身（模板副本→3 条告警、健康配置→无告警、email_report 重置但残留 last_*→仍告警、仅 providers 重建→告警），不读取真实文件，CI/本地行为一致
+- AGENTS.md 新增 7.8「运行时数据操作规范」：禁止以"同步默认值/现值"为由重建或模板覆盖 `data/settings.json`，配置修改只能走设置页 API 或逐字段编辑（先备份、后声明 diff），涉及 `data/` 的计划完成清单必须包含守卫检查；运维章节补充手工编辑前备份说明
+- 验收：235 项测试全绿（原 231 + 新 4），unittest/pytest/3 次乱序通过；`scripts/check_settings_guardrail.py` 对恢复后的真实配置输出 OK 退出 0
 
 ### 4.1 根模块迁入、CSS 模块化与文档收口
 - 删除根目录 `analyzer.py`、`fetcher.py`、`pdf_reader.py`、`backup.py`、`email_report.py`；正式接口迁入 `source.analysis`、`source.ingestion`、`source.documents`、`source.backups` 与 `source.reports.email`，根目录仅保留 `app.py`

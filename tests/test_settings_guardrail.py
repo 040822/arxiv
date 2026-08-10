@@ -1,17 +1,15 @@
-"""Guardrail tests: detect settings.json rebuilt from the default template."""
+"""Guardrail tests: detect settings.json rebuilt from the default template.
+
+这些测试只验证 guardrail 判定逻辑本身（构造数据），不读取真实
+data/settings.json——真实文件的检查由 scripts/check_settings_guardrail.py
+与 create_app() 启动告警承担。
+"""
 
 import json
-import pathlib
 import unittest
 
 from source.settings.defaults import DEFAULT_SETTINGS
-from source.settings.guardrail import (
-    read_settings_file,
-    settings_rebuild_warnings,
-)
-
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
-SETTINGS_FILE = REPO_ROOT / "data" / "settings.json"
+from source.settings.guardrail import settings_rebuild_warnings
 
 
 def _healthy_settings():
@@ -62,18 +60,6 @@ class SettingsGuardrailTests(unittest.TestCase):
         settings["providers"] = json.loads(json.dumps(DEFAULT_SETTINGS["providers"]))
         warnings = settings_rebuild_warnings(settings)
         self.assertTrue(any("providers" in warning for warning in warnings))
-
-    def test_real_settings_file_passes_guardrail(self):
-        if not SETTINGS_FILE.exists():
-            self.skipTest("真实 data/settings.json 不存在（CI/新环境）")
-        data = read_settings_file(str(SETTINGS_FILE))
-        warnings = settings_rebuild_warnings(data)
-        self.assertEqual(
-            warnings,
-            [],
-            "data/settings.json 疑似被默认模板重建。如为主动清空配置请忽略；"
-            "否则请从备份恢复。" + " ".join(warnings),
-        )
 
 
 if __name__ == "__main__":
