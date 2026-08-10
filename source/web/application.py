@@ -8,6 +8,7 @@ from flask import Flask
 
 from source.pipeline import configure_daily_job, scheduler
 from source.settings import get_session_secret
+from source.settings.guardrail import warn_on_settings_rebuild
 from source.storage import init_db, interrupt_running_task_logs
 from .auth import bp as auth_bp
 from .import_api import bp as import_bp
@@ -48,6 +49,8 @@ app = build_app()
 
 def create_app():
     init_db()
+    for warning in warn_on_settings_rebuild():
+        logger.warning(warning)
     interrupted = interrupt_running_task_logs()
     if interrupted:
         logger.warning(f"Marked {interrupted} orphaned task logs as interrupted.")

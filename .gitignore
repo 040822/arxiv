@@ -9,6 +9,7 @@ build/
 
 # Runtime secrets and local data
 data/settings.json
+data/settings.json.bak
 data/*.db
 data/pdf_cache/
 temp/*
