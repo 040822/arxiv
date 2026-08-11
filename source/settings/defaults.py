@@ -364,6 +364,8 @@ DEFAULT_SETTINGS = {
     "settings_schema_version": 3,
     "concurrency": 5,
     "per_page": 20,
+    "admin_password": "",
+    "admin_password_change_recommended": False,
     "session_secret": "",
     "personalization": {
         "research_interests": "",

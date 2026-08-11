@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 import time
 from datetime import datetime
 
@@ -15,6 +16,8 @@ from flask import (
     request, session, url_for,
 )
 from source.settings import (
+    ADMIN_PASSWORD_MIN_LENGTH,
+    admin_password_change_recommended,
     get_admin_password,
     has_admin_password,
     set_admin_password,
@@ -29,12 +32,14 @@ bp = Blueprint("auth", __name__)
 
 PUBLIC_GET_ENDPOINTS = {
     "index", "about_page", "vision_page", "paper_detail", "search", "browse",
-    "reports_page", "report_detail_page", "reading_list_page", "api_papers",
-    "api_tags", "api_stats", "api_progress", "api_todo_status",
-    "api_reading_list", "login_page", "api_auth_status",
+    "reports_page", "report_detail_page", "api_papers", "api_tags", "api_stats",
+    "login_page", "api_auth_status",
 }
-PUBLIC_WRITE_ENDPOINTS = {"api_add_todo", "api_remove_todo"}
 AUTH_ENDPOINTS = {"login_page", "api_auth_login", "api_auth_logout", "api_auth_status"}
+LOGIN_FAILURE_LIMIT = 5
+LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
+_login_failures = {}
+_login_failure_lock = threading.Lock()
 
 
 def _admin_auth_token(admin_password_hash=None):
@@ -64,9 +69,9 @@ def _mark_admin_authenticated():
 
 
 def is_authenticated():
-    """未设置管理密码时保持本地免登录；设置后检查 session 和密码版本 token。"""
+    """检查 session 是否绑定当前管理密码版本；缺少凭据时失败关闭。"""
     if not has_admin_password():
-        return True
+        return False
     if not session.get("admin_authenticated"):
         return False
     expected = _admin_auth_token()
@@ -89,17 +94,56 @@ def _safe_next_url(next_url):
     return next_url
 
 
+def _login_client_key():
+    return str(getattr(request, "remote_addr", None) or "unknown")
+
+
+def _prune_login_failures(now):
+    for key, timestamps in list(_login_failures.items()):
+        active = [
+            timestamp
+            for timestamp in timestamps
+            if now - timestamp < LOGIN_FAILURE_WINDOW_SECONDS
+        ]
+        if active:
+            _login_failures[key] = active
+        else:
+            _login_failures.pop(key, None)
+
+
+def _login_retry_after(now=None):
+    now = time.monotonic() if now is None else now
+    key = _login_client_key()
+    with _login_failure_lock:
+        _prune_login_failures(now)
+        failures = _login_failures.get(key, [])
+        if len(failures) < LOGIN_FAILURE_LIMIT:
+            return 0
+        return max(1, int(LOGIN_FAILURE_WINDOW_SECONDS - (now - failures[0]) + 0.999))
+
+
+def _record_login_failure(now=None):
+    now = time.monotonic() if now is None else now
+    key = _login_client_key()
+    with _login_failure_lock:
+        _prune_login_failures(now)
+        failures = list(_login_failures.get(key, []))
+        failures.append(now)
+        _login_failures[key] = failures
+
+
+def _clear_login_failures():
+    with _login_failure_lock:
+        _login_failures.pop(_login_client_key(), None)
+
+
 @bp.before_app_request
 def require_auth_for_protected_routes():
     """保护设置页、任务页、所有写接口和敏感配置读取接口。"""
     endpoint = (request.endpoint or "").rsplit(".", 1)[-1] or None
     if endpoint in (None, "static") or endpoint in AUTH_ENDPOINTS:
         return None
-    if not has_admin_password():
-        return None
     if request.method == "GET" and endpoint in PUBLIC_GET_ENDPOINTS:
-        return None
-    if endpoint in PUBLIC_WRITE_ENDPOINTS:
         return None
     if is_authenticated():
         return None
@@ -110,10 +154,14 @@ def require_auth_for_protected_routes():
 
 @bp.app_context_processor
 def auth_processor():
-    """向模板注入认证状态，用于显示未设置密码提示。"""
+    """向模板注入统一认证状态。"""
+    authenticated = is_authenticated()
     return {
         "auth_enabled": has_admin_password(),
-        "is_authenticated": is_authenticated(),
+        "is_authenticated": authenticated,
+        "password_change_recommended": (
+            authenticated and admin_password_change_recommended()
+        ),
     }
 
 
@@ -145,7 +193,7 @@ def utility_processor():
 
 @bp.route("/login")
 def login_page():
-    """登录页。未设置管理密码或已登录时直接返回目标页面。"""
+    """登录页。已登录时直接返回目标页面。"""
     next_url = _safe_next_url(request.args.get("next") or "/settings")
     if is_authenticated():
         return redirect(next_url)
@@ -158,17 +206,31 @@ def api_auth_status():
     return jsonify({
         "password_enabled": has_admin_password(),
         "authenticated": is_authenticated(),
+        "password_change_recommended": admin_password_change_recommended(),
     })
 
 
 @bp.route("/api/auth/login", methods=["POST"])
 def api_auth_login():
     """使用管理密码登录。"""
+    retry_after = _login_retry_after()
+    if retry_after:
+        return jsonify({
+            "status": "error",
+            "message": "登录失败次数过多，请稍后再试",
+            "retry_after": retry_after,
+        }), 429, {"Retry-After": str(retry_after)}
     data = request.get_json() or {}
     password = data.get("password", "")
     if verify_admin_password(password):
+        _clear_login_failures()
         _mark_admin_authenticated()
-        return jsonify({"status": "ok", "message": "登录成功"})
+        return jsonify({
+            "status": "ok",
+            "message": "登录成功",
+            "password_change_recommended": admin_password_change_recommended(),
+        })
+    _record_login_failure()
     return jsonify({"status": "error", "message": "密码错误"}), 403
 
 
@@ -182,41 +244,24 @@ def api_auth_logout():
 @bp.route("/api/admin/password", methods=["POST"])
 def api_set_admin_password():
     """
-    设置或修改管理密码
-
-    如果已设置密码，需要提供当前密码进行验证。
-    密码以 SHA256 哈希存储。
+    验证当前密码后修改管理密码。
     """
     try:
         data = request.get_json()
         current = data.get("current_password", "")
         new_pwd = data.get("new_password", "")
 
-        # 如果已有密码，验证当前密码
-        if has_admin_password():
-            if not verify_admin_password(current):
-                return jsonify({"status": "error", "message": "当前密码错误"}), 403
-
-        if not new_pwd:
-            return jsonify({"status": "error", "message": "新密码不能为空"}), 400
+        if not verify_admin_password(current):
+            return jsonify({"status": "error", "message": "当前密码错误"}), 403
+        if len(str(new_pwd or "")) < ADMIN_PASSWORD_MIN_LENGTH:
+            return jsonify({
+                "status": "error",
+                "message": f"新密码至少需要 {ADMIN_PASSWORD_MIN_LENGTH} 个字符",
+            }), 400
 
         set_admin_password(new_pwd)
         _clear_admin_session()
         _mark_admin_authenticated()
-        return jsonify({"status": "ok", "message": "管理密码已设置"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-
-@bp.route("/api/admin/password", methods=["DELETE"])
-def api_clear_admin_password():
-    """清除管理密码（设置为空字符串）"""
-    try:
-        data = request.get_json(silent=True) or {}
-        if has_admin_password() and not verify_admin_password(data.get("current_password", "")):
-            return jsonify({"status": "error", "message": "当前密码错误"}), 403
-        set_admin_password("")
-        _clear_admin_session()
-        return jsonify({"status": "ok", "message": "管理密码已清除"})
+        return jsonify({"status": "ok", "message": "管理密码已修改"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

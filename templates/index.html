@@ -148,8 +148,10 @@
                     <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
                     {% endif %}
                     <a href="/paper/{{ paper.paper_key }}">📖 详情</a>
+                    {% if is_authenticated %}
                     <a href="javascript:void(0)" class="link-todo" onclick="toggleTodo('{{ paper.paper_key }}', this)">📌 加入清单</a>
                     <a href="javascript:void(0)" class="link-hide" onclick="hidePaper('{{ paper.paper_key }}', this)">😐 不感兴趣</a>
+                    {% endif %}
                 </div>
             </div>
             {% else %}

@@ -86,6 +86,14 @@ http://服务器地址:5000
 
 项目默认监听 `0.0.0.0:5000`。如果只想通过 Nginx 反向代理访问，可把 `config.py` 中的 `WEB_HOST` 改为 `127.0.0.1`，或用防火墙限制 5000 端口。
 
+首次启动若尚无管理密码，服务会生成随机密码并仅在该次日志中输出：
+
+```bash
+journalctl -u arxiv-paper.service -b --no-pager | grep '首次启动已生成管理密码'
+```
+
+使用该密码登录后，设置页会提示尽快修改。若遗失密码，在仓库根目录以服务用户运行 `python scripts/reset_admin_password.py`；脚本会备份 `settings.json`、重置密码并使旧登录会话失效。
+
 ---
 
 ## 常用命令

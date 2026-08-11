@@ -7,7 +7,7 @@ from datetime import timedelta
 from flask import Flask
 
 from source.pipeline import configure_daily_job, scheduler
-from source.settings import get_session_secret
+from source.settings import ensure_admin_password, get_session_secret
 from source.settings.guardrail import warn_on_settings_rebuild
 from source.storage import init_db, interrupt_running_task_logs
 from .auth import bp as auth_bp
@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 
 
 def build_app():
+    credential = ensure_admin_password()
+    if credential.generated_password:
+        logger.warning(
+            "首次启动已生成管理密码（仅显示本次，请登录后尽快修改）：%s",
+            credential.generated_password,
+        )
     app = Flask(
         __name__,
         template_folder=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "templates"),

@@ -46,10 +46,14 @@
                 {% if paper.pdf_url %}
                 <span class="meta-item">📥 <a href="{{ paper.pdf_url }}" target="_blank" class="meta-link">下载 PDF</a></span>
                 {% endif %}
+                {% if is_authenticated %}
                 <span class="meta-item">💬 <a href="/paper/{{ paper.paper_key }}/chat" class="meta-link">讨论论文</a></span>
+                {% endif %}
                 {% if paper.pdf_local_path %}<span class="meta-item">✅ 本地 PDF 已保存</span>{% endif %}
                 {% if paper.venue %}<span class="meta-item">🏛️ {{ paper.venue }}</span>{% endif %}
+                {% if is_authenticated %}
                 <span class="meta-item">📌 <a href="javascript:void(0)" class="meta-link" id="todo-toggle" onclick='toggleTodo({{ paper.paper_key | tojson }})'>加入阅读清单</a></span>
+                {% endif %}
                 {% if paper.hidden %}
                 <span class="meta-item meta-hidden">🚫 已隐藏</span>
                 {% endif %}
@@ -86,7 +90,11 @@
                 <div class="edit-rating" id="rating-display">
                     {% set r = analysis.rating if analysis and analysis.rating is not none else 0 %}
                     {% for i in range(5) %}
+                    {% if is_authenticated %}
                     <span class="star-btn {% if i < r %}active{% endif %}" data-val="{{ i+1 }}" onclick="setRating({{ i+1 }})">{% if i < r %}★{% else %}☆{% endif %}</span>
+                    {% else %}
+                    <span class="rating">{% if i < r %}★{% else %}☆{% endif %}</span>
+                    {% endif %}
                     {% endfor %}
                     <span class="rating-text" id="rating-text"></span>
                 </div>
@@ -100,19 +108,19 @@
                         {% if analysis and analysis.tags %}
                             {% if analysis.tags is string %}
                                 {% for t in analysis.tags.split(",") %}
-                                <span class="tag-small">{{ t.strip() }} <a onclick='removeTag({{ t.strip() | tojson }})' class="tag-remove">✕</a></span>
+                                <span class="tag-small">{{ t.strip() }}{% if is_authenticated %} <a onclick='removeTag({{ t.strip() | tojson }})' class="tag-remove">✕</a>{% endif %}</span>
                                 {% endfor %}
                             {% else %}
                                 {% for t in analysis.tags %}
-                                <span class="tag-small">{{ t }} <a onclick='removeTag({{ t | tojson }})' class="tag-remove">✕</a></span>
+                                <span class="tag-small">{{ t }}{% if is_authenticated %} <a onclick='removeTag({{ t | tojson }})' class="tag-remove">✕</a>{% endif %}</span>
                                 {% endfor %}
                             {% endif %}
                         {% endif %}
                     </div>
-                    <div class="tag-add-row">
+                    {% if is_authenticated %}<div class="tag-add-row">
                         <input type="text" id="new-tag-input" placeholder="添加标签" onkeydown="if(event.key==='Enter')addTag()">
                         <button class="btn-sm btn-activate" onclick="addTag()">+</button>
-                    </div>
+                    </div>{% endif %}
                 </div>
             </div>
 
@@ -124,7 +132,7 @@
 
             <!-- 中文摘要 -->
             <div class="detail-section">
-                <h3>📝 中文摘要 <button class="btn-sm btn-edit" onclick="toggleSummaryEdit()">编辑</button></h3>
+                <h3>📝 中文摘要 {% if is_authenticated %}<button class="btn-sm btn-edit" onclick="toggleSummaryEdit()">编辑</button>{% endif %}</h3>
                 <div id="summary-view">
                     {% if analysis and analysis.summary_cn %}
                     <p>{{ analysis.summary_cn }}</p>
@@ -132,22 +140,24 @@
                     <p class="empty-state compact">暂无中文摘要</p>
                     {% endif %}
                 </div>
-                <div id="summary-edit" style="display:none;">
+                {% if is_authenticated %}<div id="summary-edit" style="display:none;">
                     <textarea id="summary-textarea" rows="4" placeholder="输入中文摘要">{{ analysis.summary_cn if analysis and analysis.summary_cn else '' }}</textarea>
                     <div class="edit-actions">
                         <button class="btn btn-primary" onclick="saveSummary()">💾 保存</button>
                         <button class="btn" onclick="toggleSummaryEdit()">取消</button>
                     </div>
-                </div>
+                </div>{% endif %}
             </div>
 
             <!-- AI 深度阅读 -->
             <div class="detail-section">
                 <h3>📖 AI 深度阅读
+                    {% if is_authenticated %}
                     <button class="btn-sm btn-edit" onclick="toggleQaEdit()">编辑</button>
                     <button class="btn-sm btn-activate" id="reanalyze-btn" onclick="reanalyze()">📝 生成报告</button>
+                    {% endif %}
                 </h3>
-                <div id="reanalyze-status" class="action-status"></div>
+                {% if is_authenticated %}<div id="reanalyze-status" class="action-status"></div>{% endif %}
                 <div id="qa-view">
                     {% if analysis and analysis.qa_analysis %}
                     <div class="qa-content" id="qa-content"></div>
@@ -155,18 +165,18 @@
                     <p class="empty-state compact">暂无 AI 深度阅读内容</p>
                     {% endif %}
                 </div>
-                <div id="qa-edit" style="display:none;">
+                {% if is_authenticated %}<div id="qa-edit" style="display:none;">
                     <textarea id="qa-textarea" rows="15" placeholder="输入 AI 深度阅读内容（Markdown 格式）">{{ analysis.qa_analysis if analysis and analysis.qa_analysis else '' }}</textarea>
                     <div class="edit-actions">
                         <button class="btn btn-primary" onclick="saveQaAnalysis()">💾 保存</button>
                         <button class="btn" onclick="toggleQaEdit()">取消</button>
                     </div>
-                </div>
+                </div>{% endif %}
             </div>
 
             <!-- 评价 -->
             <div class="detail-section">
-                <h3>💬 评价 <button class="btn-sm btn-edit" onclick="toggleCommentEdit()">编辑</button></h3>
+                <h3>💬 评价 {% if is_authenticated %}<button class="btn-sm btn-edit" onclick="toggleCommentEdit()">编辑</button>{% endif %}</h3>
                 <div id="comment-view">
                     {% if analysis and analysis.value_comment %}
                     <p class="value-comment">{{ analysis.value_comment }}</p>
@@ -174,16 +184,17 @@
                     <p class="empty-state compact">暂无评价</p>
                     {% endif %}
                 </div>
-                <div id="comment-edit" style="display:none;">
+                {% if is_authenticated %}<div id="comment-edit" style="display:none;">
                     <textarea id="comment-textarea" rows="3" placeholder="输入评价">{{ analysis.value_comment if analysis and analysis.value_comment else '' }}</textarea>
                     <div class="edit-actions">
                         <button class="btn btn-primary" onclick="saveComment()">💾 保存</button>
                         <button class="btn" onclick="toggleCommentEdit()">取消</button>
                     </div>
-                </div>
+                </div>{% endif %}
             </div>
 
             <!-- 危险操作区 -->
+            {% if is_authenticated %}
             <div class="danger-zone">
                 <h3 class="danger-toggle" onclick="toggleDanger()">⚠️ 危险操作 <span id="danger-arrow">▸</span></h3>
                 <div id="danger-content" style="display:none;">
@@ -199,6 +210,7 @@
                     <div id="danger-status" class="action-status"></div>
                 </div>
             </div>
+            {% endif %}
         </article>
 
         <footer>
@@ -302,7 +314,7 @@
             } catch (e) { alert('请求失败: ' + e.message); }
         }
 
-        checkTodoStatus();
+        {% if is_authenticated %}checkTodoStatus();{% endif %}
 
         function toggleDanger() {
             const content = document.getElementById('danger-content');

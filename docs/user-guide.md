@@ -60,6 +60,8 @@ python app.py
 
 浏览器访问 `http://localhost:5000`。抓取、分析和推荐评分在 Web 页面 `/tasks`（或 API `POST /api/fetch`、`/api/analyze`、`/api/run`）中完成。
 
+首次启动时，随机管理密码会仅打印在启动日志中。使用该密码登录后建议立即在「设置 → 管理」修改；忘记密码可在服务器仓库根目录运行 `python scripts/reset_admin_password.py`。
+
 ---
 
 ## systemd 服务管理

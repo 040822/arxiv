@@ -88,6 +88,8 @@ sudo systemctl stop arxiv-paper.service
 journalctl -u arxiv-paper.service -f
 ```
 
+首次启动若未配置管理密码，随机初始密码会仅输出到启动日志；登录后请在「设置 → 管理」修改。忘记密码可在服务器仓库根目录运行 `python scripts/reset_admin_password.py`。
+
 不要同时手动运行 `python app.py` 和 systemd 服务；应用内置 APScheduler 定时任务，多进程可能导致日报重复执行。
 
 ## 项目结构

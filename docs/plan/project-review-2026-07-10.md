@@ -22,12 +22,13 @@
 
 | # | 严重度 | 问题 | 位置 | 建议 |
 |---|--------|------|------|------|
-| S1 | **中** | 默认未设置管理密码时 `is_authenticated()` 直接返回 True，公网部署等于无认证，任何人可执行所有写操作 | `app.py:165-173`, `app.py:191-207` | 启动时检测无密码且监听非回环则拒绝启动或强制设密码 |
-| S2 | 低 | 未设密码时 `POST /api/admin/password` 不需 current_password，首个访问者可锁定实例 | `app.py:2442-2468` | 提供一次性启动令牌或限制首次设置仅本地回环 |
-| S3 | 低 | 阅读清单写接口（add/remove todo）在 `PUBLIC_WRITE_ENDPOINTS`，无 CSRF 防护 | `app.py:131-135`, `app.py:1420-1453` | 纳入登录或加 CSRF 防护 |
-| S4 | 低 | `/api/progress/<task_id>` SSE 接口公开，可窥探任意任务进度（含 arxiv_id 等业务信息） | `app.py:1120-1141` | 对 task_id 做会话绑定校验 |
-| S5 | 低 | 登录无速率限制，可被在线暴力破解 | `app.py:626-634` | 加失败计数 + 指数退避 |
-| S6 | 低 | `verify_admin_password` 用 `==` 比较 SHA-256，存在理论计时侧信道 | `settings.py:1891` | 改用 `hmac.compare_digest` |
+| S1 ✅ | ~~中~~ **已完成** | 启动时若无凭据会生成高强度随机管理密码并仅在首次日志输出；缺少凭据时鉴权失败关闭 | `source/settings/admin.py`, `source/web/application.py` | 损坏配置会中止启动，禁止默认模板覆盖 |
+| S2 ✅ | ~~低~~ **已完成** | Web 端不再支持无认证首次设密或清除密码；改密始终验证当前密码 | `source/web/auth.py` | 忘记密码使用服务器本机重置脚本 |
+| S3 ✅ | ~~低~~ **已完成** | 阅读清单页面、读取与全部写接口均要求登录，不再存在公开写例外 | `source/web/auth.py` | 全站 CSRF 仍由 S14 单独跟踪 |
+| S4 ✅ | ~~低~~ **已完成** | `/api/progress/<task_id>` 已移出公开 GET 集合，未登录返回 401 | `source/web/auth.py` | 当前单管理员模型下所有登录会话均为可信管理员 |
+| S5 ✅ | ~~低~~ **已完成** | 登录按来源 IP 限制 15 分钟内 5 次失败，超限返回 429/`Retry-After` | `source/web/auth.py` | 不默认信任可伪造的 `X-Forwarded-For` |
+| S6 ✅ | ~~低~~ **已完成** | 新密码使用 scrypt 慢哈希；旧 SHA-256 使用安全比较并在成功登录后原位升级 | `source/settings/admin.py` | 旧摘要升级会使旧 session 自动失效 |
+| S6A ✅ | ~~低~~ **已完成** | 未登录访客仍能看到 paper 页危险操作和其他管理控件 | `templates/paper.html` | 匿名页保留内容展示，隐藏全部管理入口；列表与报告页同步收口 |
 
 ### 1.2 SQL 注入
 
@@ -58,7 +59,7 @@
 
 | # | 严重度 | 问题 | 位置 | 建议 |
 |---|--------|------|------|------|
-| S15 | **中** | 管理密码用 SHA-256 无盐快哈希存储，若 settings.json 泄露可高速暴力破解 | `settings.py:1853-1871` | 改用 bcrypt/argon2/pbkdf2 |
+| S15 ✅ | ~~中~~ **已完成** | 管理密码已改用 scrypt 慢哈希；旧 SHA-256 仅用于兼容验证并在成功登录后升级 | `source/settings/admin.py` | 随机初始密码仍只在首次启动日志中短暂有效，建议登录后修改 |
 | S16 | **中** | `settings.json` 同时明文存放 session_secret、API key、WebDAV/SMTP 密码、密码哈希 | `settings.py:400-473` | 考虑 OS keyring；至少 `data/` 目录权限 0700 |
 | S17 | 低 | `/api/db/info` 返回服务器文件系统绝对路径 | `app.py:2376-2435` | 仅返回相对路径 |
 | S18 | 低 | 备份任务日志 `detail` 记录上传文件名、DB 大小等 | `app.py:289-310` | 对非管理员脱敏 |

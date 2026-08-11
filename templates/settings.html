@@ -23,19 +23,13 @@
             <button class="tab-btn" onclick="switchTab('network', this)">🌐 网络与代理</button>
             <button class="tab-btn" onclick="switchTab('schedule', this)">⏰ 定时任务</button>
             <button class="tab-btn" onclick="switchTab('db', this)">💾 数据库</button>
-            <button class="tab-btn" onclick="switchTab('admin', this)">🔒 管理</button>
+            <button class="tab-btn" id="admin-tab-btn" onclick="switchTab('admin', this)">🔒 管理</button>
             <button class="tab-btn" onclick="switchTab('billing', this)">📊 账单</button>
         </div>
 
-        {% if not auth_enabled %}
-        <div class="action-status error auth-warning">
-            ⚠️ 尚未设置管理密码，设置页和写接口当前未受保护。请在「管理」中设置密码。
-        </div>
-        {% else %}
         <div class="settings-actions actions-end">
             <button class="btn" onclick="logout()">退出登录</button>
         </div>
-        {% endif %}
 
         <!-- ============ Tab 1: AI 设置 ============ -->
         <div id="tab-ai" class="tab-panel active">
@@ -457,10 +451,15 @@
         <div id="tab-admin" class="tab-panel">
             <div class="settings-section">
                 <h3>🔒 管理密码</h3>
-                <p class="section-desc">设置管理页面密码，保护设置不被未授权修改</p>
+                <p class="section-desc">修改管理密码，保护管理功能和个人学习数据不被未授权访问。</p>
+                {% if password_change_recommended %}
+                <div class="action-status warning auth-warning">
+                    ⚠️ 当前仍在使用启动日志中生成的初始密码，建议立即修改。
+                </div>
+                {% endif %}
                 <div class="form-group form-width-360">
                     <label>当前密码</label>
-                    <div class="input-group"><input type="password" id="admin-current-pwd" placeholder="当前密码（首次设置可留空）"><button class="btn-small" onclick="togglePwd('admin-current-pwd')">👁</button></div>
+                    <div class="input-group"><input type="password" id="admin-current-pwd" placeholder="当前密码"><button class="btn-small" onclick="togglePwd('admin-current-pwd')">👁</button></div>
                 </div>
                 <div class="form-group form-width-360">
                     <label>新密码</label>
@@ -470,7 +469,7 @@
                     <label>确认新密码</label>
                     <div class="input-group"><input type="password" id="admin-confirm-pwd" placeholder="再次输入新密码"><button class="btn-small" onclick="togglePwd('admin-confirm-pwd')">👁</button></div>
                 </div>
-                <div class="settings-actions"><button class="btn btn-primary" onclick="saveAdminPassword()">💾 保存密码</button><button class="btn" onclick="clearAdminPassword()">🗑️ 清除密码</button></div>
+                <div class="settings-actions"><button class="btn btn-primary" onclick="saveAdminPassword()">💾 保存密码</button></div>
                 <div id="admin-status" class="action-status"></div>
             </div>
             <div class="settings-section">
@@ -1893,20 +1892,6 @@
             } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
         }
 
-        async function clearAdminPassword() {
-            if (!confirm('确定清除管理密码？')) return;
-            const statusEl = document.getElementById('admin-status');
-            const current = document.getElementById('admin-current-pwd').value;
-            try {
-                const resp = await fetch('/api/admin/password', {
-                    method: 'DELETE',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({current_password: current})
-                });
-                const result = await resp.json(); statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error'; statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
-            } catch (e) { statusEl.className = 'action-status error'; statusEl.textContent = '❌ ' + e.message; }
-        }
-
         async function loadSystemStatus() {
             try {
                 const resp = await fetch('/api/stats'); const data = await resp.json();
@@ -1920,6 +1905,9 @@
         }
 
         init();
+        if (new URLSearchParams(window.location.search).get('tab') === 'admin') {
+            switchTab('admin', document.getElementById('admin-tab-btn'));
+        }
     </script>
 {% endraw %}
 </body>

@@ -27,14 +27,16 @@
         <div class="report-header">
             <div class="report-header-top">
                 <h2>📊 {{ report.report_date }} 每日报告</h2>
+                {% if is_authenticated %}
                 <button id="regenerate-report-btn" class="btn btn-primary" onclick="regenerateReport(this)">🔄 重新生成该日报告</button>
+                {% endif %}
             </div>
             <div class="report-meta">
                 <span>📄 {{ report.paper_count }} 篇论文</span>
                 <span>🔍 {{ report.analyzed_count }} 篇已分析</span>
                 <span>⭐ 平均评级 {{ report.avg_rating }}</span>
             </div>
-            <div id="regenerate-report-status" class="action-status"></div>
+            {% if is_authenticated %}<div id="regenerate-report-status" class="action-status"></div>{% endif %}
         </div>
 
         <div class="report-content">

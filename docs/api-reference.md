@@ -38,11 +38,11 @@
 
 ## 认证
 
-未设置管理密码时，系统保持本地免登录兼容。设置管理密码后，`/settings`、`/tasks`、`/paper/<arxiv_id>/chat`、所有 `POST/PUT/DELETE` 写接口、设置读取接口、任务日志接口都需要登录。`/about` 与 `/vision` 为公开只读页面，不受管理密码限制。
+应用首次启动或升级时若没有管理密码，会生成随机初始密码并仅在该次启动日志中输出。系统始终失败关闭；`/settings`、`/tasks`、`/reading-list`、`/paper/<arxiv_id>/chat`、所有 `POST/PUT/DELETE` 写接口、学习记录、进度流、设置读取接口和任务日志接口都需要登录。论文、公共分析、日报、`/about` 与 `/vision` 保持公开只读。
 
 管理登录默认通过签名 cookie 持久保存 180 天，不需要“记住我”开关。默认使用 `data/settings.json` 内部字段 `session_secret` 作为 Flask session 签名密钥，因此服务重启后仍可保持登录；如果部署环境设置了 `FLASK_SECRET_KEY`，则优先使用该环境变量。修改管理密码后，旧 cookie 会因密码版本 token 不匹配而失效。
 
-例外：阅读清单的加入/移除接口 `POST/DELETE /api/paper/<arxiv_id>/todo` 为公开轻量操作，不要求管理密码；标记已读/未读仍需要登录。
+初始随机密码登录后会提示尽快修改，但不强制阻断其他管理功能。登录按来源 IP 限制 15 分钟内 5 次失败；超限返回 HTTP 429 和 `Retry-After`。
 
 ```
 GET  /api/auth/status
@@ -331,7 +331,7 @@ POST /api/paper/<arxiv_id>/todo
 GET /api/paper/<arxiv_id>/todo/status
 ```
 
-返回该论文是否已在阅读清单中。此接口只读，公开页面可使用。
+返回该论文是否已在当前阅读清单中。此接口包含个人状态，需要登录。
 
 ### 从清单移除
 
@@ -714,14 +714,15 @@ GET /api/db/info
 
 ```
 POST /api/admin/password         # 设置密码
-DELETE /api/admin/password       # 清除密码
 ```
 
-`DELETE /api/admin/password` 必须传当前密码：
+修改密码必须同时传当前密码，新密码至少 12 个字符：
 
 ```json
-{"current_password": "当前管理密码"}
+{"current_password": "当前管理密码", "new_password": "至少12个字符的新密码"}
 ```
+
+管理密码保存在 `data/settings.json`，新密码使用 scrypt 慢哈希。忘记密码时在服务器仓库根目录运行 `python scripts/reset_admin_password.py`；脚本会先备份配置，再打印一次新的随机密码。
 
 ---
 

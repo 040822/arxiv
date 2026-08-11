@@ -25,15 +25,15 @@
 包入口，仅做转发导出，保证外部可 `from source.web import app`。
 
 ### `application.py`
-- `build_app()`：创建 Flask 实例，配置模板/静态目录、`secret_key`（优先环境变量 `FLASK_SECRET_KEY`）、上传上限（101 MB）、180 天持久 session，注册全部 8 个 Blueprint。
+- `build_app()`：确保管理凭据存在（首次随机生成并记录一次）、创建 Flask 实例，配置模板/静态目录、`secret_key`（优先环境变量 `FLASK_SECRET_KEY`）、上传上限（101 MB）、180 天持久 session，注册全部 8 个 Blueprint。
 - `app`：模块级单例，供 WSGI/`app.py` 直接引用。
 - `create_app()`：应用工厂，依次执行 `init_db()`（含迁移）、遗留 `running` 日志标记 `interrupted`、`configure_daily_job()` 重建定时任务、启动 APScheduler。
 
 ### `auth.py`
-- `require_auth_for_protected_routes`（`before_app_request`）：设置管理密码后拦截 `/settings`、`/tasks`、全部写接口与敏感读接口；`PUBLIC_GET_ENDPOINTS` / `PUBLIC_WRITE_ENDPOINTS`（阅读清单加/移除）豁免；API 返回 401 JSON，页面重定向登录页。
-- `is_authenticated()`：未设密码免登录；已登录状态通过绑定密码版本的 HMAC token 校验，改密即失效。
-- 路由：`/login`、`/api/auth/status`、`/api/auth/login`、`/api/auth/logout`、`/api/admin/password`（POST 设置 / DELETE 清除）。
-- 三个 `app_context_processor`：注入 `auth_enabled`/`is_authenticated`、模板时间 `now`、分页辅助函数 `_remove_param`/`_build_query`。
+- `require_auth_for_protected_routes`（`before_app_request`）：只允许显式列入 `PUBLIC_GET_ENDPOINTS` 的公开只读端点匿名访问；全部写接口、阅读清单、学习记录和进度流要求登录。API 返回 401 JSON，页面重定向登录页。
+- `is_authenticated()`：缺少凭据时失败关闭；已登录状态通过绑定密码版本的 HMAC token 校验，改密即失效。登录按来源 IP 限制 15 分钟内 5 次失败。
+- 路由：`/login`、`/api/auth/status`、`/api/auth/login`、`/api/auth/logout`、`/api/admin/password`（POST 验证当前密码后修改）。
+- 三个 `app_context_processor`：注入 `auth_enabled`/`is_authenticated`/`password_change_recommended`、模板时间 `now`、分页辅助函数 `_remove_param`/`_build_query`。
 
 ### `pages.py`
 页面渲染路由（Jinja2 模板）：
@@ -50,7 +50,7 @@
 - 状态：`/api/paper/<id>/hide|unhide`、`DELETE /api/paper/<id>`、批量删除/隐藏
 - 分析：`/api/papers/batch-analyze`、`/api/paper/<id>/reanalyze`（重跑深度阅读，校验 `### Qn:` 完整性）
 - 手动添加 arXiv 论文：`/api/paper/add`（解析编号 → 抓取 → 基础分析 → 深度阅读，SSE 进度）
-- 阅读清单：`/api/paper/<id>/todo`（POST 加入 / DELETE 移除）、`/todo/read`、`/todo/unread`（豁免鉴权）
+- 阅读清单：`/api/paper/<id>/todo`（POST 加入 / DELETE 移除）、`/todo/read`、`/todo/unread`（均需登录）
 
 ### `import_api.py`
 手动导入非 arXiv 来源论文（`source/imports` 的 HTTP 层）：
@@ -98,7 +98,7 @@ AI 供应商连接管理：
 
 ## 注意事项
 
-- **鉴权边界**：页面/写接口保护在 `auth.py` 的 `before_app_request` 中统一处理；新增公开端点必须显式加入 `PUBLIC_GET_ENDPOINTS` / `PUBLIC_WRITE_ENDPOINTS`。
+- **鉴权边界**：页面/写接口保护在 `auth.py` 的 `before_app_request` 中统一处理；新增公开只读端点必须显式加入 `PUBLIC_GET_ENDPOINTS`，不存在公开写例外。
 - **进度上报**：耗时任务通过 `update_progress(task_id, ...)` 上报，前端用 `/api/progress/<task_id>` SSE 订阅；task_id 由前端传入（如 `add_paper`、`fetch`）。
 - **手动任务日志**：推荐新任务端点使用 `task_endpoint.py` 的装饰器与 `TaskEndpointResult`；`tasks_api.py` 中部分旧端点仍为手写 `start_task_log`/`finish_task_log` 模式。
 - **部分文件存在未使用的共享 import 块**（`analyzer`/`backup`/`fetcher`/`source.pipeline` 整块引入），属历史遗留，维护时无需全部清理。

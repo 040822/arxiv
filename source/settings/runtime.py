@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import re
-import secrets
 from string import Formatter
 
 
@@ -74,6 +73,12 @@ from .thinking import (
 )
 
 from .store import load_settings, save_settings
+from .admin import (
+    get_admin_password,
+    has_admin_password,
+    set_admin_password,
+    verify_admin_password,
+)
 
 
 def get_concurrency():
@@ -336,68 +341,3 @@ def save_proxy_config(proxy_config):
     settings = load_settings()
     settings["proxy"] = proxy_config
     return save_settings(settings)
-
-
-def get_admin_password():
-    """
-    获取管理员密码的 SHA-256 哈希值。
-
-    密码以哈希形式存储，不保存明文。
-    空字符串表示未设置密码（无需验证）。
-
-    返回:
-        str: 密码的 SHA-256 哈希值，未设置时返回空字符串
-    """
-    settings = load_settings()
-    return settings.get("admin_password", "")
-
-
-def set_admin_password(password):
-    """
-    设置管理员密码。
-
-    密码使用 SHA-256 哈希后存储，传入空字符串则清除密码。
-
-    参数:
-        password: 要设置的明文密码，空字符串表示清除密码
-
-    返回:
-        bool: 保存是否成功
-    """
-    import hashlib
-    settings = load_settings()
-    if password:
-        settings["admin_password"] = hashlib.sha256(password.encode()).hexdigest()
-    else:
-        settings["admin_password"] = ""
-    return save_settings(settings)
-
-
-def verify_admin_password(password):
-    """
-    验证管理员密码是否正确。
-
-    如果未设置密码（哈希值为空），直接返回 True（无需验证）。
-    否则将输入密码哈希后与存储的哈希值比较。
-
-    参数:
-        password: 待验证的明文密码
-
-    返回:
-        bool: 密码正确或未设置密码时返回 True
-    """
-    import hashlib
-    stored = get_admin_password()
-    if not stored:
-        return True
-    return hashlib.sha256(password.encode()).hexdigest() == stored
-
-
-def has_admin_password():
-    """
-    检查是否已设置管理员密码。
-
-    返回:
-        bool: 已设置密码返回 True，未设置返回 False
-    """
-    return bool(get_admin_password())

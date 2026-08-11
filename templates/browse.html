@@ -151,6 +151,7 @@
                 </div>
 
                 <!-- 批量操作栏 -->
+                {% if is_authenticated %}
                 <div class="batch-actions">
                     <label class="select-all-label">
                         <input type="checkbox" id="select-all-checkbox" onchange="toggleAll(this)"> 全选
@@ -165,13 +166,14 @@
                 <p class="section-desc batch-help">
                     🤖 批量分析 = 普通 AI 报告（标签/中文摘要/AI 评级/简评，不下载 PDF）。深度分析（Q&A）请在论文详情页点击「📝 生成报告」。
                 </p>
+                {% endif %}
 
                 <div class="papers-list">
                     {% for paper in papers %}
                     <div class="paper-card">
-                        <div class="paper-select">
+                        {% if is_authenticated %}<div class="paper-select">
                             <input type="checkbox" class="paper-checkbox" value="{{ paper.paper_key }}" onchange="updateSelectedCount()">
-                        </div>
+                        </div>{% endif %}
                         <div class="paper-content">
                             <div class="paper-header">
                                 <h3 class="paper-title">
@@ -247,8 +249,10 @@
                                 <a href="{{ paper.pdf_url }}" target="_blank">📥 PDF</a>
                                 {% endif %}
                                 <a href="/paper/{{ paper.paper_key }}">📖 详情</a>
+                                {% if is_authenticated %}
                                 <a href="javascript:void(0)" class="link-todo" onclick="toggleTodo('{{ paper.paper_key }}', this)">📌 加入清单</a>
                                 <a href="javascript:void(0)" class="link-hide" onclick="hidePaper('{{ paper.paper_key }}', this)">😐 不感兴趣</a>
+                                {% endif %}
                             </div>
                         </div>
                     </div>

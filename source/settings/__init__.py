@@ -6,11 +6,13 @@ from .thinking import *
 from .store import *
 from .providers import *
 from .prompts import *
+from .admin import *
 from .runtime import *
 
 __all__ = [
     "AI_TASK_KEYS",
     "AI_TASK_LABELS",
+    "ADMIN_PASSWORD_MIN_LENGTH",
     "DEFAULT_AI_TASK_OPTIONS",
     "DEFAULT_BASIC_ANALYSIS_INSTRUCTION",
     "DEFAULT_DEEP_READING_INSTRUCTION",
@@ -35,6 +37,7 @@ __all__ = [
     "add_provider",
     "build_chat_completion_kwargs",
     "get_admin_password",
+    "admin_password_change_recommended",
     "get_ai_config",
     "get_ai_task_config",
     "get_ai_tasks",
@@ -55,6 +58,7 @@ __all__ = [
     "get_thinking_protocol",
     "get_webdav_backup_config",
     "has_admin_password",
+    "ensure_admin_password",
     "is_known_thinking_model",
     "is_openai_reasoning_model",
     "load_settings",
@@ -74,6 +78,7 @@ __all__ = [
     "save_settings",
     "save_webdav_backup_config",
     "set_admin_password",
+    "reset_admin_password",
     "update_email_report_status",
     "update_provider",
     "update_webdav_backup_status",

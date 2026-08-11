@@ -32,7 +32,7 @@
 
 - **业务页 CSS** 位于 `/static/css/`：所有业务页加载 `core.css` + `components.css`；首页/浏览/搜索/阅读清单加载 `pages/library.css`；论文详情与学习页再加载 `rich-text.css` 和各自页面 CSS；任务、设置、报告、登录加载对应 `pages/*.css`。`promo.css` 仅供 `about.html`/`vision.html`，第三方资源位于 `vendor/`；
 - **富文本渲染**：论文详情页与学习页中的 Markdown/数学公式必须通过 `static/rich_text.js` 的 `RichText.render()` / `RichText.renderMath()` 渲染，不要在模板里复制清洗逻辑；
-- **认证变量**：`auth.py` 的上下文处理器向所有模板注入 `auth_enabled`、`is_authenticated`、`now`（当前时间）、`_remove_param`/`_build_query`（分页 URL 辅助），模板可直接使用；
+- **认证变量**：`auth.py` 的上下文处理器向所有模板注入 `auth_enabled`、`is_authenticated`、`password_change_recommended`（仅登录后可能为真）、`now`（当前时间）、`_remove_param`/`_build_query`（分页 URL 辅助），模板可直接使用；
 - **动态页面模式**：`settings.html`/`tasks.html`/`paper_chat.html` 均采用「模板骨架 + 内嵌 JS 调 API」模式，页面逻辑改动优先看对应 Blueprint 的 API 端点与模板内 `<script>` 区块；
 - **进度显示**：耗时操作前端通过 `EventSource('/api/progress/<task_id>')` 订阅 SSE，任务终态（completed/error）后自动断开。
 

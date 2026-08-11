@@ -240,7 +240,7 @@ CREATE TABLE paper_quiz_attempts (
 | `schedule` | 每日定时任务启用状态和执行时间 |
 | `fetch` | 抓取延迟配置 |
 | `proxy` | 全局代理配置，用于 arXiv、PDF 下载、LLM API 和 SMTP 邮件 |
-| `admin_password` | 管理密码（SHA-256） |
+| `admin_password` | 管理密码（scrypt；兼容旧 SHA-256 登录升级） |
 | `session_secret` | 内部 Flask session 签名密钥，用于服务重启后保持登录 |
 
 > `source/settings/store.py` 通过递归 deep merge 保留新增顶层字段，不再需要顶层白名单；需要归一化、迁移或密码保留语义的字段仍须显式处理并补测试。

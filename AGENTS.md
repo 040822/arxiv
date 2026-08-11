@@ -286,7 +286,8 @@ APScheduler cron(day_of_week, hour, minute)
 {
   "settings_schema_version": 3,
   "concurrency": 5,
-  "admin_password": "sha256...",
+  "admin_password": "scrypt:...",
+  "admin_password_change_recommended": false,
   "session_secret": "随机生成的 Flask session 签名密钥",
   "personalization": {"research_interests": "用户研究兴趣"},
   "webdav_backup": {
@@ -373,7 +374,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `get_webdav_backup_config()` / `save_webdav_backup_config()` — WebDAV 云备份配置；GET 给前端时必须脱敏密码
 - `get_email_report_config()` / `save_email_report_config()` / `update_email_report_status()` — 每日报告邮件配置，含 `important_score_threshold`（重点精读推荐分阈值，默认 80，0-100）与 `overview_limit`（速览上限，默认 20，0-50）；GET 给前端时必须脱敏 SMTP 密码；`last_sent_report_date` 只记录自动任务成功发送的日报日期
 - `add/remove/update_provider()` — 供应商连接 CRUD；被功能路由引用时禁止删除
-- `get/set/verify/has_admin_password()` — 管理密码
+- `ensure/get/set/verify/has/reset_admin_password()` — 管理密码初始化、scrypt/旧 SHA-256 兼容验证、修改与本机重置
 - `get_session_secret()` — 获取/生成持久 Flask session 签名密钥
 
 > **配置合并：** `source/settings/store.py` 使用递归 deep merge；新增普通顶层字段无需维护白名单。需要归一化、迁移或秘密保留语义的字段，仍应在 normalize/store 中显式处理并补回归测试。
@@ -454,7 +455,7 @@ APScheduler cron(day_of_week, hour, minute)
 | `/api/settings/concurrency` | POST | 保存并发数 |
 | `/api/settings/schedule` | GET/POST | 读取/保存内置日报的星期、时间、抓取天数、分析上限和抓取失败重试策略 |
 | `/api/db/info` | GET | 数据库信息 |
-| `/api/admin/password` | POST/DELETE | 设置/清除密码 |
+| `/api/admin/password` | POST | 验证当前密码后修改密码 |
 
 ### 任务日志 API
 | 端点 | 方法 | 说明 |
@@ -498,7 +499,7 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 
 调用模型时必须通过 `build_chat_completion_kwargs()` 构建参数，不要在业务代码中直接固定传 `temperature` 或 `max_tokens`；保持可选参数的省略语义，让模型在未配置采样控制时使用自身默认值。
 
-管理密码设置后，`/settings`、`/tasks`、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用。登录状态通过签名 cookie 持久保存 180 天，默认使用 `settings.json` 中的 `session_secret` 保证服务重启后仍有效；如果设置了 `FLASK_SECRET_KEY` 则优先使用环境变量。修改管理密码会使旧登录状态失效。`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
+首次启动或升级发现未设置管理密码时，会生成高强度随机密码并仅在该次启动日志输出；缺少有效凭据时鉴权失败关闭。`/settings`、`/tasks`、阅读清单、学习记录、进度流、所有写接口和敏感设置读取接口都需要登录，匿名访客仅浏览论文、公共分析和日报。登录状态通过签名 cookie 持久保存 180 天，默认使用 `settings.json` 中的 `session_secret` 保证服务重启后仍有效；如果设置了 `FLASK_SECRET_KEY` 则优先使用环境变量。修改或本机重置管理密码会使旧登录状态失效；Web 端不允许清除密码。`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
 
 ### 7.4 修改 Prompt
 - 新版 prompt 主要存储在 `data/settings.json` 的 `prompt_profiles` 字段，按 `paper_import`、`basic_analysis`、`deep_reading`、`report_summary`、`recommendation`、`paper_chat`、`paper_quiz` 拆分
@@ -544,6 +545,9 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 ```bash
 # 启动服务
 python app.py
+
+# 忘记管理密码时在服务器本机生成新随机密码（会先备份 settings.json）
+python scripts/reset_admin_password.py
 
 # 抓取 / 分析 / 推荐评分：Web 页面 /tasks 或 API POST /api/fetch、/api/analyze、/api/run（原 CLI 能力入口）
 

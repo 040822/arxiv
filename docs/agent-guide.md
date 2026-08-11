@@ -113,7 +113,7 @@ APScheduler cron(day_of_week, hour, minute)
 
 ### 2. 认证与敏感字段
 
-- 设置管理密码后，`/settings`、`/tasks`、论文学习页、写接口和敏感设置读取接口都需要登录；阅读清单加入/移除接口例外，公开可用
+- 首次启动会确保管理密码存在；`/settings`、`/tasks`、阅读清单、论文学习页、进度流、写接口和敏感设置读取接口都需要登录，匿名访问仅限公开只读内容
 - 管理登录默认持久 180 天，使用签名 cookie；`session_secret` 存在 `settings.json` 中以保证服务重启后仍有效，修改管理密码会使旧登录状态失效
 - `GET /api/providers` 只能返回 `api_key_masked`，不要返回完整 `api_key`
 - 个性化推荐的研究兴趣保存在 `settings.personalization.research_interests`；推荐评分必须使用独立 `recommendation` 任务路由，并且只有 `recommendation_interest_hash` 匹配当前兴趣时才能用于报告排序
