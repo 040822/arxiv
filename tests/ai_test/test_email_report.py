@@ -325,6 +325,29 @@ class EmailReportTests(unittest.TestCase):
         self.assertEqual(below["important_score_threshold"], 0)
         self.assertEqual(below["overview_limit"], 0)
 
+    def test_runtime_normalize_clamps_threshold_and_limit(self):
+        from source.reports.email.config import _normalize_runtime_config
+
+        clamped = _normalize_runtime_config({
+            "important_score_threshold": 200,
+            "overview_limit": 9999,
+        })
+        below = _normalize_runtime_config({
+            "important_score_threshold": -1,
+            "overview_limit": -5,
+        })
+        invalid = _normalize_runtime_config({
+            "important_score_threshold": "abc",
+            "overview_limit": "",
+        })
+
+        self.assertEqual(clamped["important_score_threshold"], 100)
+        self.assertEqual(clamped["overview_limit"], 50)
+        self.assertEqual(below["important_score_threshold"], 0)
+        self.assertEqual(below["overview_limit"], 0)
+        self.assertEqual(invalid["important_score_threshold"], 80)
+        self.assertEqual(invalid["overview_limit"], 20)
+
     def test_send_report_email_supports_starttls_ssl_and_plain_smtp(self):
         import source.reports.email as email_report
         import source.reports.email.content as email_content

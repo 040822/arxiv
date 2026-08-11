@@ -13,10 +13,13 @@ from source.settings import (
     get_research_interest_hash,
 )
 
-from .config import _SafeFormatDict, _normalize_runtime_config
+from .config import (
+    DEFAULT_IMPORTANT_SCORE_THRESHOLD,
+    DEFAULT_OVERVIEW_LIMIT,
+    _SafeFormatDict,
+    _normalize_runtime_config,
+)
 
-DEFAULT_IMPORTANT_SCORE_THRESHOLD = 80
-DEFAULT_OVERVIEW_LIMIT = 20
 EMAIL_CSS = files(__package__).joinpath("email.css").read_text(encoding="utf-8")
 
 def _rewrite_relative_links(content, site_url):

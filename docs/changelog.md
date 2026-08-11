@@ -7,6 +7,13 @@
 - 移除清除密码能力，登录增加每 IP 15 分钟 5 次失败限制，阅读清单和任务进度不再公开
 - paper、首页、浏览页和日报详情对匿名访客隐藏写控件；paper 页内容仍公开只读
 
+### 4.1 验收审查修复（3/4a/5）
+- 补齐 `.learning-question.q-pending` 样式（learning.css，与默认左边框一致 `#1a73e8`），消除 paper_chat 未答题 JS 状态类"使用但未定义"
+- 消除 rich-text.css 与 learning.css 之间 `.learning-message-body` 系列 5 处重复：基础排版（font-size/line-height/color）合并进 rich-text.css（跨论文详情与学习页共用），learning.css 删除重复的 p/p:last-child/strong/code 规则，并补回缺失的 `.learning-message-body code` 行内代码规则；两页视觉零变化（paper.html 的 `.qa-answer` 仍后加载覆盖排版值）
+- 邮件运行时配置归一化恢复阈值钳制：`DEFAULT_IMPORTANT_SCORE_THRESHOLD`/`DEFAULT_OVERVIEW_LIMIT` 移入 `source/reports/email/config.py`（消除 content→config 潜在循环导入，常量单一来源），`_normalize_runtime_config` 对 `important_score_threshold`（0-100）与 `overview_limit`（0-50）钳制，非法值回退默认（80/20）；顺带修复 `import re` 函数内导入
+- 新增测试：`_normalize_runtime_config` 运行时钳制（200→100、9999→50、-1/「abc」→0/默认）
+- 验收：236 项测试全绿（原 235 + 新 1），CSS 类覆盖契约通过，重复选择器扫描 learning-message-body 相关归零，py_compile 与 `git diff --check` 无告警
+
 ### settings.json 重建守卫
 - 事故复盘：2026-08-08 执行 4.1 第 1B-3 轮时误以默认模板整体重建 `data/settings.json`，导致 xiaomi 供应商、deepseek api_key 与自定义模型路由丢失（已从每日快照恢复）
 - 新增 `source/settings/guardrail.py`（只读、无副作用）：比较 providers/ai_tasks/email_report 三个用户配置分区与默认模板是否全等，检测"疑似被默认模板重建"；email_report 比较时剔除 `last_*` 运行时状态字段；不比较 prompts 等低频修改项
