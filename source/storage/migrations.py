@@ -10,6 +10,7 @@ from datetime import datetime
 
 from . import connection
 from .analysis_migrations import migrate_analysis_unique
+from .benchmark_migrations import migrate_benchmark_tables
 from .paper_identity_migration import migrate_generic_paper_identity
 from .schema import apply_baseline_schema
 from .snapshot import copy_sqlite_snapshot
@@ -26,6 +27,7 @@ MIGRATIONS = (
     (2, "analysis_unique", migrate_analysis_unique),
     (3, "generic_paper_identity", migrate_generic_paper_identity),
     (4, "invite_only_users", migrate_invite_only_users),
+    (5, "benchmark_tables", migrate_benchmark_tables),
 )
 
 

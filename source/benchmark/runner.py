@@ -1,0 +1,150 @@
+"""Candidate runner: execute deep-reading and chat tracks against frozen suites."""
+
+import json
+import logging
+
+from ._ai import call_model
+from .config import resolve_model_config
+from .evidence import split_qa_sections
+
+logger = logging.getLogger(__name__)
+
+CONTINUATION_INSTRUCTION = (
+    "上一个回答因长度限制中断或缺少问题。请只从中断处继续回答缺失的问题，"
+    "不要重复已有内容，不要解释，不要改变已有格式。"
+)
+
+
+class BudgetExceeded(RuntimeError):
+    """评测运行超出调用数硬预算。"""
+
+
+def _paper_payload(paper):
+    authors = paper.get("authors") or []
+    if isinstance(authors, list):
+        authors = ", ".join(authors)
+    return {
+        "arxiv_id": paper.get("arxiv_id", ""),
+        "title": paper.get("title", ""),
+        "authors": authors,
+        "abstract": paper.get("abstract", ""),
+        "paper_text": paper.get("full_text", ""),
+    }
+
+
+def _frozen_snapshot(suite, track):
+    return {
+        "deep_reading": suite.get("deep_reading_prompt") or {},
+        "chat": suite.get("paper_chat_prompt") or {},
+    }[track]
+
+
+def _deep_reading_messages(suite, paper):
+    frozen = _frozen_snapshot(suite, "deep_reading")
+    payload = _paper_payload(paper)
+    return [
+        {"role": "system", "content": frozen.get("system", "")},
+        {"role": "user", "content": "冻结论文上下文（JSON，固定字段顺序）：\n" + json.dumps(payload, ensure_ascii=False, indent=2)},
+        {"role": "user", "content": frozen.get("instruction", "")},
+    ]
+
+
+def _chat_messages(suite, paper, questions, history):
+    """system → 稳定任务说明 → 稳定论文上下文 → 动态历史与当前问题。"""
+    frozen = _frozen_snapshot(suite, "chat")
+    payload = _paper_payload(paper)
+    messages = [
+        {"role": "system", "content": frozen.get("system", "")},
+        {"role": "user", "content": frozen.get("instruction", "")},
+        {"role": "user", "content": "冻结论文上下文（JSON，固定字段顺序；后续消息不得改变此前缀）：\n" + json.dumps(payload, ensure_ascii=False, indent=2)},
+    ]
+    for index, answer in enumerate(history):
+        if index >= len(questions):
+            break
+        messages.append({"role": "user", "content": questions[index].get("question", "")})
+        messages.append({"role": "assistant", "content": answer})
+    if len(history) < len(questions):
+        messages.append({"role": "user", "content": questions[len(history)].get("question", "")})
+    return messages
+
+
+def _call(cfg, messages, task_key, paper_ref):
+    content, usage = call_model(cfg, messages, task_key, paper_ref=paper_ref)
+    return content, usage
+
+
+def run_deep_reading(suite, paper, cfg, paper_ref):
+    """深度阅读轨：一次冻结 Prompt 调用 + 最多一次续写；返回 (response, 调用次数)。"""
+    from source.analysis.json_support import _clean_json_content
+
+    messages = _deep_reading_messages(suite, paper)
+    content, usage = _call(cfg, messages, "benchmark_runner_deep_reading", paper_ref)
+    continuation_count = 0
+    finish_reason = usage.get("finish_reason", "")
+
+    def _parse_qa(content):
+        sections = split_qa_sections(_qa_text(content))
+        if sections:
+            return {"q{}".format(number): text for number, text in sections.items()}, "ok"
+        return {}, "format_error"
+
+    def _qa_text(content):
+        try:
+            parsed = json.loads(_clean_json_content(content))
+            return str((parsed or {}).get("qa_analysis", ""))
+        except (TypeError, json.JSONDecodeError):
+            return ""
+
+    parsed, status = _parse_qa(content)
+    if finish_reason in {"length", "max_tokens"} or not parsed:
+        try:
+            continuation, continuation_usage = _call(
+                cfg,
+                messages + [
+                    {"role": "assistant", "content": content},
+                    {"role": "user", "content": CONTINUATION_INSTRUCTION},
+                ],
+                "benchmark_runner_deep_reading",
+                paper_ref,
+            )
+            continuation_count = 1
+            content = (content + "\n\n" + continuation).strip()
+            finish_reason = continuation_usage.get("finish_reason", finish_reason)
+            usage["completion_tokens"] = int(usage.get("completion_tokens", 0) or 0) + int(
+                continuation_usage.get("completion_tokens", 0) or 0
+            )
+            usage["total_tokens"] = int(usage.get("total_tokens", 0) or 0) + int(
+                continuation_usage.get("total_tokens", 0) or 0
+            )
+            parsed, status = _parse_qa(content)
+        except Exception as exc:
+            logger.warning(f"benchmark deep reading continuation failed: {exc}")
+
+    if status == "ok" and not parsed:
+        status = "empty"
+    return {
+        "prompt_snapshot": messages,
+        "raw_output": content,
+        "parsed": parsed,
+        "status": status,
+        "finish_reason": finish_reason,
+        "usage_json": usage,
+        "latency_ms": usage.get("latency_ms", 0),
+        "continuation_count": continuation_count,
+    }, 1 + continuation_count
+
+
+def run_chat_round(suite, paper, cfg, paper_ref, questions, history):
+    """交流轨单轮：用候选自身历史（可来自已保存响应）构造消息并调用一次。"""
+    messages = _chat_messages(suite, paper, questions, history)
+    content, usage = _call(cfg, messages, "benchmark_runner_chat", paper_ref)
+    return {
+        "prompt_snapshot": messages,
+        "raw_output": content,
+        "parsed": {"answer": content},
+        "status": "ok" if content.strip() else "empty",
+        "finish_reason": usage.get("finish_reason", ""),
+        "usage_json": usage,
+        "latency_ms": usage.get("latency_ms", 0),
+        "continuation_count": 0,
+    }, 1

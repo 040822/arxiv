@@ -18,6 +18,8 @@ from source.storage.snapshot import copy_sqlite_snapshot
 from source.settings import store as settings_store
 from source.storage.user_migration import take_generated_admin_password
 
+LATEST_VERSION = migrations.MIGRATIONS[-1][0]
+
 
 class SQLiteSnapshotTests(unittest.TestCase):
     def test_copy_sqlite_snapshot_creates_readable_consistent_database(self):
@@ -95,7 +97,7 @@ class SchemaMigrationTests(unittest.TestCase):
         finally:
             conn.close()
 
-        self.assertEqual(version, 4)
+        self.assertEqual(version, LATEST_VERSION)
         self.assertEqual(admin, ("admin", password_hash, "admin", 1, 1))
 
     def test_v4_preserves_all_legacy_private_records_under_admin(self):
@@ -165,10 +167,8 @@ class SchemaMigrationTests(unittest.TestCase):
             conn.close()
 
         self.assertEqual(versions, [
-            (1, "baseline"),
-            (2, "analysis_unique"),
-            (3, "generic_paper_identity"),
-            (4, "invite_only_users"),
+            (version, name)
+            for version, name, _migration in migrations.MIGRATIONS
         ])
         self.assertTrue({"papers", "analysis", "task_logs", "schema_migrations"} <= tables)
         self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "migration_backups")))
@@ -262,7 +262,7 @@ class SchemaMigrationTests(unittest.TestCase):
             admins = conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'").fetchone()[0]
         finally:
             conn.close()
-        self.assertEqual(version, 4)
+        self.assertEqual(version, LATEST_VERSION)
         self.assertEqual(admins, 1)
         with open(settings_store.SETTINGS_PATH, encoding="utf-8") as handle:
             settings = json.load(handle)
@@ -290,7 +290,7 @@ class SchemaMigrationTests(unittest.TestCase):
             ).fetchone()
         finally:
             conn.close()
-        self.assertEqual(version, 4)
+        self.assertEqual(version, LATEST_VERSION)
         self.assertEqual(admin, ("admin", "admin"))
 
         first = take_generated_admin_password()
@@ -454,7 +454,7 @@ class SchemaMigrationTests(unittest.TestCase):
         finally:
             conn.close()
 
-        self.assertEqual(versions, [(1,), (2,), (3,), (4,)])
+        self.assertEqual(versions, [(v,) for v, _n, _m in migrations.MIGRATIONS])
         self.assertEqual(rows, [
             (canonical_id, '["VLA"]', "first summary", 4, "filled comment", "deep read")
         ])
@@ -626,8 +626,9 @@ class SchemaMigrationTests(unittest.TestCase):
 
         messages = []
         try:
+            next_version = original_migrations[-1][0] + 1
             migrations.MIGRATIONS = original_migrations + (
-                (5, "failing_migration", fail_after_write),
+                (next_version, "failing_migration", fail_after_write),
             )
             for _ in range(5):
                 with self.assertRaises(RuntimeError) as raised:
@@ -648,7 +649,7 @@ class SchemaMigrationTests(unittest.TestCase):
             conn.close()
 
         backups = os.listdir(os.path.join(self.tmp.name, "migration_backups"))
-        self.assertEqual(versions, [(1,), (2,), (3,), (4,)])
+        self.assertEqual(versions, [(v,) for v, _n, _m in migrations.MIGRATIONS])
         self.assertIsNone(rolled_back)
         self.assertEqual(len(backups), 3)
         self.assertTrue(all("快照:" in message for message in messages))
@@ -697,7 +698,8 @@ class SchemaMigrationTests(unittest.TestCase):
         conn = sqlite3.connect(connection.DB_PATH)
         try:
             conn.execute(
-                "INSERT INTO schema_migrations (version, name) VALUES (5, 'future')"
+                "INSERT INTO schema_migrations (version, name) VALUES (?, 'future')",
+                (LATEST_VERSION + 1,),
             )
             conn.commit()
         finally:
