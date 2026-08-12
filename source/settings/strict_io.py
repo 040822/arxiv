@@ -61,4 +61,3 @@ def write_settings_atomic(settings, *, backup_existing=False):
         except FileNotFoundError:
             pass
         raise SettingsPersistenceError(f"无法安全保存 {path}: {exc}") from exc
-

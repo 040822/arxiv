@@ -143,16 +143,18 @@ CREATE TABLE task_log_steps (
 ```sql
 CREATE TABLE paper_chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    paper_id INTEGER NOT NULL,         -- FK -> papers.id (CASCADE DELETE)
-    role TEXT NOT NULL,                -- user/assistant
+    user_id INTEGER NOT NULL,           -- FK -> users.id (CASCADE DELETE)，私有归属
+    paper_id INTEGER NOT NULL,          -- FK -> papers.id (CASCADE DELETE)
+    role TEXT NOT NULL,                 -- user/assistant
     content TEXT NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE paper_quiz_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    paper_id INTEGER NOT NULL,         -- FK -> papers.id (CASCADE DELETE)
-    mode TEXT NOT NULL,                -- quick3/standard6/socratic
+    user_id INTEGER NOT NULL,           -- FK -> users.id (CASCADE DELETE)，私有归属
+    paper_id INTEGER NOT NULL,          -- FK -> papers.id (CASCADE DELETE)
+    mode TEXT NOT NULL,                 -- quick3/standard6/socratic
     status TEXT DEFAULT 'active',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -177,7 +179,7 @@ CREATE TABLE paper_quiz_attempts (
 );
 ```
 
-删除论文时，以上学习记录会随 papers 外键级联删除。
+删除论文时，以上学习记录会随 papers 外键级联删除；删除用户时，其私有学习记录随 users 外键级联删除。
 
 ---
 
