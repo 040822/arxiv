@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script src="/static/auth.js"></script>
     <title>{{ report.report_date }} 报告 - AI 论文数据库</title>
     <link rel="stylesheet" href="/static/css/core.css">
     <link rel="stylesheet" href="/static/css/components.css">
@@ -13,7 +15,9 @@
         <header>
             <div class="header-top">
                 <div></div>
+                {% if is_admin %}
                 <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+                {% endif %}
             </div>
             <h1>🤖 AI 论文数据库</h1>
         </header>
@@ -27,7 +31,7 @@
         <div class="report-header">
             <div class="report-header-top">
                 <h2>📊 {{ report.report_date }} 每日报告</h2>
-                {% if is_authenticated %}
+                {% if is_admin %}
                 <button id="regenerate-report-btn" class="btn btn-primary" onclick="regenerateReport(this)">🔄 重新生成该日报告</button>
                 {% endif %}
             </div>
@@ -36,7 +40,7 @@
                 <span>🔍 {{ report.analyzed_count }} 篇已分析</span>
                 <span>⭐ 平均评级 {{ report.avg_rating }}</span>
             </div>
-            {% if is_authenticated %}<div id="regenerate-report-status" class="action-status"></div>{% endif %}
+            {% if is_admin %}<div id="regenerate-report-status" class="action-status"></div>{% endif %}
         </div>
 
         <div class="report-content">

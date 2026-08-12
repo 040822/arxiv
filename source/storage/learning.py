@@ -15,7 +15,7 @@ from .row_mapping import parse_paper_row
 from source.value_coercion import as_int
 
 
-def add_to_reading_list(paper_id):
+def add_to_reading_list(user_id, paper_id):
     """将论文添加到阅读清单。
     
     参数：
@@ -27,13 +27,13 @@ def add_to_reading_list(paper_id):
     with get_connection() as conn:
         cursor = conn.cursor()
         try:
-            cursor.execute("INSERT INTO reading_list (paper_id) VALUES (?)", (paper_id,))
+            cursor.execute("INSERT INTO reading_list (user_id, paper_id) VALUES (?, ?)", (user_id, paper_id))
             return True
         except Exception:
             return False
 
 
-def remove_from_reading_list(paper_id):
+def remove_from_reading_list(user_id, paper_id):
     """从阅读清单中移除论文。
     
     参数：
@@ -44,13 +44,13 @@ def remove_from_reading_list(paper_id):
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM reading_list WHERE paper_id = ?", (paper_id,))
+        cursor.execute("DELETE FROM reading_list WHERE user_id = ? AND paper_id = ?", (user_id, paper_id))
         affected = cursor.rowcount
 
     return affected > 0
 
 
-def is_in_reading_list(paper_id):
+def is_in_reading_list(user_id, paper_id):
     """检查论文是否在阅读清单中。
     
     参数：
@@ -61,13 +61,13 @@ def is_in_reading_list(paper_id):
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM reading_list WHERE paper_id = ?", (paper_id,))
+        cursor.execute("SELECT 1 FROM reading_list WHERE user_id = ? AND paper_id = ?", (user_id, paper_id))
         exists = cursor.fetchone() is not None
 
     return exists
 
 
-def mark_as_read(paper_id):
+def mark_as_read(user_id, paper_id):
     """将阅读清单中的论文标记为已读。
     
     同时记录完成时间。
@@ -81,15 +81,15 @@ def mark_as_read(paper_id):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE reading_list SET status = 'read', completed_at = ? WHERE paper_id = ?",
-            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), paper_id)
+            "UPDATE reading_list SET status = 'read', completed_at = ? WHERE user_id = ? AND paper_id = ?",
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id, paper_id)
         )
         affected = cursor.rowcount
 
     return affected > 0
 
 
-def mark_as_unread(paper_id):
+def mark_as_unread(user_id, paper_id):
     """将阅读清单中的论文标记为未读。
     
     清除完成时间，重置为未读状态。
@@ -103,15 +103,15 @@ def mark_as_unread(paper_id):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE reading_list SET status = 'unread', completed_at = NULL WHERE paper_id = ?",
-            (paper_id,)
+            "UPDATE reading_list SET status = 'unread', completed_at = NULL WHERE user_id = ? AND paper_id = ?",
+            (user_id, paper_id)
         )
         affected = cursor.rowcount
 
     return affected > 0
 
 
-def get_reading_list(status=None):
+def get_reading_list(user_id, status=None):
     """获取阅读清单，支持按状态筛选。
     
     关联 papers 和 analysis 表，返回完整的论文信息。
@@ -134,9 +134,9 @@ def get_reading_list(status=None):
                 FROM reading_list rl
                 JOIN papers p ON rl.paper_id = p.id
                 LEFT JOIN analysis a ON p.id = a.paper_id
-                WHERE rl.status = ?
+                WHERE rl.user_id = ? AND rl.status = ?
                 ORDER BY rl.added_at DESC
-            """, (status,))
+            """, (user_id, status))
         else:
             # 返回全部：未读优先，同状态按添加时间降序
             cursor.execute("""
@@ -146,17 +146,18 @@ def get_reading_list(status=None):
                 FROM reading_list rl
                 JOIN papers p ON rl.paper_id = p.id
                 LEFT JOIN analysis a ON p.id = a.paper_id
+                WHERE rl.user_id = ?
                 ORDER BY
                     CASE WHEN rl.status = 'unread' THEN 0 ELSE 1 END,
                     rl.added_at DESC
-            """)
+            """, (user_id,))
         rows = cursor.fetchall()
 
 
     return [parse_paper_row(row) for row in rows]
 
 
-def get_reading_list_count():
+def get_reading_list_count(user_id):
     """获取阅读清单的统计数据。
     
     返回：
@@ -168,27 +169,27 @@ def get_reading_list_count():
             SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN status = 'unread' THEN 1 ELSE 0 END) as unread
-            FROM reading_list
-        """)
+            FROM reading_list WHERE user_id = ?
+        """, (user_id,))
         row = cursor.fetchone()
 
     return {"total": row["total"] or 0, "unread": row["unread"] or 0}
 
 
-def add_paper_chat_message(paper_id, role, content):
+def add_paper_chat_message(user_id, paper_id, role, content):
     """保存一条论文自由讨论消息。"""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO paper_chat_messages (paper_id, role, content)
-            VALUES (?, ?, ?)
-        """, (paper_id, str(role or ""), str(content or "")))
+            INSERT INTO paper_chat_messages (user_id, paper_id, role, content)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, paper_id, str(role or ""), str(content or "")))
         message_id = cursor.lastrowid
 
     return message_id
 
 
-def get_paper_chat_messages(paper_id, limit=200):
+def get_paper_chat_messages(user_id, paper_id, limit=200):
     """按时间顺序读取论文自由讨论历史。"""
     limit = max(1, min(1000, as_int(limit) or 200))
     with get_connection() as conn:
@@ -197,39 +198,39 @@ def get_paper_chat_messages(paper_id, limit=200):
             SELECT * FROM (
                 SELECT id, paper_id, role, content, created_at
                 FROM paper_chat_messages
-                WHERE paper_id = ?
+                WHERE user_id = ? AND paper_id = ?
                 ORDER BY id DESC
                 LIMIT ?
             )
             ORDER BY id ASC
-        """, (paper_id, limit))
+        """, (user_id, paper_id, limit))
         rows = cursor.fetchall()
 
     return [dict(row) for row in rows]
 
 
-def create_paper_quiz_session(paper_id, mode):
+def create_paper_quiz_session(user_id, paper_id, mode):
     """创建一轮论文问答或苏格拉底练习会话。"""
     mode = str(mode or "quick3")
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO paper_quiz_sessions (paper_id, mode, status, updated_at)
-            VALUES (?, ?, 'active', CURRENT_TIMESTAMP)
-        """, (paper_id, mode))
+            INSERT INTO paper_quiz_sessions (user_id, paper_id, mode, status, updated_at)
+            VALUES (?, ?, ?, 'active', CURRENT_TIMESTAMP)
+        """, (user_id, paper_id, mode))
         session_id = cursor.lastrowid
 
     return session_id
 
 
-def get_paper_quiz_session(session_id, paper_id=None):
+def get_paper_quiz_session(user_id, session_id, paper_id=None):
     """读取单个练习会话元数据。"""
     with get_connection() as conn:
         cursor = conn.cursor()
         if paper_id is None:
-            cursor.execute("SELECT * FROM paper_quiz_sessions WHERE id = ?", (session_id,))
+            cursor.execute("SELECT * FROM paper_quiz_sessions WHERE id = ? AND user_id = ?", (session_id, user_id))
         else:
-            cursor.execute("SELECT * FROM paper_quiz_sessions WHERE id = ? AND paper_id = ?", (session_id, paper_id))
+            cursor.execute("SELECT * FROM paper_quiz_sessions WHERE id = ? AND user_id = ? AND paper_id = ?", (session_id, user_id, paper_id))
         row = cursor.fetchone()
 
     return dict(row) if row else None
@@ -294,7 +295,7 @@ def add_paper_quiz_attempt(question_id, answer_text, score, feedback):
     return attempt_id
 
 
-def get_paper_quiz_question(question_id, paper_id=None):
+def get_paper_quiz_question(user_id, question_id, paper_id=None):
     """读取单个题目，可选校验所属论文。"""
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -302,9 +303,9 @@ def get_paper_quiz_question(question_id, paper_id=None):
             SELECT q.*, s.paper_id, s.mode, s.status
             FROM paper_quiz_questions q
             JOIN paper_quiz_sessions s ON q.session_id = s.id
-            WHERE q.id = ?
+            WHERE q.id = ? AND s.user_id = ?
         """
-        params = [question_id]
+        params = [question_id, user_id]
         if paper_id is not None:
             query += " AND s.paper_id = ?"
             params.append(paper_id)
@@ -314,9 +315,9 @@ def get_paper_quiz_question(question_id, paper_id=None):
     return dict(row) if row else None
 
 
-def get_paper_quiz_session_detail(session_id, paper_id=None):
+def get_paper_quiz_session_detail(user_id, session_id, paper_id=None):
     """读取练习会话、题目和每题最新一次作答反馈。"""
-    session = get_paper_quiz_session(session_id, paper_id=paper_id)
+    session = get_paper_quiz_session(user_id, session_id, paper_id=paper_id)
     if not session:
         return None
 
@@ -359,7 +360,7 @@ def get_paper_quiz_session_detail(session_id, paper_id=None):
     return session
 
 
-def get_latest_paper_quiz_sessions(paper_id, limit=20):
+def get_latest_paper_quiz_sessions(user_id, paper_id, limit=20):
     """读取某篇论文最近的学习会话列表。"""
     limit = max(1, min(100, as_int(limit) or 20))
     with get_connection() as conn:
@@ -371,11 +372,11 @@ def get_latest_paper_quiz_sessions(paper_id, limit=20):
             FROM paper_quiz_sessions s
             LEFT JOIN paper_quiz_questions q ON s.id = q.session_id
             LEFT JOIN paper_quiz_attempts a ON q.id = a.question_id
-            WHERE s.paper_id = ?
+            WHERE s.user_id = ? AND s.paper_id = ?
             GROUP BY s.id
             ORDER BY s.updated_at DESC, s.id DESC
             LIMIT ?
-        """, (paper_id, limit))
+        """, (user_id, paper_id, limit))
         rows = cursor.fetchall()
 
     return [dict(row) for row in rows]

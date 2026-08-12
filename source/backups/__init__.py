@@ -58,6 +58,13 @@ def create_backup_archive(
             "database_snapshot": True,
             "settings_json": os.path.exists(settings_path),
         },
+        "privacy": {
+            "contains_accounts": True,
+            "contains_private_learning_data": True,
+            "contains_secrets_when_settings_included": os.path.exists(settings_path),
+            "trusted_storage_required": True,
+            "client_side_encryption": False,
+        },
     }
 
     with tempfile.TemporaryDirectory(prefix="sqlite-snapshot-") as tmp:

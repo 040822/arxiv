@@ -12,6 +12,18 @@
     ]
   },
   {
+    "rule": "/account/password",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/account/password",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "rule": "/api/admin/password",
     "methods": [
       "POST"
@@ -21,6 +33,12 @@
     "rule": "/api/analyze",
     "methods": [
       "POST"
+    ]
+  },
+  {
+    "rule": "/api/audit-events",
+    "methods": [
+      "GET"
     ]
   },
   {
@@ -439,6 +457,36 @@
   },
   {
     "rule": "/api/test_proxy",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/users",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/users",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/users/<int:user_id>",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "rule": "/api/users/<int:user_id>/enabled",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/users/<int:user_id>/reset-password",
     "methods": [
       "POST"
     ]

@@ -34,6 +34,7 @@ from source.storage import (
     normalize_search_terms,
     search_papers,
 )
+from .auth import current_user
 from source.storage.row_mapping import parse_paper_row
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,7 @@ def paper_chat_page(arxiv_id):
         return "Paper not found", 404
     paper_data = _prepare_paper_for_view(paper)
     analysis = get_analysis_by_paper_id(paper_data["id"])
-    quiz_sessions = get_latest_paper_quiz_sessions(paper_data["id"], limit=10)
+    quiz_sessions = get_latest_paper_quiz_sessions(current_user()["id"], paper_data["id"], limit=10)
     return render_template(
         "paper_chat.html",
         paper=paper_data,
@@ -356,6 +357,7 @@ def reading_list_page():
     支持按阅读状态筛选（unread/read），显示各状态的论文数量统计。
     """
     status = request.args.get("status", None)
-    papers = get_reading_list(status=status)
-    counts = get_reading_list_count()
+    user_id = current_user()["id"]
+    papers = get_reading_list(user_id, status=status)
+    counts = get_reading_list_count(user_id)
     return render_template("reading_list.html", papers=papers, counts=counts, current_status=status)

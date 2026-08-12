@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import secrets
+import tempfile
 from string import Formatter
 
 from source.config import DB_DIR
@@ -77,7 +78,7 @@ from .thinking import (
 
 
 SETTINGS_PATH = os.path.join(DB_DIR, "settings.json")
-SETTINGS_SCHEMA_VERSION = 3
+SETTINGS_SCHEMA_VERSION = 4
 # Schema v2 already stored explicit provider/model task routes. Keep this
 # milestone separate from the current settings version so upgrading to v3
 # cannot accidentally re-infer those routes from the active provider.
@@ -330,10 +331,32 @@ def get_session_secret():
     优先复用 settings.json 中已保存的密钥；如果旧配置没有该字段，则生成
     一个随机密钥并写回配置文件，保证服务重启后已有登录 cookie 仍可验证。
     """
-    settings = load_settings()
+    # Authentication must fail closed: unlike the general settings loader, this
+    # path must never replace malformed runtime configuration with defaults.
+    if os.path.exists(SETTINGS_PATH):
+        try:
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as handle:
+                settings = json.load(handle)
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"无法安全读取 {SETTINGS_PATH}: {exc}") from exc
+        if not isinstance(settings, dict):
+            raise RuntimeError(f"无法安全读取 {SETTINGS_PATH}: 根节点必须是 JSON 对象")
+    else:
+        settings = json.loads(json.dumps(DEFAULT_SETTINGS))
     secret = settings.get("session_secret", "")
     if not secret:
         secret = secrets.token_hex(32)
         settings["session_secret"] = secret
-        save_settings(settings)
+        _ensure_dir()
+        directory = os.path.dirname(SETTINGS_PATH) or "."
+        fd, temp_path = tempfile.mkstemp(prefix=".settings-", suffix=".json", dir=directory)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(settings, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, SETTINGS_PATH)
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
     return secret

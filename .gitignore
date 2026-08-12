@@ -15,6 +15,7 @@ data/pdf_cache/
 temp/*
 data/*.db-*
 data/migration_backups/*.db
+data/settings-backup/
 output/
 
 # Test tooling artifacts
@@ -22,4 +23,8 @@ output/
 .coverage.*
 coverage.xml
 htmlcov/
+data/.database-migration.lock
 data/.admin-credentials.lock
+
+# Editor/merge leftover files
+*.orig

@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script src="/static/auth.js"></script>
     <title>设置 - AI 论文数据库</title>
     <link rel="stylesheet" href="/static/css/core.css">
     <link rel="stylesheet" href="/static/css/components.css">
@@ -410,7 +412,7 @@
                 <div class="settings-group-body">
                     <div class="settings-section">
                         <h3>☁️ WebDAV 云同步备份</h3>
-                        <p class="section-desc">每天定时任务结束后自动备份数据库快照、<code>settings.json</code> 和 manifest。Web 日报存储在数据库中，会随快照备份。注意：备份包会包含 API Key、管理密码哈希和 session secret 等敏感配置。</p>
+                        <p class="section-desc">每天定时任务结束后自动备份数据库快照、<code>settings.json</code> 和 manifest。归档包含账号、全部私有学习数据、API Key 和 session secret，只应保存到可信 WebDAV 存储。</p>
                         <div class="form-group"><label><input type="checkbox" id="webdav-enabled"> 启用每日自动 WebDAV 备份</label></div>
                         <div class="form-row">
                             <div class="form-group form-grow-2">
@@ -450,8 +452,25 @@
         <!-- ============ Tab 3: 管理 ============ -->
         <div id="tab-admin" class="tab-panel">
             <div class="settings-section">
-                <h3>🔒 管理密码</h3>
-                <p class="section-desc">修改管理密码，保护管理功能和个人学习数据不被未授权访问。</p>
+                <h3>👥 用户管理</h3>
+                <p class="section-desc">邀请成员并管理其账号。临时密码仅在创建或重置响应中显示一次。</p>
+                <div class="form-row">
+                    <div class="form-group"><label>用户名</label><input id="new-member-username" placeholder="researcher-1"></div>
+                    <div class="form-group"><label>显示名称（可选）</label><input id="new-member-display-name"></div>
+                </div>
+                <div class="settings-actions"><button class="btn btn-primary" onclick="createMember()">创建成员</button></div>
+                <div id="member-onetime-password" class="action-status warning" hidden></div>
+                <div id="user-management-status" class="action-status"></div>
+                <div id="user-list" class="provider-list"></div>
+            </div>
+            <div class="settings-section">
+                <h3>🧾 审计日志</h3>
+                <p class="section-desc">记录用户管理和公有论文字段变更，不保存密码、聊天、答案、Prompt、API Key 或深度阅读正文。</p>
+                <div id="audit-list" class="provider-list"></div>
+            </div>
+            <div class="settings-section">
+                <h3>🔒 账号密码</h3>
+                <p class="section-desc">修改当前 admin 账号密码。</p>
                 {% if password_change_recommended %}
                 <div class="action-status warning auth-warning">
                     ⚠️ 当前仍在使用启动日志中生成的初始密码，建议立即修改。
@@ -564,7 +583,7 @@
             document.getElementById('tab-' + name).classList.add('active');
             if (button) button.classList.add('active');
             if (name === 'db') loadDbInfo();
-            if (name === 'admin') loadSystemStatus();
+            if (name === 'admin') { loadSystemStatus(); loadUsers(); loadAuditEvents(); }
             if (name === 'ai') initSidebar();
             if (scheduleRefreshTimer) {
                 clearInterval(scheduleRefreshTimer);
@@ -1877,6 +1896,62 @@
         }
 
         /* ---- Admin ---- */
+        async function loadUsers() {
+            const data = await (await fetch('/api/users')).json();
+            document.getElementById('user-list').innerHTML = (data.users || []).map(user => `
+                <div class="provider-card">
+                    <div><strong>${escapeHtml(user.display_name || user.username)}</strong> <code>${escapeHtml(user.username)}</code>
+                    <div class="field-hint">${escapeHtml(user.role)} · ${user.enabled ? '启用' : '停用'} · 最后登录 ${escapeHtml(user.last_login_at || '从未')}</div>
+                    <div class="field-hint">清单 ${user.reading_count} · 对话 ${user.chat_count} · 练习 ${user.quiz_count} · Tokens ${user.total_tokens}</div></div>
+                    ${user.role === 'member' ? `<div class="provider-actions">
+                        <button class="btn-small" onclick="setMemberEnabled(${user.id}, ${user.enabled ? 'false' : 'true'})">${user.enabled ? '停用' : '启用'}</button>
+                        <button class="btn-small" onclick="resetMemberPassword(${user.id})">重置密码</button>
+                        <button class="btn-small danger" onclick="deleteMember(${user.id}, '${jsString(user.username)}')">删除</button>
+                    </div>` : ''}
+                </div>`).join('');
+        }
+
+        function showTemporaryPassword(username, password) {
+            const box = document.getElementById('member-onetime-password');
+            box.hidden = false;
+            box.innerHTML = `账号 <strong>${escapeHtml(username)}</strong> 的一次性临时密码：<code>${escapeHtml(password)}</code> <button class="btn-small" onclick="navigator.clipboard.writeText('${jsString(password)}')">复制</button>`;
+        }
+
+        async function createMember() {
+            const payload = {username: document.getElementById('new-member-username').value, display_name: document.getElementById('new-member-display-name').value};
+            const resp = await fetch('/api/users', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+            const result = await resp.json();
+            if (!resp.ok) return alert(result.message || '创建失败');
+            showTemporaryPassword(result.user.username, result.temporary_password);
+            loadUsers(); loadAuditEvents();
+        }
+
+        async function setMemberEnabled(id, enabled) {
+            await fetch(`/api/users/${id}/enabled`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled})});
+            loadUsers(); loadAuditEvents();
+        }
+
+        async function resetMemberPassword(id) {
+            const resp = await fetch(`/api/users/${id}/reset-password`, {method: 'POST'});
+            const result = await resp.json();
+            if (resp.ok) showTemporaryPassword('成员', result.temporary_password);
+            loadUsers(); loadAuditEvents();
+        }
+
+        async function deleteMember(id, username) {
+            if (!confirm(`永久删除成员 ${username} 及其全部私有学习数据？`)) return;
+            await fetch(`/api/users/${id}`, {method: 'DELETE'});
+            loadUsers(); loadAuditEvents();
+        }
+
+        async function loadAuditEvents() {
+            const data = await (await fetch('/api/audit-events?per_page=50')).json();
+            document.getElementById('audit-list').innerHTML = (data.events || []).map(event => `
+                <div class="provider-card"><div><strong>${escapeHtml(event.action)}</strong>
+                <div class="field-hint">${escapeHtml(event.actor_username)} · ${escapeHtml(event.target_type)} ${escapeHtml(event.target_id)} · ${escapeHtml(event.created_at)}</div></div></div>
+            `).join('');
+        }
+
         async function saveAdminPassword() {
             const statusEl = document.getElementById('admin-status');
             const current = document.getElementById('admin-current-pwd').value;

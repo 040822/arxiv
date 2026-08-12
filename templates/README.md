@@ -19,9 +19,10 @@
 | `search.html` | `GET /search?q=` | 搜索结果：跨字段命中高亮（`title_highlight`/`search_preview` 由后端预切分） |
 | `paper.html` | `GET /paper/<key>` | 论文详情：元数据、AI 基础分析、深度阅读 Q&A、手动编辑评级/标签/摘要 |
 | `paper_chat.html` | `GET /paper/<key>/chat` | 论文学习页：自由讨论 / 主动问答练习 / 苏格拉底追问三个标签页，正文全部由内嵌 JS 调学习 API 渲染 |
-| `tasks.html` | `GET /tasks` | 论文处理页：抓取、分析、生成报告、完整流水线、两步手动导入（预览→确认）、SSE 进度条 |
-| `settings.html` | `GET /settings` | 设置页（最大，1919 行）：供应商/功能路由、Prompt、个性化推荐、网络/代理、抓取、WebDAV、报告邮件、定时任务、日志管理 |
-| `login.html` | `GET /login` | 管理密码登录页 |
+| `tasks.html` | `GET /tasks` | 成员可见两步手动导入；admin 另见抓取、分析、日报与完整流水线 |
+| `settings.html` | `GET /settings` | 管理员设置页：供应商/功能路由、用户管理、审计、网络、备份、邮件与定时任务 |
+| `login.html` | `GET /login` | 用户名与密码登录页 |
+| `account_password.html` | `GET /account/password` | 首次改密阻断页与普通账号改密页 |
 | `reports.html` | `GET /reports` | 每日报告列表 |
 | `report_detail.html` | `GET /reports/<date>` | 单份日报详情（服务端生成的 HTML 内容） |
 | `reading_list.html` | `GET /reading-list` | 阅读清单：未读/已读筛选与状态统计 |
@@ -32,7 +33,7 @@
 
 - **业务页 CSS** 位于 `/static/css/`：所有业务页加载 `core.css` + `components.css`；首页/浏览/搜索/阅读清单加载 `pages/library.css`；论文详情与学习页再加载 `rich-text.css` 和各自页面 CSS；任务、设置、报告、登录加载对应 `pages/*.css`。`promo.css` 仅供 `about.html`/`vision.html`，第三方资源位于 `vendor/`；
 - **富文本渲染**：论文详情页与学习页中的 Markdown/数学公式必须通过 `static/rich_text.js` 的 `RichText.render()` / `RichText.renderMath()` 渲染，不要在模板里复制清洗逻辑；
-- **认证变量**：`auth.py` 的上下文处理器向所有模板注入 `auth_enabled`、`is_authenticated`、`password_change_recommended`（仅登录后可能为真）、`now`（当前时间）、`_remove_param`/`_build_query`（分页 URL 辅助），模板可直接使用；
+- **认证变量**：上下文处理器注入 `current_user`、`is_authenticated`、`is_admin`、`csrf_token`、`now` 和分页辅助函数；共享 `static/auth.js` 为同源非安全 fetch 添加 CSRF 请求头；
 - **动态页面模式**：`settings.html`/`tasks.html`/`paper_chat.html` 均采用「模板骨架 + 内嵌 JS 调 API」模式，页面逻辑改动优先看对应 Blueprint 的 API 端点与模板内 `<script>` 区块；
 - **进度显示**：耗时操作前端通过 `EventSource('/api/progress/<task_id>')` 订阅 SSE，任务终态（completed/error）后自动断开。
 

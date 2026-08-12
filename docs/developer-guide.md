@@ -153,10 +153,12 @@ CREATE TABLE reports (
 ```sql
 CREATE TABLE reading_list (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    paper_id INTEGER NOT NULL,         -- FK -> papers.id (CASCADE DELETE)
-    status TEXT DEFAULT 'unread',      -- unread/read
+    user_id INTEGER NOT NULL,           -- FK -> users.id (CASCADE DELETE)，私有归属
+    paper_id INTEGER NOT NULL,          -- FK -> papers.id (CASCADE DELETE)
+    status TEXT DEFAULT 'unread',       -- unread/read
     added_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    completed_at TEXT
+    completed_at TEXT,
+    UNIQUE(user_id, paper_id)           -- 每用户每论文唯一
 );
 ```
 
@@ -165,16 +167,18 @@ CREATE TABLE reading_list (
 ```sql
 CREATE TABLE paper_chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    paper_id INTEGER NOT NULL,         -- FK -> papers.id (CASCADE DELETE)
-    role TEXT NOT NULL,                -- user/assistant
+    user_id INTEGER NOT NULL,           -- FK -> users.id (CASCADE DELETE)，私有归属
+    paper_id INTEGER NOT NULL,          -- FK -> papers.id (CASCADE DELETE)
+    role TEXT NOT NULL,                 -- user/assistant
     content TEXT NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE paper_quiz_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    paper_id INTEGER NOT NULL,         -- FK -> papers.id (CASCADE DELETE)
-    mode TEXT NOT NULL,                -- quick3/standard6/socratic
+    user_id INTEGER NOT NULL,           -- FK -> users.id (CASCADE DELETE)，私有归属
+    paper_id INTEGER NOT NULL,          -- FK -> papers.id (CASCADE DELETE)
+    mode TEXT NOT NULL,                 -- quick3/standard6/socratic
     status TEXT DEFAULT 'active',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -199,7 +203,7 @@ CREATE TABLE paper_quiz_attempts (
 );
 ```
 
-删除论文时会级联删除对话消息、练习会话、题目和作答记录。
+删除论文时会级联删除对话消息、练习会话、题目和作答记录；删除用户时，其私有学习记录随 `users` 外键级联删除。
 
 ---
 
@@ -226,7 +230,7 @@ CREATE TABLE paper_quiz_attempts (
 
 | 配置项 | 说明 |
 |--------|------|
-| `settings_schema_version` | 设置结构版本；当前为 3 |
+| `settings_schema_version` | 设置结构版本；当前为 4 |
 | `providers` | 仅保存供应商连接（名称、API Key、Base URL、模型列表缓存） |
 | `ai_tasks` | PDF 元数据提取、基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的供应商/模型/Temperature/输出长度路由 |
 | `prompt_profiles` | 按 AI 功能拆分的稳定 system/instruction prompt |
@@ -240,16 +244,15 @@ CREATE TABLE paper_quiz_attempts (
 | `schedule` | 每日定时任务启用状态和执行时间 |
 | `fetch` | 抓取延迟配置 |
 | `proxy` | 全局代理配置，用于 arXiv、PDF 下载、LLM API 和 SMTP 邮件 |
-| `admin_password` | 管理密码（scrypt；兼容旧 SHA-256 登录升级） |
 | `session_secret` | 内部 Flask session 签名密钥，用于服务重启后保持登录 |
 
 > `source/settings/store.py` 通过递归 deep merge 保留新增顶层字段，不再需要顶层白名单；需要归一化、迁移或密码保留语义的字段仍须显式处理并补测试。
 
 AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成；测试未保存的路由草稿使用 `resolve_ai_task_config()`。OpenAI 兼容客户端统一通过 `source.analysis.get_openai_client()` 创建以复用全局代理并禁用环境变量代理。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要把模型或推理参数写回供应商连接。路由只保留可选 Temperature 控制和输出长度；未启用 Temperature 或使用思考模型时省略该参数，其他采样参数不发送并采用模型默认行为。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
 
-设置管理密码后，写接口和敏感设置读取接口需要登录；管理登录默认通过签名 cookie 持久保存 180 天，修改管理密码后旧登录状态失效。供应商列表接口只能返回脱敏后的 `api_key_masked`。
+账号凭据只保存在 `users` 表。`source.web.auth` 提供 principal、30 天 session 版本校验、三级策略和全站 CSRF；私有存储接口必须显式接收当前 principal 的 `user_id`。供应商列表接口只能返回脱敏后的 `api_key_masked`。
 
-WebDAV 云备份由 `source/backups/` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 manifest 打包上传。Web 日报位于数据库的 `reports` 表中，会随快照备份。`GET /api/settings/webdav-backup` 不得返回明文密码；备份包按需求包含原始 `settings.json`，因此会包含 API Key、管理密码哈希和 session secret。当前 WebDAV 按内网服务处理，不接入全局代理。
+WebDAV 云备份由 `source/backups/` 负责：先通过 SQLite online backup API 生成一致性快照，再将 `papers.db`、`settings.json` 和 manifest 打包上传。归档包含账号及全部私有学习数据、API Key 和 session secret，只能放在可信存储；不提供客户端加密。
 
 报告邮件发送由 `source/reports/email/` 负责：按 `report_date` 读取数据库中的论文轻量分析数据，生成邮件专用摘要 HTML；推荐分高于 `important_score_threshold`（默认 80，0-100）的论文进入重点精读区，其余论文最多展示 `overview_limit`（默认 20，0-50）篇速览，并可按 `site_url` 生成论文详情和完整报告链接。两个阈值均可在设置页「定时任务 → 报告邮件」调整。每日任务会在生成 AI 导读前检查 `last_sent_report_date`，同一日报成功发送后直接跳过；发送失败不会更新该日期，因此仍可重试。手动测试发送允许重复执行，并且不参与自动任务去重。SMTP 发送复用现有 `proxy` 配置；代理启用时通过标准库 socket 发起 HTTP CONNECT 隧道，不引入额外依赖，也不新增邮件专用代理字段。`GET /api/settings/email-report` 不得返回明文 SMTP 密码；POST 密码为空时保留旧密码。自动日报通过 `task_log_steps` 记录邮件/备份结果，附加步骤失败使父日志变为 `warning`；手动测试仍写独立顶级日志。
 

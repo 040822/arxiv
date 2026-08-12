@@ -112,8 +112,7 @@ def main():
             base_url = f"http://127.0.0.1:{port}"
             env = dict(os.environ, VISUAL_PORT=str(port), FLASK_SECRET_KEY="visual-regression")
             code = (
-                "import os; import source.web.auth as auth; "
-                "auth.has_admin_password=lambda: False; "
+                "import os; "
                 "from source.web.application import app; "
                 "app.run(host='127.0.0.1', port=int(os.environ['VISUAL_PORT']), "
                 "use_reloader=False)"

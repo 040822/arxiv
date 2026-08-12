@@ -22,27 +22,28 @@
 |------|------|------|------|
 | `GET /` | GET | index.html | 首页，论文列表 |
 | `GET /paper/<arxiv_id>` | GET | paper.html | 论文详情 |
-| `GET /paper/<arxiv_id>/chat` | GET | paper_chat.html | 单篇论文学习页（对话、问答、苏格拉底追问；设置管理密码后需登录） |
+| `GET /paper/<arxiv_id>/chat` | GET | paper_chat.html | 成员个人学习页（对话、问答、苏格拉底追问） |
 | `GET /search?q=` | GET | search.html | 搜索 |
 | `GET /browse` | GET | browse.html | 分类浏览 |
 | `GET /about` | GET | about.html | 公开项目介绍；首页提供入口 |
 | `GET /vision` | GET | vision.html | 实验室科研情报基础设施愿景；仅直接访问 |
-| `GET /settings` | GET | settings.html | 设置（设置管理密码后需登录） |
-| `GET /tasks` | GET | tasks.html | 论文处理（设置管理密码后需登录） |
+| `GET /settings` | GET | settings.html | admin 设置、用户管理与审计 |
+| `GET /tasks` | GET | tasks.html | 成员可手动导入；admin 另可抓取、批处理和生成日报 |
 | `GET /reports` | GET | reports.html | 报告列表 |
 | `GET /reports/<date>` | GET | report_detail.html | 报告详情 |
 | `GET /reading-list` | GET | reading_list.html | 阅读清单 |
-| `GET /login` | GET | login.html | 管理登录 |
+| `GET /login` | GET | login.html | 用户名与密码登录 |
+| `GET /account/password` | GET | account_password.html | 首次改密/账号改密页 |
 
 ---
 
 ## 认证
 
-应用首次启动或升级时若没有管理密码，会生成随机初始密码并仅在该次启动日志中输出。系统始终失败关闭；`/settings`、`/tasks`、`/reading-list`、`/paper/<arxiv_id>/chat`、所有 `POST/PUT/DELETE` 写接口、学习记录、进度流、设置读取接口和任务日志接口都需要登录。论文、公共分析、日报、`/about` 与 `/vision` 保持公开只读。
+应用首次启动或升级时创建唯一 `admin` 账号，随机临时密码仅在创建账号的进程日志显示一次。访客可读取论文、隐藏论文、公共分析和日报；成员可维护自己的学习数据、修改共享评分/标签、生成深度阅读和导入公开论文；其余管理能力要求 admin。
 
-管理登录默认通过签名 cookie 持久保存 180 天，不需要“记住我”开关。默认使用 `data/settings.json` 内部字段 `session_secret` 作为 Flask session 签名密钥，因此服务重启后仍可保持登录；如果部署环境设置了 `FLASK_SECRET_KEY`，则优先使用该环境变量。修改管理密码后，旧 cookie 会因密码版本 token 不匹配而失效。
+签名 session 保存 `user_id` 与 `session_version`，30 天滑动有效。每次请求校验账号存在、启用且版本一致；改密、管理员重置、停用或删除会撤销旧 session。签名密钥仍来自 `session_secret`（`FLASK_SECRET_KEY` 优先）。
 
-初始随机密码登录后会提示尽快修改，但不强制阻断其他管理功能。登录按来源 IP 限制 15 分钟内 5 次失败；超限返回 HTTP 429 和 `Retry-After`。
+临时密码首次登录后仅允许改密或退出。登录按来源 IP和规范化用户名分别限制 15 分钟内 5 次失败；失败统一返回“用户名或密码错误”。所有非安全方法（包括登录、退出）必须携带 session-backed CSRF token，推荐放在 `X-CSRF-Token`。
 
 ```
 GET  /api/auth/status
@@ -53,7 +54,7 @@ POST /api/auth/logout
 `POST /api/auth/login` Body：
 
 ```json
-{"password": "管理密码"}
+{"username": "admin", "password": "密码", "csrf_token": "也可使用请求头"}
 ```
 
 未登录访问受保护 API 时返回：
@@ -372,7 +373,7 @@ GET /api/reading-list
 
 ## 论文学习 API
 
-学习接口用于单篇论文的自由讨论、主动问答练习和苏格拉底追问。设置管理密码后，这些接口均需要登录。
+学习接口用于单篇论文的自由讨论、主动问答练习和苏格拉底追问，均要求成员身份并只访问当前 principal 的私有记录。
 
 学习功能会优先读取 `data/pdf_cache/<arxiv_id>.pdf`；缓存不存在时才调用 PDF 下载逻辑。PDF 下载或文本提取失败时回退到摘要，不阻断接口。模型请求的消息顺序固定为：`system` → 稳定任务说明 → 稳定论文上下文（标题、作者、摘要、PDF 全文/摘要回退）→ 动态历史/用户输入。
 
@@ -710,19 +711,26 @@ GET /api/db/info
 
 返回：论文总数、已分析数、标签种类、分类数、日期范围、平均评级、数据库文件占用等。数据库大小会合并统计 `papers.db`、`papers.db-wal` 和 `papers.db-shm`，并在 `db_files` 中返回每个文件的明细。
 
-### 管理密码
+### 账号与用户管理
 
 ```
-POST /api/admin/password         # 设置密码
+POST /api/account/password       # 当前账号改密
+POST /api/admin/password         # admin 兼容别名（保留一个版本）
+GET  /api/users                  # admin：用户与私有数据数量汇总
+POST /api/users                  # admin：创建成员，临时密码仅本次返回
+POST /api/users/<id>/enabled     # admin：启停成员
+POST /api/users/<id>/reset-password
+DELETE /api/users/<id>
+GET  /api/audit-events?page=1&per_page=50
 ```
 
 修改密码必须同时传当前密码，新密码至少 12 个字符：
 
 ```json
-{"current_password": "当前管理密码", "new_password": "至少12个字符的新密码"}
+{"current_password": "当前账号密码", "new_password": "至少12个字符的新密码"}
 ```
 
-管理密码保存在 `data/settings.json`，新密码使用 scrypt 慢哈希。忘记密码时在服务器仓库根目录运行 `python scripts/reset_admin_password.py`；脚本会先备份配置，再打印一次新的随机密码。
+密码哈希保存在 `users` 表并使用 scrypt；`settings.json` 不保存账号凭据。忘记 admin 密码时运行 `python scripts/reset_admin_password.py`，脚本直接更新 admin、递增会话版本并打印一次随机临时密码。
 
 ---
 

@@ -101,9 +101,12 @@ class AiUsageAndLearningTests(unittest.TestCase):
                 "updated_date": "2026-01-01",
             })
 
-            add_paper_chat_message(paper_id, "user", "问题")
-            add_paper_chat_message(paper_id, "assistant", "回答")
-            session_id = create_paper_quiz_session(paper_id, "quick3")
+            with get_connection() as conn:
+                admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()[0]
+
+            add_paper_chat_message(admin_id, paper_id, "user", "问题")
+            add_paper_chat_message(admin_id, paper_id, "assistant", "回答")
+            session_id = create_paper_quiz_session(admin_id, paper_id, "quick3")
             question_ids = add_paper_quiz_questions(session_id, [
                 {"question": "Q1?", "expected_points": ["A"]},
                 {"question": "Q2?", "expected_points": ["B"]},
@@ -111,9 +114,9 @@ class AiUsageAndLearningTests(unittest.TestCase):
             add_paper_quiz_attempt(question_ids[0], "我的答案", 4, {"feedback": "不错"})
             add_paper_quiz_attempt(question_ids[0], "第二版答案", 5, {"feedback": "更好"})
 
-            messages = get_paper_chat_messages(paper_id)
-            session = get_paper_quiz_session_detail(session_id, paper_id=paper_id)
-            latest_sessions = get_latest_paper_quiz_sessions(paper_id)
+            messages = get_paper_chat_messages(admin_id, paper_id)
+            session = get_paper_quiz_session_detail(admin_id, session_id, paper_id=paper_id)
+            latest_sessions = get_latest_paper_quiz_sessions(admin_id, paper_id)
 
             delete_paper("2601.00001")
             conn = get_connection()

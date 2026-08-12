@@ -8,22 +8,27 @@ import sqlite3
 import tempfile
 import uuid
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 
 from source.analysis import analyze_paper_basic, analyze_paper_full
 from source.documents import get_paper_pdf_path, remove_paper_pdf_files, store_uploaded_pdf, validate_pdf_file
 from source.imports import PaperImportError, preview_import
 from source.storage import (
     get_analysis_by_paper_id, get_paper_by_key,
-    insert_analysis, insert_paper, update_analysis, update_paper_document,
+    insert_analysis, insert_paper, record_audit_event, update_analysis, update_paper_document,
 )
 from source.storage.row_mapping import parse_paper_row
 from .progress import update_progress
+from .auth import current_user
 
 
 bp = Blueprint("paper_import_api", __name__)
 logger = logging.getLogger(__name__)
 SOURCE_TYPES = {"arxiv", "openreview", "doi", "web", "upload"}
+
+
+def _request_actor():
+    return getattr(g, "current_user", None)
 
 
 def _bool_value(value, default=True):
@@ -175,6 +180,7 @@ def api_confirm_paper_import():
             "pdf_local_path": document_info.get("local_path") if document_info else None,
             "pdf_sha256": document_info.get("sha256") if document_info else None,
             "pdf_size_bytes": document_info.get("size_bytes") if document_info else None,
+            "imported_by_user_id": (_request_actor() or {}).get("id"),
         }
         paper_id = insert_paper(paper_data)
         if not paper_id:
@@ -215,6 +221,11 @@ def api_confirm_paper_import():
             else:
                 warnings.append(f"深度阅读失败：{error}")
         update_progress(task_id, {"current": 3, "total": 3, "status": "completed", "message": "论文导入完成"})
+        if _request_actor():
+            record_audit_event(
+                _request_actor(), "paper.imported", "paper", paper_key,
+                {"source_type": source_type, "run_basic": run_basic, "run_deep": run_deep},
+            )
         return jsonify({
             "status": "ok", "message": "论文已导入", "paper_key": paper_key,
             "detail_url": f"/paper/{paper_key}", "warnings": warnings,
@@ -247,6 +258,8 @@ def api_attach_paper_pdf(paper_key):
         info = store_uploaded_pdf(upload, paper["paper_key"], upload.filename)
         if not update_paper_document(paper["paper_key"], info):
             raise ValueError("论文不存在，PDF 未保存")
+        if _request_actor():
+            record_audit_event(_request_actor(), "paper.pdf_replaced", "paper", paper["paper_key"])
         return jsonify({"status": "ok", "message": "PDF 已保存", "has_local_pdf": True})
     except (ValueError, sqlite3.Error) as exc:
         _restore_attached_pdf(paper, old_payload)

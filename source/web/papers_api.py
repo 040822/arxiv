@@ -1,9 +1,10 @@
 """Flask papers_api routes."""
 
 import logging
+import hashlib
 
 from flask import (
-    Blueprint, Response, current_app, jsonify, redirect, render_template,
+    Blueprint, Response, current_app, g, jsonify, redirect, render_template,
     request, session, url_for,
 )
 from source.analysis import analyze_paper_basic, analyze_paper_full, analyze_papers
@@ -15,9 +16,9 @@ from source.settings import (
 )
 from source.storage import (
     add_to_reading_list,
-    batch_delete_papers,
+    batch_delete_papers_protected,
     batch_hide_papers,
-    delete_paper,
+    delete_paper_protected,
     get_all_tags,
     get_analysis_by_paper_id,
     get_analyzed_count,
@@ -35,16 +36,24 @@ from source.storage import (
     mark_as_read,
     mark_as_unread,
     remove_from_reading_list,
+    record_audit_event,
     unhide_paper,
     update_analysis,
 )
 from source.storage.row_mapping import parse_paper_row
 from .progress import update_progress
+from .auth import current_user, is_admin
 
 logger = logging.getLogger(__name__)
 
 
 bp = Blueprint("papers_api", __name__)
+
+
+def _audit(action, target_id, metadata=None):
+    actor = getattr(g, "current_user", None)
+    if actor:
+        record_audit_event(actor, action, "paper", target_id, metadata)
 
 
 def _has_basic_analysis(analysis):
@@ -105,7 +114,31 @@ def api_update_paper_analysis(arxiv_id):
         if not data:
             return jsonify({"status": "error", "message": "无效的请求数据"}), 400
 
+        if not is_admin() and set(data) - {"rating", "tags"}:
+            return jsonify({"status": "error", "message": "成员只能修改评分和标签"}), 403
+
+        before = get_analysis_by_paper_id(paper["id"]) or {}
         update_analysis(paper["id"], data)
+        metadata = {
+            "fields": sorted(data),
+            "before_rating": before.get("rating"),
+            "after_rating": data.get("rating", before.get("rating")),
+            "before_tags": before.get("tags", []),
+            "after_tags": data.get("tags", before.get("tags", [])),
+        }
+        for field, label in (
+            ("summary_cn", "summary"),
+            ("value_comment", "comment"),
+            ("qa_analysis", "deep_reading"),
+        ):
+            if field in data:
+                old_text = str(before.get(field) or "")
+                new_text = str(data.get(field) or "")
+                metadata[f"before_{label}_sha256"] = hashlib.sha256(old_text.encode()).hexdigest()[:12]
+                metadata[f"after_{label}_sha256"] = hashlib.sha256(new_text.encode()).hexdigest()[:12]
+                metadata[f"before_{label}_length"] = len(old_text)
+                metadata[f"after_{label}_length"] = len(new_text)
+        _audit("paper.analysis_updated", paper["paper_key"], metadata)
         return jsonify({"status": "ok", "message": "已更新"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -116,6 +149,7 @@ def api_hide_paper(arxiv_id):
     """隐藏论文（在列表中默认不显示）"""
     try:
         if hide_paper(arxiv_id):
+            _audit("paper.hidden", arxiv_id)
             return jsonify({"status": "ok", "message": "论文已隐藏"})
         return jsonify({"status": "error", "message": "操作失败"}), 400
     except Exception as e:
@@ -127,6 +161,7 @@ def api_unhide_paper(arxiv_id):
     """取消论文隐藏"""
     try:
         if unhide_paper(arxiv_id):
+            _audit("paper.unhidden", arxiv_id)
             return jsonify({"status": "ok", "message": "论文已取消隐藏"})
         return jsonify({"status": "error", "message": "操作失败"}), 400
     except Exception as e:
@@ -137,9 +172,20 @@ def api_unhide_paper(arxiv_id):
 def api_delete_paper(arxiv_id):
     """删除论文及其关联的分析数据（CASCADE 删除）"""
     try:
-        paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
-        if delete_paper(arxiv_id):
-            remove_paper_pdf_files(paper or {})
+        force = str(request.args.get("force", "")).lower() in {"1", "true", "yes"}
+        result = delete_paper_protected(arxiv_id, force=force)
+        impact = result.get("impact") or {}
+        if result.get("conflict"):
+            return jsonify({
+                "status": "error", "message": "论文存在私有学习记录，需显式强制删除",
+                "private_impact": impact, "force_required": True,
+            }), 409
+        if result.get("deleted"):
+            remove_paper_pdf_files(result.get("paper") or {})
+            _audit(
+                "paper.deleted", arxiv_id,
+                {"forced": force, "private_record_count": impact.get("total", 0)},
+            )
             return jsonify({"status": "ok", "message": "论文已删除"})
         return jsonify({"status": "error", "message": "删除失败"}), 400
     except Exception as e:
@@ -154,11 +200,19 @@ def api_batch_delete_papers():
         arxiv_ids = data.get("paper_keys") or data.get("arxiv_ids", [])
         if not arxiv_ids:
             return jsonify({"status": "error", "message": "未选择论文"}), 400
-        paper_files = [get_paper_by_key(key) for key in arxiv_ids]
-        deleted = batch_delete_papers(arxiv_ids)
-        for paper in paper_files:
-            remove_paper_pdf_files(paper or {})
-        return jsonify({"status": "ok", "message": f"已删除 {deleted} 篇论文", "deleted": deleted})
+        result = batch_delete_papers_protected(arxiv_ids)
+        deleted = result["deleted"]
+        skipped = result["skipped"]
+        for paper in result["papers"]:
+            remove_paper_pdf_files(paper)
+        _audit(
+            "paper.batch_deleted", "batch",
+            {"deleted": deleted, "skipped": skipped},
+        )
+        return jsonify({
+            "status": "ok", "message": f"已删除 {deleted} 篇论文，跳过 {len(skipped)} 篇",
+            "deleted": deleted, "skipped": skipped,
+        })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -172,6 +226,7 @@ def api_batch_hide_papers():
         if not arxiv_ids:
             return jsonify({"status": "error", "message": "未选择论文"}), 400
         hidden = batch_hide_papers(arxiv_ids)
+        _audit("paper.batch_hidden", "batch", {"paper_keys": arxiv_ids, "hidden": hidden})
         return jsonify({"status": "ok", "message": f"已隐藏 {hidden} 篇论文", "hidden": hidden})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -217,7 +272,12 @@ def api_reanalyze_paper(arxiv_id):
                     "continuation_used": bool(result.get("continuation_used")),
                     "finish_reason": result.get("finish_reason", ""),
                 })
+            previous = get_analysis_by_paper_id(paper["id"]) or {}
             update_analysis(paper["id"], {"qa_analysis": result.get("qa_analysis", "")})
+            _audit(
+                "paper.deep_reading_generated", paper.get("paper_key") or arxiv_id,
+                {"replaced_existing": bool(previous.get("qa_analysis"))},
+            )
             message = "深度阅读生成完成"
             if result.get("continuation_used"):
                 message += "（已自动续写补全）"
@@ -256,10 +316,15 @@ def api_add_paper():
         update_progress(task_id, {"current": 0, "total": 3, "status": "running", "message": f"正在获取论文 {arxiv_id}..."})
 
         # 从 arXiv 获取论文元数据
-        paper_data = fetch_paper_by_id(arxiv_id)
+        existing_paper = get_paper_by_arxiv_id(arxiv_id)
+        paper_data = fetch_paper_by_id(
+            arxiv_id, imported_by_user_id=current_user()["id"]
+        )
         if not paper_data:
             update_progress(task_id, {"status": "error", "message": "论文获取失败"})
             return jsonify({"status": "error", "message": "论文获取失败，请检查编号是否正确"}), 404
+        if not existing_paper:
+            _audit("paper.imported", paper_data.get("paper_key") or arxiv_id, {"source_type": "arxiv"})
 
         # 检查论文是否已有完整基础分析；仅有星级但缺少标签/摘要/简评时继续补齐。
         already_analyzed = get_analysis_by_paper_id(paper_data.get("id"))
@@ -317,6 +382,10 @@ def api_add_paper():
                     "finish_reason": deep_result.get("finish_reason", ""),
                 })
             update_analysis(paper_data["id"], {"qa_analysis": deep_result.get("qa_analysis", "")})
+            _audit(
+                "paper.deep_reading_generated", paper_data.get("paper_key") or arxiv_id,
+                {"replaced_existing": bool(already_analyzed and already_analyzed.get("qa_analysis"))},
+            )
             update_progress(task_id, {"current": 3, "total": 3, "status": "completed", "message": "添加、基础分析和深度阅读完成"})
             return jsonify({
                 "status": "ok",
@@ -345,9 +414,10 @@ def api_add_todo(arxiv_id):
     paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
     if not paper:
         return jsonify({"status": "error", "message": "论文不存在"}), 404
-    if is_in_reading_list(paper["id"]):
+    user_id = current_user()["id"]
+    if is_in_reading_list(user_id, paper["id"]):
         return jsonify({"status": "ok", "message": "已在阅读清单中"})
-    if add_to_reading_list(paper["id"]):
+    if add_to_reading_list(user_id, paper["id"]):
         return jsonify({"status": "ok", "message": "已加入阅读清单"})
     return jsonify({"status": "error", "message": "添加失败"}), 500
 
@@ -360,7 +430,7 @@ def api_todo_status(arxiv_id):
         return jsonify({"status": "error", "message": "论文不存在"}), 404
     return jsonify({
         "status": "ok",
-        "in_reading_list": is_in_reading_list(paper["id"]),
+        "in_reading_list": is_in_reading_list(current_user()["id"], paper["id"]),
     })
 
 
@@ -370,7 +440,7 @@ def api_remove_todo(arxiv_id):
     paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
     if not paper:
         return jsonify({"status": "error", "message": "论文不存在"}), 404
-    if remove_from_reading_list(paper["id"]):
+    if remove_from_reading_list(current_user()["id"], paper["id"]):
         return jsonify({"status": "ok", "message": "已从阅读清单移除"})
     return jsonify({"status": "error", "message": "移除失败"}), 500
 
@@ -381,7 +451,7 @@ def api_mark_read(arxiv_id):
     paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
     if not paper:
         return jsonify({"status": "error", "message": "论文不存在"}), 404
-    if mark_as_read(paper["id"]):
+    if mark_as_read(current_user()["id"], paper["id"]):
         return jsonify({"status": "ok", "message": "已标记为已读"})
     return jsonify({"status": "error", "message": "操作失败"}), 500
 
@@ -392,7 +462,7 @@ def api_mark_unread(arxiv_id):
     paper = get_paper_by_arxiv_id(arxiv_id) or get_paper_by_key(arxiv_id)
     if not paper:
         return jsonify({"status": "error", "message": "论文不存在"}), 404
-    if mark_as_unread(paper["id"]):
+    if mark_as_unread(current_user()["id"], paper["id"]):
         return jsonify({"status": "ok", "message": "已标记为未读"})
     return jsonify({"status": "error", "message": "操作失败"}), 500
 
@@ -401,6 +471,7 @@ def api_mark_unread(arxiv_id):
 def api_reading_list():
     """获取阅读清单 JSON 接口：支持按状态筛选，返回论文列表和各状态数量"""
     status = request.args.get("status", None)
-    papers = get_reading_list(status=status)
-    counts = get_reading_list_count()
+    user_id = current_user()["id"]
+    papers = get_reading_list(user_id, status=status)
+    counts = get_reading_list_count(user_id)
     return jsonify({"papers": papers, "counts": counts})

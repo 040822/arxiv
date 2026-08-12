@@ -1,7 +1,10 @@
 """Web 服务唯一根入口。
 
-模块级 `app` 是已装配的 Flask 实例，供测试与 WSGI（如 `gunicorn app:app`）直接导入；
-`main()` 负责启动前初始化（数据库、任务日志中断标记、调度器）并运行开发服务器。
+模块级 `app` 是已装配的 Flask 实例（仅注册 Blueprint 与签名密钥），供测试导入；
+生产部署请使用工厂启动完整运行时，例如单进程 `gunicorn 'app:create_app()'`：
+`create_app()` 会初始化数据库、标记中断的任务日志并启动 APScheduler。
+注意调度器是进程内单实例（`pipeline_lock` 非阻塞互斥），多进程部署时只应让一个
+worker 执行定时任务，否则会发生抓取/日报竞争；数据库迁移本身由跨进程 flock 保护。
 """
 
 import logging

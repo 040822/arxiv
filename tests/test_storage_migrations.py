@@ -1,5 +1,8 @@
+import json
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -12,6 +15,8 @@ from source.storage import (
     init_db, insert_analysis, insert_paper, update_analysis,
 )
 from source.storage.snapshot import copy_sqlite_snapshot
+from source.settings import store as settings_store
+from source.storage.user_migration import take_generated_admin_password
 
 
 class SQLiteSnapshotTests(unittest.TestCase):
@@ -58,11 +63,89 @@ class SchemaMigrationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.original_db_path = connection.DB_PATH
+        self.original_settings_path = settings_store.SETTINGS_PATH
         connection.DB_PATH = os.path.join(self.tmp.name, "papers.db")
+        settings_store.SETTINGS_PATH = os.path.join(self.tmp.name, "settings.json")
 
     def tearDown(self):
         connection.DB_PATH = self.original_db_path
+        settings_store.SETTINGS_PATH = self.original_settings_path
         self.tmp.cleanup()
+
+    def test_version_four_migrates_legacy_admin_credential_into_user_account(self):
+        password_hash = "scrypt:32768:8:1$legacy$safe-hash"
+        with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as handle:
+            json.dump({
+                "settings_schema_version": 3,
+                "admin_password": password_hash,
+                "admin_password_change_recommended": True,
+            }, handle)
+
+        init_db()
+
+        conn = sqlite3.connect(connection.DB_PATH)
+        try:
+            admin = conn.execute(
+                "SELECT username, password_hash, role, enabled, must_change_password "
+                "FROM users WHERE username = 'admin'"
+            ).fetchone()
+            version = conn.execute(
+                "SELECT MAX(version) FROM schema_migrations"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        self.assertEqual(version, 4)
+        self.assertEqual(admin, ("admin", password_hash, "admin", 1, 1))
+
+    def test_v4_preserves_all_legacy_private_records_under_admin(self):
+        with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as handle:
+            json.dump({"settings_schema_version": 3, "admin_password": "legacy-hash"}, handle)
+        with connection.get_connection() as conn:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("PRAGMA legacy_alter_table=ON")
+            conn.execute("""CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+                applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""")
+            for version, name, migration in migrations.MIGRATIONS[:3]:
+                migration(conn)
+                conn.execute("INSERT INTO schema_migrations (version, name) VALUES (?, ?)", (version, name))
+            paper_id = conn.execute("""
+                INSERT INTO papers (paper_key, arxiv_id, source_type, source_id, ingest_mode,
+                    title, authors, abstract, categories)
+                VALUES ('legacy-manual', NULL, 'upload', 'legacy', 'manual',
+                    'Legacy', '[]', 'Abstract', '[]')
+            """).lastrowid
+            conn.execute("INSERT INTO reading_list (paper_id) VALUES (?)", (paper_id,))
+            conn.execute(
+                "INSERT INTO paper_chat_messages (paper_id, role, content) VALUES (?, 'user', 'private')",
+                (paper_id,),
+            )
+            session_id = conn.execute(
+                "INSERT INTO paper_quiz_sessions (paper_id, mode) VALUES (?, 'quick3')",
+                (paper_id,),
+            ).lastrowid
+            question_id = conn.execute(
+                "INSERT INTO paper_quiz_questions (session_id, position, question) VALUES (?, 1, 'Q')",
+                (session_id,),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO paper_quiz_attempts (question_id, answer_text) VALUES (?, 'A')",
+                (question_id,),
+            )
+
+        init_db()
+        with connection.get_connection() as conn:
+            admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()[0]
+            self.assertEqual(conn.execute("SELECT user_id FROM reading_list").fetchone()[0], admin_id)
+            self.assertEqual(conn.execute("SELECT user_id FROM paper_chat_messages").fetchone()[0], admin_id)
+            self.assertEqual(conn.execute("SELECT user_id FROM paper_quiz_sessions").fetchone()[0], admin_id)
+            self.assertEqual(conn.execute("SELECT imported_by_user_id FROM papers WHERE id = ?", (paper_id,)).fetchone()[0], admin_id)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM paper_quiz_questions").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM paper_quiz_attempts").fetchone()[0], 1)
+            self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+
 
     def test_empty_database_migrates_to_latest_version_without_snapshot(self):
         init_db()
@@ -85,9 +168,173 @@ class SchemaMigrationTests(unittest.TestCase):
             (1, "baseline"),
             (2, "analysis_unique"),
             (3, "generic_paper_identity"),
+            (4, "invite_only_users"),
         ])
         self.assertTrue({"papers", "analysis", "task_logs", "schema_migrations"} <= tables)
         self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "migration_backups")))
+
+    def test_corrupt_settings_aborts_v4_without_overwriting_config(self):
+        original = b'{"broken":'
+        with open(settings_store.SETTINGS_PATH, "wb") as handle:
+            handle.write(original)
+        with self.assertRaises(migrations.MigrationError):
+            init_db()
+        with open(settings_store.SETTINGS_PATH, "rb") as handle:
+            self.assertEqual(handle.read(), original)
+        conn = sqlite3.connect(connection.DB_PATH)
+        try:
+            users_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+            ).fetchone()
+            versions = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertIsNone(users_table)
+        self.assertEqual(versions, 3)
+
+    def test_concurrent_bootstrap_is_idempotent_and_password_is_returned_once(self):
+        take_generated_admin_password()
+        errors = []
+        barrier = threading.Barrier(4)
+
+        def migrate():
+            try:
+                barrier.wait(timeout=5)
+                init_db()
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=migrate) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+        self.assertEqual(errors, [])
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertIsNotNone(take_generated_admin_password())
+        self.assertIsNone(take_generated_admin_password())
+        init_db()
+        with connection.get_connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'").fetchone()[0], 1)
+
+    def test_multiprocess_bootstrap_migrates_once_and_yields_password_once(self):
+        """Independent processes sharing one DB/settings must serialize via flock."""
+        take_generated_admin_password()
+        with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as handle:
+            json.dump({"settings_schema_version": 3, "session_secret": "kept"}, handle)
+
+        script = (
+            "import sys;"
+            "from source.storage import connection;"
+            "from source.settings import store as settings_store;"
+            "connection.DB_PATH = sys.argv[1];"
+            "settings_store.SETTINGS_PATH = sys.argv[2];"
+            "from source.storage import init_db;"
+            "from source.storage.user_migration import take_generated_admin_password;"
+            "init_db();"
+            "print('PASSWORD' if take_generated_admin_password() else 'NONE')"
+        )
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        procs = [
+            subprocess.Popen(
+                [sys.executable, "-c", script, connection.DB_PATH, settings_store.SETTINGS_PATH],
+                cwd=repo_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for _ in range(4)
+        ]
+        results = []
+        for proc in procs:
+            stdout, stderr = proc.communicate(timeout=60)
+            results.append((proc.returncode, stdout.strip(), stderr))
+
+        self.assertTrue(os.path.exists(os.path.join(self.tmp.name, ".database-migration.lock")))
+        for returncode, stdout, stderr in results:
+            self.assertEqual(returncode, 0, f"child failed: {stderr}")
+            self.assertIn(stdout, {"PASSWORD", "NONE"}, f"unexpected child output: {stderr}")
+        self.assertEqual(sum(1 for _, stdout, _ in results if stdout == "PASSWORD"), 1)
+
+        conn = sqlite3.connect(connection.DB_PATH)
+        try:
+            version = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+            admins = conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(version, 4)
+        self.assertEqual(admins, 1)
+        with open(settings_store.SETTINGS_PATH, encoding="utf-8") as handle:
+            settings = json.load(handle)
+        self.assertEqual(settings["settings_schema_version"], 4)
+        self.assertNotIn("admin_password", settings)
+
+    def test_settings_finalization_failure_keeps_committed_v4_and_yields_password_once(self):
+        take_generated_admin_password()
+        with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as handle:
+            json.dump({"settings_schema_version": 3, "session_secret": "kept"}, handle)
+        original_settings = open(settings_store.SETTINGS_PATH, "rb").read()
+
+        with patch(
+            "source.storage.migrations.finalize_legacy_admin_settings",
+            side_effect=RuntimeError("injected finalization failure"),
+        ):
+            with self.assertRaises(RuntimeError):
+                init_db()
+
+        conn = sqlite3.connect(connection.DB_PATH)
+        try:
+            version = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+            admin = conn.execute(
+                "SELECT username, role FROM users WHERE username = 'admin'"
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(version, 4)
+        self.assertEqual(admin, ("admin", "admin"))
+
+        first = take_generated_admin_password()
+        second = take_generated_admin_password()
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+        with open(settings_store.SETTINGS_PATH, "rb") as handle:
+            self.assertEqual(handle.read(), original_settings)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "settings-backup")))
+
+    def test_rolled_back_v4_never_yields_uncommitted_password(self):
+        take_generated_admin_password()
+        with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as handle:
+            json.dump({"settings_schema_version": 3}, handle)
+
+        original = migrations.MIGRATIONS
+
+        def fail_after_write(conn):
+            for version, name, migration in original:
+                if version == 4:
+                    migration(conn)
+            raise RuntimeError("injected failure after v4 work")
+
+        try:
+            migrations.MIGRATIONS = original[:3] + (
+                (4, "invite_only_users", fail_after_write),
+            )
+            with self.assertRaises(migrations.MigrationError):
+                init_db()
+        finally:
+            migrations.MIGRATIONS = original
+
+        conn = sqlite3.connect(connection.DB_PATH)
+        try:
+            version = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+            users_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(version, 3)
+        self.assertIsNone(users_table)
+        self.assertIsNone(take_generated_admin_password())
+
 
 
     def test_existing_version_zero_database_is_backed_up_and_preserved(self):
@@ -207,7 +454,7 @@ class SchemaMigrationTests(unittest.TestCase):
         finally:
             conn.close()
 
-        self.assertEqual(versions, [(1,), (2,), (3,)])
+        self.assertEqual(versions, [(1,), (2,), (3,), (4,)])
         self.assertEqual(rows, [
             (canonical_id, '["VLA"]', "first summary", 4, "filled comment", "deep read")
         ])
@@ -226,7 +473,9 @@ class SchemaMigrationTests(unittest.TestCase):
             "published_date": "2026-07-24",
             "updated_date": "2026-07-24",
         })
-        add_paper_chat_message(paper_id, "user", "hello")
+        with connection.get_connection() as db:
+            admin_id = db.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()[0]
+        add_paper_chat_message(admin_id, paper_id, "user", "hello")
 
         conn = sqlite3.connect(connection.DB_PATH)
         try:
@@ -378,7 +627,7 @@ class SchemaMigrationTests(unittest.TestCase):
         messages = []
         try:
             migrations.MIGRATIONS = original_migrations + (
-                (4, "failing_migration", fail_after_write),
+                (5, "failing_migration", fail_after_write),
             )
             for _ in range(5):
                 with self.assertRaises(RuntimeError) as raised:
@@ -399,7 +648,7 @@ class SchemaMigrationTests(unittest.TestCase):
             conn.close()
 
         backups = os.listdir(os.path.join(self.tmp.name, "migration_backups"))
-        self.assertEqual(versions, [(1,), (2,), (3,)])
+        self.assertEqual(versions, [(1,), (2,), (3,), (4,)])
         self.assertIsNone(rolled_back)
         self.assertEqual(len(backups), 3)
         self.assertTrue(all("快照:" in message for message in messages))
@@ -448,7 +697,7 @@ class SchemaMigrationTests(unittest.TestCase):
         conn = sqlite3.connect(connection.DB_PATH)
         try:
             conn.execute(
-                "INSERT INTO schema_migrations (version, name) VALUES (4, 'future')"
+                "INSERT INTO schema_migrations (version, name) VALUES (5, 'future')"
             )
             conn.commit()
         finally:

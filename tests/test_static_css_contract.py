@@ -24,6 +24,7 @@ EXPECTED = {
     "settings.html": [*BASE, "/static/css/pages/settings.css"],
     "reports.html": [*BASE, "/static/css/pages/reports.css"],
     "report_detail.html": [*BASE, "/static/css/pages/reports.css"],
+    "account_password.html": [*BASE, "/static/css/pages/auth.css"],
     "login.html": [*BASE, "/static/css/pages/auth.css"],
 }
 

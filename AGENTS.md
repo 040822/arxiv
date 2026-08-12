@@ -181,6 +181,18 @@ CREATE TABLE paper_quiz_attempts (
 
 ---
 
+### users、audit_events 与私有归属（v4）
+
+- `users` 保存小写唯一用户名、显示名、scrypt 哈希、member/admin 角色、启用状态、首次改密标记、session_version 和登录/创建/更新时间；唯一 admin 由索引、触发器与服务层共同保护，不可删除、停用、改名或降级。
+- `audit_events` 保存 actor id、用户名快照、动作、目标、脱敏 JSON 元数据和时间；删除用户后保留事件及用户名快照。
+- `reading_list` 唯一键为 `(user_id, paper_id)`；`paper_chat_messages` 和 `paper_quiz_sessions` 直接带 user_id，题目和作答通过 session 归属。
+- `papers.imported_by_user_id` 可空，用户删除时置空；feed 论文及历史系统任务为空。
+- `ai_usage_logs.user_id` 可空，定时任务/历史记录视为系统调用。
+- 删除成员级联清理其私有学习数据；停用只递增会话版本，不删除数据。
+- 删除含私有学习记录的论文默认返回 409 及影响统计，只有 admin 显式 `force=true` 才级联；批量删除跳过并报告。
+
+公有论文数据（论文、分析、评分、标签、深度阅读、报告、全局推荐）同成员私有学习数据共用 SQLite，通过表归属和授权逻辑隔离，以保留外键、事务与原子备份。完整术语见 `CONTEXT.md`，决策见 `docs/adr/`。
+
 ## 4. 核心数据流
 
 ### 4.1 论文抓取流程
@@ -284,10 +296,8 @@ APScheduler cron(day_of_week, hour, minute)
 ### 5.2 data/settings.json（运行时，Web界面可改）
 ```json
 {
-  "settings_schema_version": 3,
+  "settings_schema_version": 4,
   "concurrency": 5,
-  "admin_password": "scrypt:...",
-  "admin_password_change_recommended": false,
   "session_secret": "随机生成的 Flask session 签名密钥",
   "personalization": {"research_interests": "用户研究兴趣"},
   "webdav_backup": {
@@ -374,7 +384,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `get_webdav_backup_config()` / `save_webdav_backup_config()` — WebDAV 云备份配置；GET 给前端时必须脱敏密码
 - `get_email_report_config()` / `save_email_report_config()` / `update_email_report_status()` — 每日报告邮件配置，含 `important_score_threshold`（重点精读推荐分阈值，默认 80，0-100）与 `overview_limit`（速览上限，默认 20，0-50）；GET 给前端时必须脱敏 SMTP 密码；`last_sent_report_date` 只记录自动任务成功发送的日报日期
 - `add/remove/update_provider()` — 供应商连接 CRUD；被功能路由引用时禁止删除
-- `ensure/get/set/verify/has/reset_admin_password()` — 管理密码初始化、scrypt/旧 SHA-256 兼容验证、修改与本机重置
+- 账号凭据由 `source.storage.users` 管理；`authenticate_user/create_member/change_password/reset_member_password/set_member_enabled/delete_member` 不再通过 settings 保存密码
 - `get_session_secret()` — 获取/生成持久 Flask session 签名密钥
 
 > **配置合并：** `source/settings/store.py` 使用递归 deep merge；新增普通顶层字段无需维护白名单。需要归一化、迁移或秘密保留语义的字段，仍应在 normalize/store 中显式处理并补回归测试。
@@ -394,7 +404,7 @@ APScheduler cron(day_of_week, hour, minute)
 | `GET /about` | 公开项目宣传页（首页提供入口） |
 | `GET /vision` | 实验室科研情报基础设施愿景页（仅直接访问） |
 | `GET /settings` | 设置页（含独立定时任务标签） |
-| `GET /tasks` | 论文处理页 |
+| `GET /tasks` | 成员手动导入页；admin 另见抓取、批处理与日报 |
 
 ### 任务 API
 | 端点 | 方法 | 说明 |
@@ -434,10 +444,10 @@ APScheduler cron(day_of_week, hour, minute)
 ### 设置 API
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `/login` | GET | 管理登录页 |
-| `/api/auth/status` | GET | 当前认证状态 |
-| `/api/auth/login` | POST | 管理密码登录 |
-| `/api/auth/logout` | POST | 退出登录 |
+| `/login` | GET | 用户名/密码登录页 |
+| `/api/auth/status` | GET | 当前 principal、角色、首次改密状态和 CSRF token |
+| `/api/auth/login` | POST | 用户名、密码登录（含 CSRF） |
+| `/api/auth/logout` | POST | 退出登录（含 CSRF） |
 | `/api/providers` | GET/POST | 供应商列表/添加 |
 | `/api/providers/<key>` | PUT/DELETE | 更新/删除供应商 |
 | `/api/providers/presets` | GET | 预设供应商列表 |
@@ -455,7 +465,14 @@ APScheduler cron(day_of_week, hour, minute)
 | `/api/settings/concurrency` | POST | 保存并发数 |
 | `/api/settings/schedule` | GET/POST | 读取/保存内置日报的星期、时间、抓取天数、分析上限和抓取失败重试策略 |
 | `/api/db/info` | GET | 数据库信息 |
-| `/api/admin/password` | POST | 验证当前密码后修改密码 |
+| `/api/account/password` | POST | 当前用户修改密码 |
+| `/api/admin/password` | POST | admin 改密兼容别名（保留一个版本） |
+| `/api/users` | GET/POST | admin 查看数量汇总/邀请创建成员 |
+| `/api/users/<id>/enabled` | POST | admin 启停成员 |
+| `/api/users/<id>/reset-password` | POST | admin 重置成员临时密码 |
+| `/api/users/<id>` | DELETE | admin 永久删除成员及其私有数据 |
+| `/api/audit-events` | GET | admin 分页读取脱敏审计 |
+| `/account/password` | GET | 首次改密阻断页 |
 
 ### 任务日志 API
 | 端点 | 方法 | 说明 |
@@ -499,7 +516,7 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 
 调用模型时必须通过 `build_chat_completion_kwargs()` 构建参数，不要在业务代码中直接固定传 `temperature` 或 `max_tokens`；保持可选参数的省略语义，让模型在未配置采样控制时使用自身默认值。
 
-首次启动或升级发现未设置管理密码时，会生成高强度随机密码并仅在该次启动日志输出；缺少有效凭据时鉴权失败关闭。`/settings`、`/tasks`、阅读清单、学习记录、进度流、所有写接口和敏感设置读取接口都需要登录，匿名访客仅浏览论文、公共分析和日报。登录状态通过签名 cookie 持久保存 180 天，默认使用 `settings.json` 中的 `session_secret` 保证服务重启后仍有效；如果设置了 `FLASK_SECRET_KEY` 则优先使用环境变量。修改或本机重置管理密码会使旧登录状态失效；Web 端不允许清除密码。`GET /api/providers` 只能返回 `api_key_masked`，不能返回完整 `api_key`。
+`users` 是凭据唯一真源，系统只有固定用户名 `admin` 的唯一管理员。v4 迁移复制旧 settings 管理哈希，提交后备份配置并逐字段移除旧凭据；没有旧凭据时临时密码仅由实际创建 admin 的进程输出一次。session 保存 `user_id/session_version`、30 天滑动有效，逐请求校验用户存在/启用/版本；改密、重置、停用或删除立即撤销旧会话。路由必须明确归为 public/member/admin，所有 cookie 非安全方法校验 CSRF。私有查询只接受当前 principal 注入的 user_id。`GET /api/providers` 只能返回 `api_key_masked`。
 
 ### 7.4 修改 Prompt
 - 新版 prompt 主要存储在 `data/settings.json` 的 `prompt_profiles` 字段，按 `paper_import`、`basic_analysis`、`deep_reading`、`report_summary`、`recommendation`、`paper_chat`、`paper_quiz` 拆分
@@ -532,9 +549,9 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 - 响应式断点：`@media (max-width: 768px)`
 
 ### 7.8 运行时数据操作规范（data/ 目录）
-- `data/` 下文件（`settings.json`、`*.db`、`pdf_cache/`、`paper_files/`）是 git 不追踪的运行时状态，不可再生；`settings.json` 含 API key、管理密码哈希和 session secret
+- `data/` 下文件（`settings.json`、`*.db`、`pdf_cache/`、`paper_files/`）是 git 不追踪的运行时状态，不可再生；账号哈希和私有学习数据在数据库，`settings.json` 含 API key 和 session secret
 - **禁止**以"同步默认值/现值"为由重建或整体改写 `data/settings.json`，禁止用默认模板覆盖文件
-- 修改运行时配置的唯一正道：设置页对应 API（`/api/providers/*`、`/api/settings/*`、`/api/admin/password`）；AI 代理必须通过 API 修改，或逐字段编辑（保留其余字段）——逐字段编辑前必须先备份到 `data/settings-backup/`，编辑后向用户声明 diff 并运行守卫测试
+- 修改运行时配置的唯一正道：设置页对应 API（`/api/providers/*`、`/api/settings/*`、`/api/account/password`）；AI 代理必须通过 API 修改，或逐字段编辑（保留其余字段）——逐字段编辑前必须先备份到 `data/settings-backup/`，编辑后向用户声明 diff 并运行守卫测试
 - 涉及 `data/` 的执行计划，完成清单必须包含"确认 settings.json 未被重建"：运行 `python scripts/check_settings_guardrail.py`（退出码 0=OK、1=疑似重建），或检查启动日志中的重建告警
 - 守卫机制三层：① `tests/test_settings_guardrail.py` 只测判定逻辑本身（构造数据，不读真实文件，CI/本地一致）；② `create_app()` 启动时对真实文件告警记 `logger.warning`（只写日志、不阻断服务启动，systemctl 下见 `journalctl -u <服务名>`）；③ `scripts/check_settings_guardrail.py` 显式检查真实文件（仅只读，可挂 cron 或进计划清单）
 
@@ -546,7 +563,7 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 # 启动服务
 python app.py
 
-# 忘记管理密码时在服务器本机生成新随机密码（会先备份 settings.json）
+# 忘记 admin 密码时在服务器本机生成临时密码（更新 users 表并撤销旧会话）
 python scripts/reset_admin_password.py
 
 # 抓取 / 分析 / 推荐评分：Web 页面 /tasks 或 API POST /api/fetch、/api/analyze、/api/run（原 CLI 能力入口）
@@ -558,8 +575,8 @@ python -c "from source.storage import *; init_db(); print(get_paper_count(), 'pa
 python scripts/run_all_tests.py         # 标准流程：unittest + pytest(随机顺序) + 3 次模块乱序，失败即停
 python scripts/run_all_tests.py --quick # 只跑 pytest 一次（日常快速验证）
 # 等价裸命令（脚本内部使用）：python -m unittest discover -s tests / python -m pytest tests/
-# 测试布局：tests/ 顶层 14 个文件 + tests/ai_test/ 20 个文件（其中 17 个按模块拆分自原 test_ai_provider_config.py，
-# 另有后续回归模块；共享桩 DummyOpenAI/FakeRequest/install_import_stubs 与 Web 测试基座在 tests/ai_test/common.py）
+# 测试布局：tests/ 顶层 17 个文件 + tests/ai_test/ 22 个文件（其中 17 个按模块拆分自原 test_ai_provider_config.py，
+# 另有后续回归模块与 v0.7.0 权限矩阵/IDOR/删除保护测试；共享桩 DummyOpenAI/FakeRequest/install_import_stubs 与 Web 测试基座在 tests/ai_test/common.py）
 # 覆盖率：python -m pytest --cov=. --cov-report=term-missing tests/（.coveragerc 排除 tests/scripts/.venv，tests/* 通配覆盖 ai_test 子目录）
 # CI：push 到 dev/master 自动跑 tests.yml（完整套件 + 覆盖率），见 .github/workflows/tests.yml
 
@@ -573,7 +590,7 @@ cp data/settings.json data/settings.json.bak
 # 设置页「数据库 → WebDAV 云同步备份」可启用每日自动同步。
 # 备份包包含 papers.db 一致性快照、data/settings.json 和 manifest；
 # Web 日报位于 reports 表中，会随数据库快照备份。
-# 会包含 API Key、管理密码哈希和 session secret 等敏感配置。
+# 会包含账号、全部私有学习数据、API Key 和 session secret；仅适用于可信存储，当前无客户端加密。
 # 远端文件：arxiv-backup-latest.zip + arxiv-backup-YYYYMMDD-HHMMSS.zip，
 # 历史备份默认保留 3 天，可在设置页修改。
 
@@ -597,7 +614,7 @@ cp data/settings.json data/settings.json.bak
 - PDF 提取依赖 PyMuPDF，扫描版 PDF 无法提取文本
 - arXiv API 有速率限制，大量抓取时需增加 delay_seconds
 - SQLite 仍适合单机中低并发；WAL 与 5000 ms `busy_timeout` 可缓解短时写锁竞争，但不替代分布式数据库
-- 无多用户隔离系统，管理密码只提供本地单用户访问保护
+- 邀请制系统不提供自助注册、找回密码、MFA/OAuth、多管理员、自定义角色或管理员查看成员私有内容
 
 ### 可扩展方向
 - 添加更多 arXiv 分类到 `source/config.py` 的 `ARXIV_CATEGORIES`
@@ -605,7 +622,6 @@ cp data/settings.json data/settings.json.bak
 - 添加 Webhook 推送每日报告
 - 实现向量语义搜索（embedding + cosine similarity）
 - 添加论文收藏/标注功能
-- 添加多用户系统
 - 用 Celery 替代 APScheduler 实现分布式任务
 
 ---

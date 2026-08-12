@@ -10,7 +10,7 @@ from source.storage import record_ai_usage
 from .client import get_openai_client
 from .json_support import _clean_json_content
 from .messages import _authors_text
-from .usage import _extract_usage, _value
+from .usage import _extract_usage, _value, get_usage_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,7 @@ def _record_usage(task_key, cfg, paper_data, response):
             "model": cfg.get("model", ""),
             "paper_id": paper_data.get("id"),
             "arxiv_id": paper_data.get("arxiv_id", ""),
+            "user_id": get_usage_user_id(),
             **usage,
         })
     except Exception as e:
@@ -209,5 +210,4 @@ def _call_ai_raw(messages, paper_data, task_key, cfg=None, client=None):
     message = _value(first_choice, "message", {}) or {}
     content = (_value(message, "content", "") or "").strip()
     return content, usage
-
 

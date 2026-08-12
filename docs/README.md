@@ -13,6 +13,9 @@
 | [AI Agent 开发指南](agent-guide.md) | 快速理解项目、常见修改场景、已知坑 | AI Agent |
 | [项目架构说明](architecture.md) | 系统架构、数据流、组件依赖、设计决策 | 架构师、新开发者 |
 | [更新日志](changelog.md) | 版本历史 | 所有人 |
+| [领域语言](../CONTEXT.md) | 访客、成员、管理员与公私数据的固定含义 | 所有人 |
+| [ADR-0001](adr/0001-single-sqlite-public-private-data.md) | 公私数据共用 SQLite 的决策 | 架构师、开发者 |
+| [ADR-0002](adr/0002-admin-account-is-credential-source.md) | users 表作为凭据唯一真源 | 架构师、开发者 |
 
 ### 规划文档
 

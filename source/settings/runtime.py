@@ -73,14 +73,6 @@ from .thinking import (
 )
 
 from .store import load_settings, save_settings
-from .admin import (
-    get_admin_password,
-    has_admin_password,
-    set_admin_password,
-    verify_admin_password,
-)
-
-
 def get_concurrency():
     """
     获取 AI 分析的并发请求数。

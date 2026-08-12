@@ -2,6 +2,7 @@
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 
 from source.settings import get_concurrency, get_personalization_config, get_research_interest_hash
 from source.storage import get_papers_for_recommendation, get_unanalyzed_papers, insert_analysis, update_analysis, update_recommendation_result
@@ -51,7 +52,7 @@ def analyze_papers(papers, concurrency=None, progress_callback=None):
     # 使用线程池并发执行分析任务
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         # 提交所有任务，建立 future -> paper 的映射
-        futures = {executor.submit(analyze_paper_basic, paper): paper for paper in papers}
+        futures = {executor.submit(copy_context().run, analyze_paper_basic, paper): paper for paper in papers}
 
         # 按完成顺序处理结果（as_completed 保证先完成的先返回）
         for future in as_completed(futures):
@@ -140,7 +141,7 @@ def recommend_papers(papers, research_interests, interest_hash, concurrency=None
 
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         futures = {
-            executor.submit(analyze_paper_recommendation, paper, research_interests, interest_hash): paper
+            executor.submit(copy_context().run, analyze_paper_recommendation, paper, research_interests, interest_hash): paper
             for paper in papers
         }
         for future in as_completed(futures):

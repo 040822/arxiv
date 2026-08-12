@@ -433,7 +433,7 @@ def lookup_paper_by_id(arxiv_id):
         return None
 
 
-def fetch_paper_by_id(arxiv_id):
+def fetch_paper_by_id(arxiv_id, imported_by_user_id=None):
     """
     根据 arXiv ID 抓取单篇论文。
 
@@ -491,6 +491,7 @@ def fetch_paper_by_id(arxiv_id):
             "source_type": "arxiv",
             "source_id": real_id,
             "ingest_mode": "manual",
+            "imported_by_user_id": imported_by_user_id,
             "title": result.title.replace("\n", " ").strip(),
             "authors": authors,
             "abstract": result.summary.replace("\n", " ").strip(),

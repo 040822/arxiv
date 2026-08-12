@@ -1,5 +1,25 @@
 # 用户使用手册
 
+## 邀请制账号与权限
+
+v0.7.0 使用用户名和密码登录，不开放自助注册。系统有访客、成员和唯一 `admin` 三种身份；首次启动若无旧管理员凭据，会在启动日志中仅显示一次 admin 临时密码。
+
+- 管理员在「设置 → 用户管理」创建成员，系统生成一次性临时密码。
+- 新成员或被重置密码的成员首次登录后只能修改密码或退出；密码至少 12 字符。
+- 账号改密、管理员重置、停用或删除会立即撤销该账号所有旧会话。
+
+| 身份 | 能力 |
+|------|------|
+| 访客 | 浏览、搜索全部公有论文数据；隐藏论文仍可直接访问和筛选 |
+| 成员 | 管理自己的阅读清单和学习记录；修改共享评分/标签；生成深度阅读；导入公开论文 |
+| 管理员 | 另可管理摘要/PDF/隐藏/删除、批处理、设置、任务、用户与审计 |
+
+阅读清单、聊天、练习、答案和苏格拉底记录只属于当前成员。管理员只能在用户管理页查看数量汇总，不能读取具体私有内容。论文共享字段采用最后写入生效，关键变更保留脱敏审计记录。
+
+管理员删除含私有学习记录的论文时，默认收到 409 和影响数量；确认使用强制删除后才会级联清理。批量删除会跳过此类论文。
+
+登录会话为 30 天滑动有效；浏览器写请求由页面自动携带 CSRF token。API 客户端应先读取 `GET /api/auth/status` 的 `csrf_token`，并在非安全请求中发送 `X-CSRF-Token`。
+
 ## 目录
 
 - [安装部署](#安装部署)
@@ -60,7 +80,7 @@ python app.py
 
 浏览器访问 `http://localhost:5000`。抓取、分析和推荐评分在 Web 页面 `/tasks`（或 API `POST /api/fetch`、`/api/analyze`、`/api/run`）中完成。
 
-首次启动时，随机管理密码会仅打印在启动日志中。使用该密码登录后建议立即在「设置 → 管理」修改；忘记密码可在服务器仓库根目录运行 `python scripts/reset_admin_password.py`。
+首次启动时，唯一 `admin` 账号的随机临时密码仅打印一次；首次登录必须改密。忘记密码可在服务器仓库根目录运行 `python scripts/reset_admin_password.py`，该操作会撤销 admin 的全部旧会话。
 
 ---
 
@@ -193,7 +213,7 @@ journalctl -u arxiv-paper.service -f
 
 ### 📋 论文处理
 
-抓取、分析、推荐和报告以 Web `/tasks` 或对应 HTTP API 为正式入口，不提供旧版 Python CLI。
+`/tasks` 对成员提供手动导入面板；抓取、批量分析、推荐和报告控件仅 admin 可见，并以对应 HTTP API 为正式入口。不提供旧版 Python CLI。
 
 
 - **抓取论文**：选择分类、最近天数或指定日期，按日期窗口抓全并自动去重
@@ -284,7 +304,7 @@ journalctl -u arxiv-paper.service -f
 
 远端会保存 `arxiv-backup-latest.zip` 和按时间命名的 `arxiv-backup-YYYYMMDD-HHMMSS.zip`。历史备份默认保留 3 天，可根据 WebDAV 空间大小调整。
 
-备份包包含 `papers.db` 一致性快照、`data/settings.json` 和 manifest。Web 日报存储在数据库中，会随快照备份。`settings.json` 内含 API Key、管理密码哈希和 session secret，请只同步到可信 WebDAV 空间。
+备份包包含 `papers.db` 一致性快照、`data/settings.json` 和 manifest。数据库含账号及全部私有学习数据，settings 含 API Key 和 session secret；manifest 会明确标记这些风险。项目不提供客户端加密，请只同步到可信 WebDAV 空间。
 
 每日任务执行内容：
 1. 抓取近 3 日 cs.RO 论文（防止周末无论文）

@@ -11,7 +11,7 @@
 - **Web 浏览** — Flask 本地 Web 服务，支持按标签/评级筛选、关键词搜索
 - **定时任务** — 内置 APScheduler，每天定时自动执行抓取、分析和报告生成
 - **云同步备份** — 可通过 WebDAV 每日备份数据库快照、运行设置和 manifest；Web 日报随数据库备份
-- **管理保护** — 可设置管理密码保护设置页、任务执行和写接口
+- **邀请制账号** — 访客公开浏览；成员拥有独立学习数据；唯一 admin 管理用户、任务和配置
 
 ## 快速开始
 
@@ -59,7 +59,7 @@ pip install -r requirements.txt
 
 启动 Web 服务后进入 `http://localhost:5000/settings`：先在「模型供应商」中填写 OpenAI 兼容 API Key 和 Base URL、刷新模型列表，再在「功能模型路由」中分别为 PDF 元数据提取、基础分析、深度阅读、论文对话和论文问答练习等功能选择供应商、模型与推理参数。每个路由只提供可选的 Temperature 采样控制；未启用时不发送 Temperature，其他采样参数也不发送，由模型采用默认行为。
 
-运行时配置保存在 `data/settings.json`（当前结构版本为 3），该文件包含 API Key，已被 `.gitignore` 排除，请不要提交到 GitHub。`source/config.py` 只提供硬编码默认值（分类、路径、定时任务首次时间等），不包含任何 API 凭据。
+运行时配置保存在 `data/settings.json`（当前结构版本为 4），该文件包含 API Key 和 session secret，已被 `.gitignore` 排除，请不要提交到 GitHub。账号和密码哈希保存在 `data/papers.db` 的 `users` 表。`source/config.py` 只提供硬编码默认值。
 
 ### 3. 运行
 
@@ -88,7 +88,7 @@ sudo systemctl stop arxiv-paper.service
 journalctl -u arxiv-paper.service -f
 ```
 
-首次启动若未配置管理密码，随机初始密码会仅输出到启动日志；登录后请在「设置 → 管理」修改。忘记密码可在服务器仓库根目录运行 `python scripts/reset_admin_password.py`。
+首次启动会创建唯一 `admin` 账号，随机临时密码仅输出到该次启动日志；首次登录必须修改。管理员可在「设置 → 管理」邀请成员。忘记 admin 密码时运行 `python scripts/reset_admin_password.py`，脚本直接更新数据库账号并撤销旧会话。
 
 不要同时手动运行 `python app.py` 和 systemd 服务；应用内置 APScheduler 定时任务，多进程可能导致日报重复执行。
 
@@ -114,7 +114,7 @@ journalctl -u arxiv-paper.service -f
 
 ## Web API
 
-设置管理密码后，所有 `POST/PUT/DELETE` 写接口、设置接口、论文处理接口都需要先登录；首页、浏览、搜索、报告和只读论文数据保持可读。管理登录默认保持 180 天，服务重启后仍有效，修改管理密码后旧登录状态会失效。
+访客可浏览论文（包括隐藏论文的直接访问与搜索）、公共分析和日报。成员可维护自己的清单与学习记录、修改共享评分/标签、生成共享深度阅读并导入公开论文；admin 另可修改摘要/简评、替换 PDF、隐藏/删除论文、运行批处理和管理设置。登录 session 30 天滑动有效，改密、重置、停用或删除会立即撤销旧 session。
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -142,7 +142,7 @@ journalctl -u arxiv-paper.service -f
 - `arxiv-backup-latest.zip`
 - `arxiv-backup-YYYYMMDD-HHMMSS.zip`
 
-历史备份默认保留 3 天，可在设置页调整。备份包包含 `papers.db` 一致性快照、`data/settings.json` 和 manifest；Web 日报存储在数据库中，会随快照备份。`settings.json` 含 API Key、管理密码哈希和 session secret，请确保 WebDAV 位置可信。
+历史备份默认保留 3 天，可在设置页调整。备份包包含 `papers.db` 一致性快照、`data/settings.json` 和 manifest，因此包含账号、全部私有学习数据、API Key 和 session secret；请只使用可信 WebDAV 存储。
 
 ## 监控的 arXiv 分类
 

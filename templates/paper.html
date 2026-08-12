@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script src="/static/auth.js"></script>
     <title>{{ paper.title }} - AI 论文数据库</title>
     <link rel="stylesheet" href="/static/css/core.css">
     <link rel="stylesheet" href="/static/css/components.css">
@@ -15,7 +17,9 @@
         <header>
             <div class="header-top">
                 <div></div>
+                {% if is_admin %}
                 <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+                {% endif %}
             </div>
             <h1>🤖 AI 论文数据库</h1>
         </header>
@@ -24,9 +28,13 @@
             <a href="/" class="nav-link">📅 每日论文</a>
             <a href="/browse" class="nav-link">📂 分类浏览</a>
             <a href="/search" class="nav-link">🔍 搜索</a>
+            {% if is_authenticated %}
             <a href="/tasks" class="nav-link">📋 论文处理</a>
+            {% endif %}
             <a href="/reports" class="nav-link">📊 每日报告</a>
+            {% if is_authenticated %}
             <a href="/reading-list" class="nav-link">📌 阅读清单</a>
+            {% endif %}
         </nav>
 
         <article class="paper-detail">
@@ -132,7 +140,7 @@
 
             <!-- 中文摘要 -->
             <div class="detail-section">
-                <h3>📝 中文摘要 {% if is_authenticated %}<button class="btn-sm btn-edit" onclick="toggleSummaryEdit()">编辑</button>{% endif %}</h3>
+                <h3>📝 中文摘要 {% if is_admin %}<button class="btn-sm btn-edit" onclick="toggleSummaryEdit()">编辑</button>{% endif %}</h3>
                 <div id="summary-view">
                     {% if analysis and analysis.summary_cn %}
                     <p>{{ analysis.summary_cn }}</p>
@@ -140,7 +148,7 @@
                     <p class="empty-state compact">暂无中文摘要</p>
                     {% endif %}
                 </div>
-                {% if is_authenticated %}<div id="summary-edit" style="display:none;">
+                {% if is_admin %}<div id="summary-edit" style="display:none;">
                     <textarea id="summary-textarea" rows="4" placeholder="输入中文摘要">{{ analysis.summary_cn if analysis and analysis.summary_cn else '' }}</textarea>
                     <div class="edit-actions">
                         <button class="btn btn-primary" onclick="saveSummary()">💾 保存</button>
@@ -153,7 +161,7 @@
             <div class="detail-section">
                 <h3>📖 AI 深度阅读
                     {% if is_authenticated %}
-                    <button class="btn-sm btn-edit" onclick="toggleQaEdit()">编辑</button>
+                    {% if is_admin %}<button class="btn-sm btn-edit" onclick="toggleQaEdit()">编辑</button>{% endif %}
                     <button class="btn-sm btn-activate" id="reanalyze-btn" onclick="reanalyze()">📝 生成报告</button>
                     {% endif %}
                 </h3>
@@ -165,7 +173,7 @@
                     <p class="empty-state compact">暂无 AI 深度阅读内容</p>
                     {% endif %}
                 </div>
-                {% if is_authenticated %}<div id="qa-edit" style="display:none;">
+                {% if is_admin %}<div id="qa-edit" style="display:none;">
                     <textarea id="qa-textarea" rows="15" placeholder="输入 AI 深度阅读内容（Markdown 格式）">{{ analysis.qa_analysis if analysis and analysis.qa_analysis else '' }}</textarea>
                     <div class="edit-actions">
                         <button class="btn btn-primary" onclick="saveQaAnalysis()">💾 保存</button>
@@ -176,7 +184,7 @@
 
             <!-- 评价 -->
             <div class="detail-section">
-                <h3>💬 评价 {% if is_authenticated %}<button class="btn-sm btn-edit" onclick="toggleCommentEdit()">编辑</button>{% endif %}</h3>
+                <h3>💬 评价 {% if is_admin %}<button class="btn-sm btn-edit" onclick="toggleCommentEdit()">编辑</button>{% endif %}</h3>
                 <div id="comment-view">
                     {% if analysis and analysis.value_comment %}
                     <p class="value-comment">{{ analysis.value_comment }}</p>
@@ -184,7 +192,7 @@
                     <p class="empty-state compact">暂无评价</p>
                     {% endif %}
                 </div>
-                {% if is_authenticated %}<div id="comment-edit" style="display:none;">
+                {% if is_admin %}<div id="comment-edit" style="display:none;">
                     <textarea id="comment-textarea" rows="3" placeholder="输入评价">{{ analysis.value_comment if analysis and analysis.value_comment else '' }}</textarea>
                     <div class="edit-actions">
                         <button class="btn btn-primary" onclick="saveComment()">💾 保存</button>
@@ -194,7 +202,7 @@
             </div>
 
             <!-- 危险操作区 -->
-            {% if is_authenticated %}
+            {% if is_admin %}
             <div class="danger-zone">
                 <h3 class="danger-toggle" onclick="toggleDanger()">⚠️ 危险操作 <span id="danger-arrow">▸</span></h3>
                 <div id="danger-content" style="display:none;">
@@ -478,8 +486,19 @@
             if (!confirm('再次确认：真的要删除吗？')) return;
             const statusEl = document.getElementById('danger-status');
             try {
-                const resp = await fetch(`/api/paper/${ARXIV_ID}`, {method: 'DELETE'});
-                const result = await resp.json();
+                let resp = await fetch(`/api/paper/${ARXIV_ID}`, {method: 'DELETE'});
+                let result = await resp.json();
+                if (resp.status === 409 && result.force_required) {
+                    const impact = result.private_impact || {};
+                    const detail = `清单 ${impact.reading_list || 0}、聊天 ${impact.chat_messages || 0}、练习 ${impact.quiz_sessions || 0}、作答 ${impact.quiz_attempts || 0}`;
+                    if (!confirm(`此论文关联私有学习数据（${detail}）。强制删除会级联清理，是否继续？`)) {
+                        statusEl.className = 'action-status warning';
+                        statusEl.textContent = '已取消强制删除';
+                        return;
+                    }
+                    resp = await fetch(`/api/paper/${ARXIV_ID}?force=true`, {method: 'DELETE'});
+                    result = await resp.json();
+                }
                 statusEl.className = result.status === 'ok' ? 'action-status success' : 'action-status error';
                 statusEl.textContent = (result.status === 'ok' ? '✅ ' : '❌ ') + result.message;
                 if (result.status === 'ok') setTimeout(() => window.location.href = '/', 1500);

@@ -7,7 +7,7 @@ from datetime import timedelta
 from flask import Flask
 
 from source.pipeline import configure_daily_job, scheduler
-from source.settings import ensure_admin_password, get_session_secret
+from source.settings import get_session_secret
 from source.settings.guardrail import warn_on_settings_rebuild
 from source.storage import init_db, interrupt_running_task_logs
 from .auth import bp as auth_bp
@@ -23,12 +23,6 @@ logger = logging.getLogger(__name__)
 
 
 def build_app():
-    credential = ensure_admin_password()
-    if credential.generated_password:
-        logger.warning(
-            "首次启动已生成管理密码（仅显示本次，请登录后尽快修改）：%s",
-            credential.generated_password,
-        )
     app = Flask(
         __name__,
         template_folder=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "templates"),
@@ -37,7 +31,7 @@ def build_app():
     app.secret_key = os.environ.get("FLASK_SECRET_KEY") or get_session_secret()
     app.config.update(
         MAX_CONTENT_LENGTH=101 * 1024 * 1024,
-        PERMANENT_SESSION_LIFETIME=timedelta(days=180),
+        PERMANENT_SESSION_LIFETIME=timedelta(days=30),
         SESSION_REFRESH_EACH_REQUEST=True,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
@@ -54,7 +48,16 @@ app = build_app()
 
 
 def create_app():
-    init_db()
+    from source.storage.user_migration import take_generated_admin_password
+    try:
+        init_db()
+    finally:
+        generated_password = take_generated_admin_password()
+        if generated_password:
+            logger.warning(
+                "首次启动已生成 admin 临时密码（仅显示本次，请登录后尽快修改）：%s",
+                generated_password,
+            )
     for warning in warn_on_settings_rebuild():
         logger.warning(warning)
     interrupted = interrupt_running_task_logs()

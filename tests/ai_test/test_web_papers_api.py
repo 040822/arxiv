@@ -45,6 +45,85 @@ class PapersApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         analyze_papers.assert_called_once_with(selected, concurrency=3)
 
+
+    def test_member_analysis_update_accepts_only_rating_and_tags(self):
+        paper = {"id": 5, "paper_key": "p5"}
+        self.web_papers_api.request = FakeRequest({"rating": 4, "tags": ["VLA"]})
+        with patch.object(self.web_papers_api, "get_paper_by_arxiv_id", return_value=paper), \
+             patch.object(self.web_papers_api, "is_admin", return_value=False), \
+             patch.object(self.web_papers_api, "get_analysis_by_paper_id", return_value={}), \
+             patch.object(self.web_papers_api, "_audit"), \
+             patch.object(self.web_papers_api, "update_analysis") as update:
+            result = self.web_papers_api.api_update_paper_analysis("p5")
+        self.assertEqual(result["status"], "ok")
+        update.assert_called_once_with(5, {"rating": 4, "tags": ["VLA"]})
+
+        self.web_papers_api.request = FakeRequest({"rating": 4, "summary_cn": "forbidden"})
+        with patch.object(self.web_papers_api, "get_paper_by_arxiv_id", return_value=paper), \
+             patch.object(self.web_papers_api, "is_admin", return_value=False), \
+             patch.object(self.web_papers_api, "update_analysis") as update:
+            response, status = self.web_papers_api.api_update_paper_analysis("p5")
+        self.assertEqual(status, 403)
+        self.assertIn("成员只能", response["message"])
+        update.assert_not_called()
+
+
+    def test_paper_delete_requires_force_when_private_records_exist(self):
+        impact = {"reading_list": 1, "chat_messages": 1, "quiz_sessions": 0, "quiz_attempts": 0, "total": 2}
+        self.web_papers_api.request = FakeRequest(args={})
+        with patch.object(
+            self.web_papers_api, "delete_paper_protected",
+            return_value={"deleted": False, "paper": {"id": 5, "paper_key": "p5"}, "impact": impact, "conflict": True},
+        ) as delete_protected:
+            response, status = self.web_papers_api.api_delete_paper("p5")
+        self.assertEqual(status, 409)
+        self.assertEqual(response["private_impact"]["total"], 2)
+        self.assertTrue(response["force_required"])
+        delete_protected.assert_called_once_with("p5", force=False)
+
+        self.web_papers_api.request = FakeRequest(args={"force": "true"})
+        with patch.object(
+            self.web_papers_api, "delete_paper_protected",
+            return_value={"deleted": True, "paper": {"id": 5, "paper_key": "p5"}, "impact": impact, "conflict": False},
+        ) as delete_protected, \
+             patch.object(self.web_papers_api, "remove_paper_pdf_files") as remove_pdf, \
+             patch.object(self.web_papers_api, "_audit") as audit:
+            response = self.web_papers_api.api_delete_paper("p5")
+        self.assertEqual(response["status"], "ok")
+        delete_protected.assert_called_once_with("p5", force=True)
+        remove_pdf.assert_called_once()
+        audit.assert_called_once()
+
+    def test_paper_delete_failure_returns_400(self):
+        self.web_papers_api.request = FakeRequest(args={})
+        with patch.object(
+            self.web_papers_api, "delete_paper_protected",
+            return_value={"deleted": False, "paper": None, "impact": None, "conflict": False},
+        ) as delete_protected:
+            response, status = self.web_papers_api.api_delete_paper("missing")
+        self.assertEqual(status, 400)
+        delete_protected.assert_called_once_with("missing", force=False)
+
+    def test_batch_delete_skips_protected_papers_and_reports_counts(self):
+        self.web_papers_api.request = FakeRequest({"paper_keys": ["2601.00001", "2601.00002"]})
+        with patch.object(
+            self.web_papers_api, "batch_delete_papers_protected",
+            return_value={
+                "deleted": 1,
+                "skipped": ["2601.00002"],
+                "papers": [{"paper_key": "2601.00001"}],
+            },
+        ) as batch_delete, \
+             patch.object(self.web_papers_api, "remove_paper_pdf_files") as remove_pdf, \
+             patch.object(self.web_papers_api, "_audit") as audit:
+            response = self.web_papers_api.api_batch_delete_papers()
+        self.assertEqual(response["status"], "ok")
+        self.assertEqual(response["deleted"], 1)
+        self.assertEqual(response["skipped"], ["2601.00002"])
+        batch_delete.assert_called_once_with(["2601.00001", "2601.00002"])
+        remove_pdf.assert_called_once()
+        audit.assert_called_once()
+
     def test_reanalyze_updates_only_qa_analysis(self):
         web_papers_api = self.web_papers_api
         paper = {
@@ -133,6 +212,7 @@ class PapersApiTests(unittest.TestCase):
 
         with patch.object(web_papers_api, "parse_arxiv_id", return_value="2601.00010"), \
              patch.object(web_papers_api, "fetch_paper_by_id", return_value=paper), \
+             patch.object(web_papers_api, "current_user", return_value={"id": 7, "role": "member"}), \
              patch.object(web_papers_api, "get_analysis_by_paper_id", return_value=None), \
              patch.object(web_papers_api, "analyze_paper_basic", side_effect=fake_basic), \
              patch.object(web_papers_api, "insert_analysis", side_effect=fake_insert), \
@@ -168,6 +248,7 @@ class PapersApiTests(unittest.TestCase):
 
         with patch.object(web_papers_api, "parse_arxiv_id", return_value="2601.00012"), \
              patch.object(web_papers_api, "fetch_paper_by_id", return_value=paper), \
+             patch.object(web_papers_api, "current_user", return_value={"id": 7, "role": "member"}), \
              patch.object(web_papers_api, "get_analysis_by_paper_id", return_value=None), \
              patch.object(web_papers_api, "analyze_paper_basic", return_value=(paper, basic_result, None)), \
              patch.object(web_papers_api, "insert_analysis", return_value=1), \
@@ -197,6 +278,7 @@ class PapersApiTests(unittest.TestCase):
 
         with patch.object(web_papers_api, "parse_arxiv_id", return_value="2601.00011"), \
              patch.object(web_papers_api, "fetch_paper_by_id", return_value=paper), \
+             patch.object(web_papers_api, "current_user", return_value={"id": 7, "role": "member"}), \
              patch.object(web_papers_api, "get_analysis_by_paper_id", return_value={"rating": 4, "tags": [], "summary_cn": "", "value_comment": ""}), \
              patch.object(web_papers_api, "analyze_paper_basic", return_value=(paper, basic_result, None)) as basic, \
              patch.object(web_papers_api, "insert_analysis", return_value=None) as insert, \

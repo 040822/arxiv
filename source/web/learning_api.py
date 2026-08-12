@@ -30,6 +30,7 @@ from source.storage import (
     get_paper_quiz_session_detail,
 )
 from .pages import _prepare_paper_for_view
+from .auth import current_user
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ def api_paper_chat_messages(arxiv_id):
         return error_response
     return jsonify({
         "status": "ok",
-        "messages": get_paper_chat_messages(paper["id"]),
+        "messages": get_paper_chat_messages(current_user()["id"], paper["id"]),
     })
 
 
@@ -67,17 +68,18 @@ def api_paper_chat_send(arxiv_id):
     if not message:
         return jsonify({"status": "error", "message": "消息不能为空"}), 400
 
-    history = get_paper_chat_messages(paper["id"], limit=12)
+    user_id = current_user()["id"]
+    history = get_paper_chat_messages(user_id, paper["id"], limit=12)
     reply, error, meta = chat_about_paper(paper, message, history=history)
     if error:
         return jsonify({"status": "error", "message": f"模型对话失败: {error}", "meta": meta}), 500
 
-    add_paper_chat_message(paper["id"], "user", message)
-    add_paper_chat_message(paper["id"], "assistant", reply)
+    add_paper_chat_message(user_id, paper["id"], "user", message)
+    add_paper_chat_message(user_id, paper["id"], "assistant", reply)
     return jsonify({
         "status": "ok",
         "reply": reply,
-        "messages": get_paper_chat_messages(paper["id"]),
+        "messages": get_paper_chat_messages(user_id, paper["id"]),
         "meta": meta,
     })
 
@@ -97,11 +99,12 @@ def api_create_quiz_session(arxiv_id):
     if error:
         return jsonify({"status": "error", "message": f"生成题目失败: {error}", "meta": meta}), 500
 
-    session_id = create_paper_quiz_session(paper["id"], mode)
+    user_id = current_user()["id"]
+    session_id = create_paper_quiz_session(user_id, paper["id"], mode)
     add_paper_quiz_questions(session_id, questions)
     return jsonify({
         "status": "ok",
-        "session": get_paper_quiz_session_detail(session_id, paper_id=paper["id"]),
+        "session": get_paper_quiz_session_detail(user_id, session_id, paper_id=paper["id"]),
         "meta": meta,
     })
 
@@ -112,7 +115,7 @@ def api_get_quiz_session(arxiv_id, session_id):
     paper, error_response = _get_learning_paper_or_response(arxiv_id)
     if error_response:
         return error_response
-    session_detail = get_paper_quiz_session_detail(session_id, paper_id=paper["id"])
+    session_detail = get_paper_quiz_session_detail(current_user()["id"], session_id, paper_id=paper["id"])
     if not session_detail:
         return jsonify({"status": "error", "message": "练习会话不存在"}), 404
     return jsonify({"status": "ok", "session": session_detail})
@@ -124,7 +127,8 @@ def api_answer_quiz_question(arxiv_id, question_id):
     paper, error_response = _get_learning_paper_or_response(arxiv_id)
     if error_response:
         return error_response
-    question = get_paper_quiz_question(question_id, paper_id=paper["id"])
+    user_id = current_user()["id"]
+    question = get_paper_quiz_question(user_id, question_id, paper_id=paper["id"])
     if not question:
         return jsonify({"status": "error", "message": "题目不存在"}), 404
     data = request.get_json() or {}
@@ -139,7 +143,7 @@ def api_answer_quiz_question(arxiv_id, question_id):
     return jsonify({
         "status": "ok",
         "feedback": feedback,
-        "session": get_paper_quiz_session_detail(question["session_id"], paper_id=paper["id"]),
+        "session": get_paper_quiz_session_detail(user_id, question["session_id"], paper_id=paper["id"]),
         "meta": meta,
     })
 
@@ -167,11 +171,12 @@ def api_create_socratic_session(arxiv_id):
     if error:
         return jsonify({"status": "error", "message": f"创建追问失败: {error}", "meta": meta}), 500
 
-    session_id = create_paper_quiz_session(paper["id"], "socratic")
+    user_id = current_user()["id"]
+    session_id = create_paper_quiz_session(user_id, paper["id"], "socratic")
     add_paper_quiz_question(session_id, 1, result.get("next_question", ""), "socratic")
     return jsonify({
         "status": "ok",
-        "session": get_paper_quiz_session_detail(session_id, paper_id=paper["id"]),
+        "session": get_paper_quiz_session_detail(user_id, session_id, paper_id=paper["id"]),
         "feedback": result,
         "meta": meta,
     })
@@ -183,7 +188,8 @@ def api_reply_socratic_session(arxiv_id, session_id):
     paper, error_response = _get_learning_paper_or_response(arxiv_id)
     if error_response:
         return error_response
-    session_detail = get_paper_quiz_session_detail(session_id, paper_id=paper["id"])
+    user_id = current_user()["id"]
+    session_detail = get_paper_quiz_session_detail(user_id, session_id, paper_id=paper["id"])
     if not session_detail or session_detail.get("mode") != "socratic":
         return jsonify({"status": "error", "message": "苏格拉底会话不存在"}), 404
     questions = session_detail.get("questions", [])
@@ -210,6 +216,6 @@ def api_reply_socratic_session(arxiv_id, session_id):
     return jsonify({
         "status": "ok",
         "feedback": result,
-        "session": get_paper_quiz_session_detail(session_id, paper_id=paper["id"]),
+        "session": get_paper_quiz_session_detail(user_id, session_id, paper_id=paper["id"]),
         "meta": meta,
     })

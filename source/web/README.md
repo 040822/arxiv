@@ -8,7 +8,7 @@
 |------|--------------|------|
 | `__init__.py` | — | 包入口，导出 `app` / `build_app` / `create_app` |
 | `application.py` | — | Flask 应用组装与启动（注册全部 Blueprint、初始化 DB、启动调度器） |
-| `auth.py` | `auth` | 管理登录/退出、密码设置、全局鉴权拦截、模板上下文注入 |
+| `auth.py` | `auth` | 邀请制账号、三级权限、CSRF、用户管理、审计与模板 principal |
 | `pages.py` | `pages` | 全部页面路由（首页、浏览、搜索、论文详情、学习页、设置、任务、报告、阅读清单） |
 | `papers_api.py` | `papers_api` | 论文 JSON 接口（列表/标签/统计、分析编辑、隐藏/删除、批量操作、手动添加、阅读清单） |
 | `import_api.py` | `paper_import_api` | 手动论文导入（链接/PDF 预览解析、确认入库、附件替换） |
@@ -25,15 +25,16 @@
 包入口，仅做转发导出，保证外部可 `from source.web import app`。
 
 ### `application.py`
-- `build_app()`：确保管理凭据存在（首次随机生成并记录一次）、创建 Flask 实例，配置模板/静态目录、`secret_key`（优先环境变量 `FLASK_SECRET_KEY`）、上传上限（101 MB）、180 天持久 session，注册全部 8 个 Blueprint。
+- `build_app()`：创建 Flask 实例，严格读取 `session_secret`（优先环境变量 `FLASK_SECRET_KEY`）、配置上传上限（101 MB）和 30 天滑动 session，注册全部 8 个 Blueprint；`create_app()` 的 v4 数据迁移负责引导唯一 admin。
 - `app`：模块级单例，供 WSGI/`app.py` 直接引用。
 - `create_app()`：应用工厂，依次执行 `init_db()`（含迁移）、遗留 `running` 日志标记 `interrupted`、`configure_daily_job()` 重建定时任务、启动 APScheduler。
 
 ### `auth.py`
-- `require_auth_for_protected_routes`（`before_app_request`）：只允许显式列入 `PUBLIC_GET_ENDPOINTS` 的公开只读端点匿名访问；全部写接口、阅读清单、学习记录和进度流要求登录。API 返回 401 JSON，页面重定向登录页。
-- `is_authenticated()`：缺少凭据时失败关闭；已登录状态通过绑定密码版本的 HMAC token 校验，改密即失效。登录按来源 IP 限制 15 分钟内 5 次失败。
-- 路由：`/login`、`/api/auth/status`、`/api/auth/login`、`/api/auth/logout`、`/api/admin/password`（POST 验证当前密码后修改）。
-- 三个 `app_context_processor`：注入 `auth_enabled`/`is_authenticated`/`password_change_recommended`、模板时间 `now`、分页辅助函数 `_remove_param`/`_build_query`。
+- `route_policy()` 将非静态路由明确归为 public/member/admin，未知路由失败关闭为 admin；API 未登录返回 401、权限不足返回 403。
+- session 保存 `user_id/session_version`，逐请求校验存在、启用和版本；改密、重置、停用或删除立即撤销旧会话。
+- 全部非安全方法校验 session-backed CSRF；登录失败按 IP 与规范化用户名执行 15 分钟 5 次限制且使用统一文案。
+- 路由包括登录/退出、账号改密、admin 兼容改密别名，以及管理员用户 CRUD 和分页审计。
+- 模板上下文注入 `current_user`、`is_admin`、`csrf_token`、时间与分页辅助函数。
 
 ### `pages.py`
 页面渲染路由（Jinja2 模板）：
@@ -41,7 +42,7 @@
 - `/browse` 多条件组合筛选浏览（日期/标签/分类/评级范围/已分析/深度分析/隐藏/来源）
 - `/search` 跨字段 AND 搜索，含命中高亮（`_highlight_search_text`）与摘要预览（`_search_excerpt`）
 - `/paper/<key>` 论文详情；`/paper/<key>/chat` 论文学习页（含最近 10 个练习会话）
-- `/settings`、`/tasks`、`/reports`、`/reports/<date>`、`/reading-list`、`/about`、`/vision`
+- `/settings`（admin）、`/tasks`（成员见导入、admin 见批处理）、`/reports`、`/reports/<date>`、`/reading-list`、`/about`、`/vision`
 
 ### `papers_api.py`
 论文相关 JSON 接口：
@@ -98,7 +99,7 @@ AI 供应商连接管理：
 
 ## 注意事项
 
-- **鉴权边界**：页面/写接口保护在 `auth.py` 的 `before_app_request` 中统一处理；新增公开只读端点必须显式加入 `PUBLIC_GET_ENDPOINTS`，不存在公开写例外。
+- **鉴权边界**：新增路由必须在 `route_policy()` 分类；私有存储查询必须从当前 principal 注入 `user_id`，不得接收客户端 user id。隐藏论文是公开展示筛选属性，不是访问控制。
 - **进度上报**：耗时任务通过 `update_progress(task_id, ...)` 上报，前端用 `/api/progress/<task_id>` SSE 订阅；task_id 由前端传入（如 `add_paper`、`fetch`）。
 - **手动任务日志**：推荐新任务端点使用 `task_endpoint.py` 的装饰器与 `TaskEndpointResult`；`tasks_api.py` 中部分旧端点仍为手写 `start_task_log`/`finish_task_log` 模式。
 - **部分文件存在未使用的共享 import 块**（`analyzer`/`backup`/`fetcher`/`source.pipeline` 整块引入），属历史遗留，维护时无需全部清理。

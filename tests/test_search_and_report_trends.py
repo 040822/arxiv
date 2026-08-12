@@ -130,12 +130,12 @@ class SearchPapersTests(DatabaseTestCase):
             ["2607.00010", "2607.00009", "2607.00011", "2607.00012"],
         )
 
-    def test_hidden_papers_are_excluded_from_keyword_and_exact_id_search(self):
+    def test_hidden_papers_remain_publicly_searchable(self):
         self.add_paper("2607.00013", "Hidden World Model")
         hide_paper("2607.00013")
 
-        self.assertEqual(search_papers("world", limit=50), [])
-        self.assertEqual(search_papers("2607.00013v2", limit=50), [])
+        self.assertEqual(search_papers("world", limit=50)[0]["arxiv_id"], "2607.00013")
+        self.assertEqual(search_papers("2607.00013v2", limit=50)[0]["arxiv_id"], "2607.00013")
 
     def test_oversized_queries_are_rejected_with_a_clear_error(self):
         with self.assertRaisesRegex(ValueError, "200"):

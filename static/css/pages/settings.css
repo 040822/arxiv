@@ -929,3 +929,15 @@ details.log-item > summary::-webkit-details-marker {
 .btn-small:hover {
     background: #f0f0f0;
 }
+
+.provider-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.btn-small.danger {
+    color: #b42318;
+    border-color: #f3b5ad;
+}

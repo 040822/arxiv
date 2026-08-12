@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script src="/static/auth.js"></script>
     <title>论文处理 - AI 论文数据库</title>
     <link rel="stylesheet" href="/static/css/core.css">
     <link rel="stylesheet" href="/static/css/components.css">
@@ -13,7 +15,9 @@
         <header>
             <div class="header-top">
                 <div></div>
+                {% if is_admin %}
                 <a href="/settings" class="settings-btn">⚙️ 设置</a>
+                {% endif %}
             </div>
             <h1>🤖 AI 论文数据库</h1>
         </header>
@@ -27,6 +31,7 @@
             <a href="/reading-list" class="nav-link">📌 阅读清单</a>
         </nav>
 
+        {% if is_admin %}
         <!-- 抓取论文 -->
         <div class="action-panel">
             <h3>📥 抓取论文</h3>
@@ -112,6 +117,7 @@
             </div>
             <div id="run-status" class="action-status"></div>
         </div>
+        {% endif %}
 
         <!-- 添加指定论文 -->
         <div class="action-panel">

@@ -13,6 +13,7 @@ from .common import (
     setup_web_test_base,
     teardown_web_test_base,
 )
+from source.analysis.usage import get_usage_user_id, set_usage_user_id
 from source.settings.normalize import _normalize_fetch_config
 
 
@@ -72,6 +73,26 @@ class RuntimeSettingPropagationTests(unittest.TestCase):
         self.assertEqual(count, 1)
         analyze_basic.assert_called_once_with(paper)
         self.assertEqual(executor.call_args.kwargs["max_workers"], 6)
+
+
+    def test_threaded_analysis_preserves_request_user_for_usage_attribution(self):
+        paper = {"id": 1, "arxiv_id": "2601.00001"}
+        result = {"tags": [], "summary_cn": "", "rating": 0, "value_comment": ""}
+        observed = []
+
+        def analyze(item):
+            observed.append(get_usage_user_id())
+            return item, result, None
+
+        set_usage_user_id(73)
+        try:
+            with patch.object(self.analyzer, "analyze_paper_basic", side_effect=analyze), \
+                 patch.object(self.analyzer, "insert_analysis", return_value=True), \
+                 patch.object(self.analyzer.logger, "info"):
+                self.analyzer.analyze_papers([paper], concurrency=1)
+        finally:
+            set_usage_user_id(None)
+        self.assertEqual(observed, [73])
 
     def test_analyze_papers_updates_existing_manual_rating_without_overwriting_rating(self):
         paper = {"id": 1, "arxiv_id": "2601.00001"}

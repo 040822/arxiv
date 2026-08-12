@@ -41,7 +41,7 @@ print(json.dumps(rows, ensure_ascii=False))
         with open("tests/fixtures/web_routes.json", "r", encoding="utf-8") as handle:
             expected = json.load(handle)
 
-        self.assertEqual(len(actual), 85)
+        self.assertEqual(len(actual), 93)
         self.assertEqual(actual, expected)
 
 
@@ -49,8 +49,6 @@ print(json.dumps(rows, ensure_ascii=False))
         code = """
 import json
 import app
-import source.web.auth as auth
-auth.has_admin_password = lambda: True
 client = app.app.test_client()
 settings_response = client.get("/settings")
 print(json.dumps({

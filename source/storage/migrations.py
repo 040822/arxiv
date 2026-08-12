@@ -3,6 +3,9 @@
 import logging
 import os
 import sqlite3
+import fcntl
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 
 from . import connection
@@ -10,19 +13,39 @@ from .analysis_migrations import migrate_analysis_unique
 from .paper_identity_migration import migrate_generic_paper_identity
 from .schema import apply_baseline_schema
 from .snapshot import copy_sqlite_snapshot
+from .user_migration import (
+    finalize_legacy_admin_settings, mark_generated_admin_committed, migrate_invite_only_users,
+)
 
 logger = logging.getLogger(__name__)
+_IN_PROCESS_MIGRATION_LOCK = threading.Lock()
 
 MIGRATION_BACKUP_KEEP = 3
 MIGRATIONS = (
     (1, "baseline", apply_baseline_schema),
     (2, "analysis_unique", migrate_analysis_unique),
     (3, "generic_paper_identity", migrate_generic_paper_identity),
+    (4, "invite_only_users", migrate_invite_only_users),
 )
 
 
 class MigrationError(RuntimeError):
     """Raised when database schema migration cannot complete safely."""
+
+
+@contextmanager
+def _migration_lock(db_path):
+    directory = os.path.dirname(db_path)
+    os.makedirs(directory, exist_ok=True)
+    lock_path = os.path.join(directory, ".database-migration.lock")
+    with _IN_PROCESS_MIGRATION_LOCK:
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
 
 
 def _read_applied_versions(db_path):
@@ -106,7 +129,7 @@ def _ensure_migration_table(conn):
     )
 
 
-def run_migrations():
+def _run_migrations_locked():
     """Apply pending migrations in order and return the current schema version."""
     db_path = connection.DB_PATH
     target_version = MIGRATIONS[-1][0]
@@ -124,6 +147,8 @@ def run_migrations():
         if migration[0] not in applied_versions
     ]
     if not pending:
+        if 4 in applied_versions:
+            finalize_legacy_admin_settings()
         return applied_versions[-1] if applied_versions else 0
 
     current_version = applied_versions[-1] if applied_versions else 0
@@ -175,5 +200,14 @@ def run_migrations():
                 f"数据库 migration v{version} ({name}) 失败{location}: {exc}"
             ) from exc
         logger.info("Applied database migration v%s (%s)", version, name)
+        if version == 4:
+            mark_generated_admin_committed()
 
+    finalize_legacy_admin_settings()
     return target_version
+
+
+def run_migrations():
+    """Serialize migrations and settings finalization across processes."""
+    with _migration_lock(connection.DB_PATH):
+        return _run_migrations_locked()

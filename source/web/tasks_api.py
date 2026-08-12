@@ -41,6 +41,7 @@ from source.storage import (
     start_task_log,
 )
 from .progress import get_progress, update_progress
+from .auth import current_user
 
 logger = logging.getLogger(__name__)
 
@@ -245,10 +246,11 @@ def api_progress(task_id):
     前端可通过 EventSource 订阅此接口，实时获取任务进度。
     当任务状态为 completed 或 error 时自动关闭连接。
     """
+    user_id = current_user()["id"]
     def generate():
         last_data = None
         while True:
-            data = get_progress(task_id)
+            data = get_progress(task_id, user_id=user_id)
             # 仅在数据变化时发送，避免重复推送
             if data and data != last_data:
                 yield f"data: {json.dumps(data)}\n\n"

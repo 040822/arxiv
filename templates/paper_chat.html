@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script src="/static/auth.js"></script>
     <title>讨论论文 - {{ paper.title }}</title>
     <link rel="stylesheet" href="/static/css/core.css">
     <link rel="stylesheet" href="/static/css/components.css">
@@ -15,7 +17,9 @@
         <header>
             <div class="header-top">
                 <div></div>
+                {% if is_admin %}
                 <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+                {% endif %}
             </div>
             <h1>🤖 AI 论文数据库</h1>
         </header>

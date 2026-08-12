@@ -70,7 +70,122 @@ class BackupServiceTests(unittest.TestCase):
         self.assertEqual(row[0], "paper")
         self.assertTrue(manifest["included"]["settings_json"])
         self.assertNotIn("output_dir", manifest_data["included"])
+        self.assertTrue(manifest_data["privacy"]["contains_accounts"])
+        self.assertTrue(manifest_data["privacy"]["contains_private_learning_data"])
+        self.assertTrue(manifest_data["privacy"]["trusted_storage_required"])
+        self.assertFalse(manifest_data["privacy"]["client_side_encryption"])
         self.assertNotIn("report_files", manifest_data)
+
+    def test_backup_restores_v4_users_ownership_and_private_records(self):
+        import source.backups as backup
+        from source.settings import store as settings_store
+        from source.storage import connection as db_connection
+        from source.storage import (
+            add_paper_chat_message,
+            add_paper_quiz_attempt,
+            add_paper_quiz_questions,
+            add_to_reading_list,
+            create_member,
+            create_paper_quiz_session,
+            init_db,
+            insert_paper,
+            record_ai_usage,
+        )
+
+        original_db_path = db_connection.DB_PATH
+        original_settings_path = settings_store.SETTINGS_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                db_path = os.path.join(tmp, "papers.db")
+                settings_path = os.path.join(tmp, "settings.json")
+                db_connection.DB_PATH = db_path
+                settings_store.SETTINGS_PATH = settings_path
+                with open(settings_path, "w", encoding="utf-8") as handle:
+                    json.dump({
+                        "settings_schema_version": 4,
+                        "session_secret": "backup-secret",
+                        "concurrency": 7,
+                    }, handle)
+                init_db()
+                member, _ = create_member("alice")
+                paper_id = insert_paper({
+                    "paper_key": "2608.00001", "arxiv_id": "2608.00001",
+                    "source_type": "arxiv", "source_id": "2608.00001",
+                    "ingest_mode": "manual", "imported_by_user_id": member["id"],
+                    "title": "Paper", "authors": ["Alice"], "abstract": "Abstract",
+                    "categories": ["cs.RO"],
+                })
+                add_to_reading_list(member["id"], paper_id)
+                add_paper_chat_message(member["id"], paper_id, "user", "private chat")
+                session_id = create_paper_quiz_session(member["id"], paper_id, "quick3")
+                question_ids = add_paper_quiz_questions(session_id, [
+                    {"question": "Q1?", "expected_points": ["A"]},
+                ])
+                add_paper_quiz_attempt(question_ids[0], "my answer", 4, {"feedback": "ok"})
+                record_ai_usage({
+                    "task_key": "basic_analysis",
+                    "provider_key": "deepseek",
+                    "provider_name": "DeepSeek",
+                    "model": "deepseek-chat",
+                    "arxiv_id": "2608.00001",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                    "cached_tokens": 0,
+                    "cache_miss_tokens": 15,
+                    "user_id": member["id"],
+                })
+
+                archive_path = os.path.join(tmp, "backup.zip")
+                backup.create_backup_archive(
+                    archive_path, db_path=db_path, settings_path=settings_path,
+                )
+
+                extract_dir = os.path.join(tmp, "extract")
+                with zipfile.ZipFile(archive_path, "r") as zf:
+                    zf.extract("papers.db", extract_dir)
+                    archived_settings = zf.read("settings.json")
+                with open(settings_path, "rb") as handle:
+                    original_settings = handle.read()
+
+                copied = sqlite3.connect(os.path.join(extract_dir, "papers.db"))
+                try:
+                    users = copied.execute(
+                        "SELECT username, role FROM users ORDER BY username"
+                    ).fetchall()
+                    reading = copied.execute(
+                        "SELECT user_id, paper_id FROM reading_list"
+                    ).fetchall()
+                    chat = copied.execute(
+                        "SELECT user_id, paper_id, content FROM paper_chat_messages"
+                    ).fetchall()
+                    sessions = copied.execute(
+                        "SELECT user_id, paper_id, mode FROM paper_quiz_sessions"
+                    ).fetchall()
+                    attempts = copied.execute(
+                        "SELECT COUNT(*) FROM paper_quiz_attempts"
+                    ).fetchone()[0]
+                    importer = copied.execute(
+                        "SELECT imported_by_user_id FROM papers WHERE id = ?", (paper_id,)
+                    ).fetchone()[0]
+                    usage = copied.execute(
+                        "SELECT user_id, total_tokens FROM ai_usage_logs"
+                    ).fetchall()
+                finally:
+                    copied.close()
+
+                self.assertEqual(users, [("admin", "admin"), ("alice", "member")])
+                self.assertEqual(reading, [(member["id"], paper_id)])
+                self.assertEqual(chat, [(member["id"], paper_id, "private chat")])
+                self.assertEqual(sessions, [(member["id"], paper_id, "quick3")])
+                self.assertEqual(attempts, 1)
+                self.assertEqual(importer, member["id"])
+                self.assertEqual(usage, [(member["id"], 15)])
+                self.assertEqual(archived_settings, original_settings)
+                self.assertIn(b'"concurrency": 7', archived_settings)
+        finally:
+            db_connection.DB_PATH = original_db_path
+            settings_store.SETTINGS_PATH = original_settings_path
 
     def test_webdav_backup_uploads_latest_and_cleans_expired_history(self):
         import source.backups as backup

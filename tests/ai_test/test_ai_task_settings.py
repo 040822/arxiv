@@ -35,8 +35,8 @@ class AiTaskSettingsTests(unittest.TestCase):
                 with open(settings_store.SETTINGS_PATH, "r", encoding="utf-8") as f:
                     persisted = json.load(f)
 
-            self.assertEqual(loaded["settings_schema_version"], 3)
-            self.assertEqual(persisted["settings_schema_version"], 3)
+            self.assertEqual(loaded["settings_schema_version"], 4)
+            self.assertEqual(persisted["settings_schema_version"], 4)
         finally:
             settings_store.SETTINGS_PATH = original_path
 
@@ -89,8 +89,8 @@ class AiTaskSettingsTests(unittest.TestCase):
 
             route = loaded["ai_tasks"]["basic_analysis"]
             persisted_route = persisted["ai_tasks"]["basic_analysis"]
-            self.assertEqual(loaded["settings_schema_version"], 3)
-            self.assertEqual(persisted["settings_schema_version"], 3)
+            self.assertEqual(loaded["settings_schema_version"], 4)
+            self.assertEqual(persisted["settings_schema_version"], 4)
             for candidate in (route, persisted_route):
                 self.assertEqual(candidate["provider_key"], "route-a")
                 self.assertEqual(candidate["model"], "model-a")
@@ -164,7 +164,7 @@ class AiTaskSettingsTests(unittest.TestCase):
             loaded_route = loaded["ai_tasks"]["basic_analysis"]
             persisted_route = persisted["ai_tasks"]["basic_analysis"]
             for candidate in (loaded, persisted):
-                self.assertEqual(candidate["settings_schema_version"], 3)
+                self.assertEqual(candidate["settings_schema_version"], 4)
                 self.assertEqual(candidate["custom_top_level"], "keep-me")
                 for field in legacy_fields:
                     self.assertNotIn(field, candidate)
@@ -235,7 +235,7 @@ class AiTaskSettingsTests(unittest.TestCase):
                     **loaded["providers"][route["provider_key"]],
                 }, [{"role": "user", "content": "hi"}])
 
-            self.assertEqual(loaded["settings_schema_version"], 3)
+            self.assertEqual(loaded["settings_schema_version"], 4)
             self.assertEqual(route["provider_key"], "route-a")
             self.assertEqual(route["model"], "model-a")
             self.assertEqual(route["temperature"], 0.7)

@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script src="/static/auth.js"></script>
     <title>分类浏览 - AI 论文数据库</title>
     <link rel="stylesheet" href="/static/css/core.css">
     <link rel="stylesheet" href="/static/css/components.css">
@@ -18,7 +20,9 @@
         <header>
             <div class="header-top">
                 <div></div>
+                {% if is_admin %}
                 <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+                {% endif %}
             </div>
             <h1>🤖 AI 论文数据库</h1>
         </header>
@@ -27,9 +31,13 @@
             <a href="/" class="nav-link">📅 每日论文</a>
             <a href="/browse" class="nav-link active">📂 分类浏览</a>
             <a href="/search" class="nav-link">🔍 搜索</a>
+            {% if is_authenticated %}
             <a href="/tasks" class="nav-link">📋 论文处理</a>
+            {% endif %}
             <a href="/reports" class="nav-link">📊 每日报告</a>
+            {% if is_authenticated %}
             <a href="/reading-list" class="nav-link">📌 阅读清单</a>
+            {% endif %}
         </nav>
 
         <div class="browse-layout">
@@ -151,7 +159,7 @@
                 </div>
 
                 <!-- 批量操作栏 -->
-                {% if is_authenticated %}
+                {% if is_admin %}
                 <div class="batch-actions">
                     <label class="select-all-label">
                         <input type="checkbox" id="select-all-checkbox" onchange="toggleAll(this)"> 全选
@@ -171,7 +179,7 @@
                 <div class="papers-list">
                     {% for paper in papers %}
                     <div class="paper-card">
-                        {% if is_authenticated %}<div class="paper-select">
+                        {% if is_admin %}<div class="paper-select">
                             <input type="checkbox" class="paper-checkbox" value="{{ paper.paper_key }}" onchange="updateSelectedCount()">
                         </div>{% endif %}
                         <div class="paper-content">
@@ -251,6 +259,8 @@
                                 <a href="/paper/{{ paper.paper_key }}">📖 详情</a>
                                 {% if is_authenticated %}
                                 <a href="javascript:void(0)" class="link-todo" onclick="toggleTodo('{{ paper.paper_key }}', this)">📌 加入清单</a>
+                                {% endif %}
+                                {% if is_admin %}
                                 <a href="javascript:void(0)" class="link-hide" onclick="hidePaper('{{ paper.paper_key }}', this)">😐 不感兴趣</a>
                                 {% endif %}
                             </div>

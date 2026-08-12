@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>登录 - AI 论文数据库</title>
     <link rel="stylesheet" href="/static/css/core.css">
     <link rel="stylesheet" href="/static/css/components.css">
     <link rel="stylesheet" href="/static/css/pages/auth.css">
+    <script src="/static/auth.js"></script>
 </head>
 <body>
     <div class="container">
@@ -15,11 +17,15 @@
         </header>
 
         <div class="settings-section login-card">
-            <h3>输入管理密码</h3>
-            <p class="section-desc">设置页、任务执行和配置接口需要登录后访问。</p>
+            <h3>登录账号</h3>
+            <p class="section-desc">成员账号由管理员邀请创建，不开放自助注册。</p>
             <div class="form-group">
-                <label>管理密码</label>
-                <input type="password" id="password" autofocus onkeydown="if(event.key==='Enter')login()">
+                <label>用户名</label>
+                <input type="text" id="username" autocomplete="username" autofocus>
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
             </div>
             <div class="settings-actions">
                 <button class="btn btn-primary" onclick="login()">登录</button>
@@ -33,6 +39,7 @@
         const NEXT_URL = {{ next_url | tojson }};
         async function login() {
             const statusEl = document.getElementById('login-status');
+            const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
             statusEl.className = 'action-status info';
             statusEl.textContent = '正在登录...';
@@ -40,13 +47,13 @@
                 const resp = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({password})
+                    body: JSON.stringify({username, password})
                 });
                 const result = await resp.json();
                 if (result.status === 'ok') {
-                    window.location.href = result.password_change_recommended
-                        ? '/settings?tab=admin'
-                        : (NEXT_URL || '/settings');
+                    window.location.href = result.password_change_required
+                        ? '/account/password'
+                        : (NEXT_URL || '/');
                 } else {
                     statusEl.className = 'action-status error';
                     statusEl.textContent = '❌ ' + (result.message || '登录失败');

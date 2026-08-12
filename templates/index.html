@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script src="/static/auth.js"></script>
     <title>AI 论文数据库 - 具身智能 & 人工智能</title>
     <link rel="stylesheet" href="/static/css/core.css">
     <link rel="stylesheet" href="/static/css/components.css">
@@ -13,7 +15,9 @@
         <header>
             <div class="header-top">
                 <a href="/about" class="settings-btn" title="了解项目">✨ 项目介绍</a>
+                {% if is_admin %}
                 <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+                {% endif %}
             </div>
             <h1>🤖 AI 论文数据库</h1>
             <p class="subtitle">具身智能 & 人工智能 · 自动抓取 · AI 快速阅读</p>
@@ -28,9 +32,13 @@
             <a href="/" class="nav-link active">📅 每日论文</a>
             <a href="/browse" class="nav-link">📂 分类浏览</a>
             <a href="/search" class="nav-link">🔍 搜索</a>
+            {% if is_authenticated %}
             <a href="/tasks" class="nav-link">📋 论文处理</a>
+            {% endif %}
             <a href="/reports" class="nav-link">📊 每日报告</a>
+            {% if is_authenticated %}
             <a href="/reading-list" class="nav-link">📌 阅读清单</a>
+            {% endif %}
         </nav>
 
         {% if tags %}
@@ -150,6 +158,8 @@
                     <a href="/paper/{{ paper.paper_key }}">📖 详情</a>
                     {% if is_authenticated %}
                     <a href="javascript:void(0)" class="link-todo" onclick="toggleTodo('{{ paper.paper_key }}', this)">📌 加入清单</a>
+                    {% endif %}
+                    {% if is_admin %}
                     <a href="javascript:void(0)" class="link-hide" onclick="hidePaper('{{ paper.paper_key }}', this)">😐 不感兴趣</a>
                     {% endif %}
                 </div>

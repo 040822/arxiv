@@ -312,9 +312,10 @@ def record_ai_usage(usage):
         cursor.execute("""
             INSERT INTO ai_usage_logs (
                 task_key, provider_key, provider_name, model, paper_id, arxiv_id,
-                prompt_tokens, completion_tokens, total_tokens, cached_tokens, cache_miss_tokens
+                prompt_tokens, completion_tokens, total_tokens, cached_tokens, cache_miss_tokens,
+                user_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             usage.get("task_key", ""),
             usage.get("provider_key", ""),
@@ -327,6 +328,7 @@ def record_ai_usage(usage):
             as_int(usage.get("total_tokens")),
             as_int(usage.get("cached_tokens")),
             as_int(usage.get("cache_miss_tokens")),
+            usage.get("user_id"),
         ))
 
 
@@ -352,7 +354,7 @@ def _empty_usage_point(day):
 def get_ai_usage_summary(days=7, group_by="task"):
     """按任务/模型汇总最近 N 天 token 用量，并返回按天分桶的时间序列。"""
     days = max(1, min(365, as_int(days) or 7))
-    group_by = group_by if group_by in {"task", "model"} else "task"
+    group_by = group_by if group_by in {"task", "model", "user"} else "task"
     dates = _usage_dates(days)
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -375,7 +377,23 @@ def get_ai_usage_summary(days=7, group_by="task"):
         """, (f"-{days} days",))
         rows = cursor.fetchall()
 
-        if group_by == "model":
+        if group_by == "user":
+            cursor.execute("""
+                SELECT date(a.created_at) AS usage_date,
+                       COALESCE(u.username, 'system') AS group_key,
+                       COALESCE(u.display_name, u.username, '系统调用') AS label,
+                       COUNT(*) AS call_count,
+                       SUM(a.prompt_tokens) AS prompt_tokens,
+                       SUM(a.completion_tokens) AS completion_tokens,
+                       SUM(a.total_tokens) AS total_tokens,
+                       SUM(a.cached_tokens) AS cached_tokens,
+                       SUM(a.cache_miss_tokens) AS cache_miss_tokens
+                FROM ai_usage_logs a LEFT JOIN users u ON a.user_id = u.id
+                WHERE a.created_at >= datetime('now', ?)
+                GROUP BY usage_date, group_key, label
+                ORDER BY usage_date, group_key
+            """, (f"-{days} days",))
+        elif group_by == "model":
             cursor.execute("""
                 SELECT
                     date(created_at) AS usage_date,

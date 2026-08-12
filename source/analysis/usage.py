@@ -1,6 +1,19 @@
 """Normalize token usage across OpenAI-compatible response shapes."""
 
+from contextvars import ContextVar
+
 from source.value_coercion import as_int
+
+
+_usage_user_id = ContextVar("ai_usage_user_id", default=None)
+
+
+def set_usage_user_id(user_id):
+    _usage_user_id.set(user_id)
+
+
+def get_usage_user_id():
+    return _usage_user_id.get()
 
 
 def _value(obj, key, default=None):

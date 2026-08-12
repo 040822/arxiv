@@ -113,9 +113,19 @@ APScheduler cron(day_of_week, hour, minute)
 
 ### 2. 认证与敏感字段
 
-- 首次启动会确保管理密码存在；`/settings`、`/tasks`、阅读清单、论文学习页、进度流、写接口和敏感设置读取接口都需要登录，匿名访问仅限公开只读内容
-- 管理登录默认持久 180 天，使用签名 cookie；`session_secret` 存在 `settings.json` 中以保证服务重启后仍有效，修改管理密码会使旧登录状态失效
+- `users` 是全部凭据的唯一真源；唯一 `admin` 由 v4 迁移创建，旧 settings 管理哈希迁移成功后逐字段移除
+- `route_policy()` 将每个非静态路由归为 public/member/admin；未知路由按 admin 失败关闭，API 未登录返回 401、权限不足返回 403
+- session 保存 `user_id/session_version` 并 30 天滑动有效；逐请求检查用户存在、启用和版本，改密/重置/停用/删除通过递增版本撤销旧 cookie
+- 所有 cookie 认证的非安全方法（包括登录和退出）必须通过 session-backed CSRF；前端统一由 `static/auth.js` 添加请求头
+- 私有学习存储接口必须显式接收当前 principal 的 `user_id`；不得信任 URL、JSON 或表单中的用户 ID，管理员也只能看其他用户的数量汇总
 - `GET /api/providers` 只能返回 `api_key_masked`，不要返回完整 `api_key`
+
+### 公私数据与字段权限
+
+论文、分析、评分、标签、深度阅读、报告和全局推荐是公有数据；阅读清单、聊天、练习、答案和苏格拉底记录是按 user_id 隔离的私有数据。隐藏仅是展示筛选属性，任何角色都可读，只有管理员可修改。成员更新分析时只允许 `rating` 和 `tags`，携带其他字段必须返回 403。成员可导入立即公开的论文并覆盖共享深度阅读；摘要/简评、PDF 替换、隐藏、删除、批处理、任务和设置仅 admin。
+
+关键公有写入和用户管理写入 `audit_events`，元数据不得包含密码、API Key、Prompt、聊天、答案或完整深度阅读正文。论文存在私有记录时普通删除返回 409；只有 admin 显式 force 才能级联删除。
+
 - 个性化推荐的研究兴趣保存在 `settings.personalization.research_interests`；推荐评分必须使用独立 `recommendation` 任务路由，并且只有 `recommendation_interest_hash` 匹配当前兴趣时才能用于报告排序
 - WebDAV 云备份配置保存在 `settings.webdav_backup`；GET 接口只返回 `password_masked`，自动备份失败写入 backup 步骤并使父任务变为 `warning`
 - 用户/AI/数据库内容进入 HTML 前必须转义，报告页的 `|safe` 只用于后端生成且已转义的 HTML

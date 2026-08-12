@@ -139,7 +139,11 @@ APScheduler（星期 + 时分）→ daily_pipeline()
 
 定时日报与 `/api/run` 共用进程内非阻塞互斥锁；定时冲突写 `skipped`，手动冲突返回 409。调度器使用内存 job store，因此服务停机错过的触发不会补跑。
 
-### 5. WebDAV 云备份流
+### 5. 账号、授权与私有数据流
+
+`users` 是凭据唯一真源。请求由 `source.web.auth` 从 session 的 `user_id/session_version` 恢复 principal，再按公开/成员/admin 策略授权；私有学习查询显式注入 principal 的 `user_id`。账号改密、重置、停用或删除通过递增会话版本撤销旧 cookie。公有字段最后写入生效，关键变化写入脱敏 `audit_events`。
+
+### 6. WebDAV 云备份流
 
 ```
 设置页保存 WebDAV 配置 → settings.webdav_backup
@@ -228,7 +232,7 @@ app.py -> source/web/application.py + Blueprints
 **决策：** 使用 SQLite 而非 PostgreSQL/MySQL。
 
 **原因：**
-- 单用户本地部署，不需要复杂的并发控制
+- 邀请制单机/实验室共用模型：少量用户共用一台服务器，通过 `users` 表与私有归属字段隔离数据，不需要多节点并发控制
 - SQLite 零配置，文件级数据库，便于备份
 - WAL 模式支持读写并发，满足 Web 服务需求
 
@@ -305,11 +309,11 @@ app.py -> source/web/application.py + Blueprints
 
 ## 安全考量
 
-- 管理密码使用 scrypt 慢哈希存储；旧 SHA-256 摘要在成功登录后自动升级
+- 账号密码在 `users` 表使用 scrypt；旧 admin 哈希由 v4 迁移复制后从 settings 移除
 - API Key 在接口返回时脱敏（只显示前 4 后 4 位）
-- 设置管理密码后，设置页、任务页、写接口和敏感设置读取接口需要登录
-- 管理登录默认通过签名 cookie 持久保存 180 天，使用 `session_secret` 保持服务重启后的登录状态，修改管理密码后旧登录状态失效
+- 三级权限失败关闭；私有数据按 `user_id` 隔离，管理员也不能读取成员私有正文
+- session 30 天滑动有效并逐请求校验版本；所有 cookie 写请求校验 CSRF
 - 供应商列表接口只返回 `api_key_masked`，不返回完整 `api_key`
 - 报告 HTML 由后端生成，数据库/AI 内容进入 HTML 前必须转义
 - 代理配置、WebDAV 密码和 SMTP 密码明文存储在 settings.json
-- WebDAV 备份包按设计包含原始 settings.json，因此也包含 API Key、管理密码哈希和 session secret
+- WebDAV 备份包包含数据库账号/私有学习数据以及 settings 中的 API Key/session secret

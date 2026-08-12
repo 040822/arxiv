@@ -142,8 +142,8 @@ def insert_paper(paper_data):
                     paper_key, arxiv_id, source_type, source_id, ingest_mode,
                     title, authors, abstract, categories, primary_category,
                     url, pdf_url, venue, published_date, updated_date,
-                    pdf_local_path, pdf_sha256, pdf_size_bytes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    pdf_local_path, pdf_sha256, pdf_size_bytes, imported_by_user_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 paper_key, arxiv_id, source_type, source_id, ingest_mode,
                 str(paper_data.get("title") or "").strip(),
@@ -154,7 +154,7 @@ def insert_paper(paper_data):
                 paper_data.get("pdf_url"), paper_data.get("venue"),
                 paper_data.get("published_date"), paper_data.get("updated_date"),
                 paper_data.get("pdf_local_path"), paper_data.get("pdf_sha256"),
-                paper_data.get("pdf_size_bytes"),
+                paper_data.get("pdf_size_bytes"), paper_data.get("imported_by_user_id"),
             ))
             paper_id = cursor.lastrowid
 
@@ -593,7 +593,6 @@ def search_papers(keyword, limit=50):
                 FROM papers p
                 LEFT JOIN analysis a ON p.id = a.paper_id
                 WHERE p.arxiv_id = ?
-                  AND (p.hidden IS NULL OR p.hidden = 0)
                 LIMIT ?
             """, (arxiv_id, limit))
         else:
@@ -634,8 +633,7 @@ def search_papers(keyword, limit=50):
                        ({relevance_sql}) AS search_score
                 FROM papers p
                 LEFT JOIN analysis a ON p.id = a.paper_id
-                WHERE (p.hidden IS NULL OR p.hidden = 0)
-                AND {required_sql}
+                WHERE {required_sql}
                 ORDER BY search_score DESC, a.rating DESC, p.published_date DESC, p.arxiv_id
                 LIMIT ?
             """
@@ -707,6 +705,79 @@ def delete_paper(arxiv_id):
         affected = cursor.rowcount
 
     return affected > 0
+
+
+def get_paper_private_impact(paper_key):
+    """Return aggregate private-data counts without exposing any private content."""
+    with get_connection() as conn:
+        return _paper_private_impact_in_conn(conn, paper_key)
+
+def _paper_private_impact_in_conn(conn, paper_key):
+    row = conn.execute("""
+        SELECT p.id,
+               (SELECT COUNT(*) FROM reading_list r WHERE r.paper_id = p.id) AS reading_list,
+               (SELECT COUNT(*) FROM paper_chat_messages c WHERE c.paper_id = p.id) AS chat_messages,
+               (SELECT COUNT(*) FROM paper_quiz_sessions s WHERE s.paper_id = p.id) AS quiz_sessions,
+               (SELECT COUNT(*) FROM paper_quiz_attempts a
+                JOIN paper_quiz_questions q ON a.question_id = q.id
+                JOIN paper_quiz_sessions s ON q.session_id = s.id
+                WHERE s.paper_id = p.id) AS quiz_attempts
+        FROM papers p WHERE p.paper_key = ? OR p.arxiv_id = ?
+    """, (paper_key, paper_key)).fetchone()
+    if not row:
+        return None
+    impact = {key: int(row[key] or 0) for key in (
+        "reading_list", "chat_messages", "quiz_sessions", "quiz_attempts"
+    )}
+    impact["total"] = sum(impact.values())
+    return impact
+
+
+def delete_paper_protected(paper_key, force=False):
+    """Atomically check private impact and delete one paper under a write lock."""
+    with get_connection() as conn:
+        conn.execute("BEGIN EXCLUSIVE")
+        paper = conn.execute(
+            "SELECT * FROM papers WHERE paper_key = ? OR arxiv_id = ?",
+            (paper_key, paper_key),
+        ).fetchone()
+        impact = _paper_private_impact_in_conn(conn, paper_key)
+        if not paper:
+            return {"deleted": False, "paper": None, "impact": None, "conflict": False}
+        if impact["total"] and not force:
+            return {"deleted": False, "paper": dict(paper), "impact": impact, "conflict": True}
+        deleted = conn.execute(
+            "DELETE FROM papers WHERE id = ?", (paper["id"],)
+        ).rowcount
+        return {"deleted": bool(deleted), "paper": dict(paper), "impact": impact, "conflict": False}
+
+
+def batch_delete_papers_protected(paper_keys):
+    """Atomically skip protected papers and delete only safe rows."""
+    if not paper_keys:
+        return {"deleted": 0, "skipped": [], "papers": []}
+    with get_connection() as conn:
+        conn.execute("BEGIN EXCLUSIVE")
+        skipped = []
+        safe_rows = []
+        seen_ids = set()
+        for key in paper_keys:
+            row = conn.execute(
+                "SELECT * FROM papers WHERE paper_key = ? OR arxiv_id = ?", (key, key)
+            ).fetchone()
+            if not row or row["id"] in seen_ids:
+                continue
+            seen_ids.add(row["id"])
+            impact = _paper_private_impact_in_conn(conn, key)
+            if impact and impact["total"]:
+                skipped.append(key)
+            else:
+                safe_rows.append(dict(row))
+        deleted = 0
+        for paper in safe_rows:
+            deleted += conn.execute("DELETE FROM papers WHERE id = ?", (paper["id"],)).rowcount
+        return {"deleted": deleted, "skipped": skipped, "papers": safe_rows}
+
 
 
 def batch_delete_papers(arxiv_ids):
