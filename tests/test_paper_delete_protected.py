@@ -137,7 +137,13 @@ class DeletePaperProtectedTests(unittest.TestCase):
 
 
 class DeletePaperRaceTests(unittest.TestCase):
-    """Prove BEGIN IMMEDIATE removes the check-then-delete TOCTOU window."""
+    """Prove the impact check and delete stay atomic under concurrent private
+    writes: in WAL mode BEGIN IMMEDIATE holds the exclusive WAL write lock from
+    the BEGIN statement, so either the concurrent insert commits first (the
+    check must then see it -> conflict) or the delete wins (the insert is then
+    rejected by the write lock / FK). Orphan rows or silent data loss are
+    impossible regardless of transaction variant.
+    """
 
     ROUNDS = 8
 

@@ -736,7 +736,7 @@ def _paper_private_impact_in_conn(conn, paper_key):
 def delete_paper_protected(paper_key, force=False):
     """Atomically check private impact and delete one paper under a write lock."""
     with get_connection() as conn:
-        conn.execute("BEGIN EXCLUSIVE")
+        conn.execute("BEGIN IMMEDIATE")
         paper = conn.execute(
             "SELECT * FROM papers WHERE paper_key = ? OR arxiv_id = ?",
             (paper_key, paper_key),
@@ -757,7 +757,7 @@ def batch_delete_papers_protected(paper_keys):
     if not paper_keys:
         return {"deleted": 0, "skipped": [], "papers": []}
     with get_connection() as conn:
-        conn.execute("BEGIN EXCLUSIVE")
+        conn.execute("BEGIN IMMEDIATE")
         skipped = []
         safe_rows = []
         seen_ids = set()
