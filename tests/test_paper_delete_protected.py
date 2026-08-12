@@ -226,6 +226,38 @@ class DeletePaperRaceTests(unittest.TestCase):
             else:
                 self.fail(f"round {round_index}: unexpected outcome {outcomes}")
 
+    def test_insert_inside_check_delete_critical_section_is_blocked(self):
+        """Deterministic interleaving: a no-wait writer must be blocked while
+        the deleter holds BEGIN IMMEDIATE (after the impact check), and must be
+        rejected by the FK after the delete commits. This pins the critical
+        section itself, complementing the barrier-based end-state test."""
+        paper_id = insert_paper({
+            "paper_key": "2608.00999", "arxiv_id": "2608.00999", "source_type": "arxiv",
+            "source_id": "2608.00999", "ingest_mode": "feed",
+            "title": "Paper", "authors": [], "abstract": "Abstract", "categories": [],
+        })
+        no_wait = sqlite3.connect(connection.DB_PATH, timeout=0)
+        no_wait.execute("PRAGMA foreign_keys=ON")
+        try:
+            with connection.get_connection() as deleter:
+                deleter.execute("BEGIN IMMEDIATE")
+                self.assertIsNotNone(deleter.execute(
+                    "SELECT * FROM papers WHERE id = ?", (paper_id,)
+                ).fetchone())
+                with self.assertRaises(sqlite3.OperationalError):
+                    no_wait.execute(
+                        "INSERT INTO reading_list (user_id, paper_id) VALUES (?, ?)",
+                        (self.admin_id, paper_id),
+                    )
+                deleter.execute("DELETE FROM papers WHERE id = ?", (paper_id,))
+            with self.assertRaises(sqlite3.IntegrityError):
+                no_wait.execute(
+                    "INSERT INTO reading_list (user_id, paper_id) VALUES (?, ?)",
+                    (self.admin_id, paper_id),
+                )
+        finally:
+            no_wait.close()
+
 
 if __name__ == "__main__":
     unittest.main()
