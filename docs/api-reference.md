@@ -194,6 +194,8 @@ GET /api/progress/<task_id>
 }
 ```
 
+任务进度按当前登录用户与 `task_id` 共同隔离，不会读取或覆盖其他用户的同名任务。`completed` / `error` 终态可供 SSE 读取和短暂重连 10 分钟，之后在后续进度读写时清理。
+
 status 值：`running` / `completed` / `error`
 
 ---

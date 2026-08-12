@@ -557,6 +557,11 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 - 涉及 `data/` 的执行计划，完成清单必须包含"确认 settings.json 未被重建"：运行 `python scripts/check_settings_guardrail.py`（退出码 0=OK、1=疑似重建），或检查启动日志中的重建告警
 - 守卫机制三层：① `tests/test_settings_guardrail.py` 只测判定逻辑本身（构造数据，不读真实文件，CI/本地一致）；② `create_app()` 启动时对真实文件告警记 `logger.warning`（只写日志、不阻断服务启动，systemctl 下见 `journalctl -u <服务名>`）；③ `scripts/check_settings_guardrail.py` 显式检查真实文件（仅只读，可挂 cron 或进计划清单）
 
+### 7.9 SSE 进度注册表
+- `source/web/progress.py` 的内部任务键必须包含当前 `user_id` 与客户端 `task_id`；不同用户可同时使用同一 task_id，调用方不得自行拼接用户标识实现隔离
+- `completed` / `error` 终态保留 600 秒供 SSE 消费和短暂重连，后续读写时懒清理；`running` 等非终态不使用该 TTL，避免误删长任务
+- SSE 读取必须从当前 principal 注入 `user_id`，不得接受客户端 user id；`update_progress()` / `get_progress()` 的接口和事件 JSON 不暴露内部复合键
+
 ---
 
 ## 8. 常见运维操作

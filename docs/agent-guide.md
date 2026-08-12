@@ -235,7 +235,7 @@ if r.get("authors") and isinstance(r["authors"], str):
 
 ### 5. SSE 进度推送
 
-长任务使用 SSE（Server-Sent Events）推送进度。客户端通过 `EventSource` 监听 `/api/progress/<task_id>`。
+长任务使用 SSE（Server-Sent Events）推送进度。客户端通过 `EventSource` 监听 `/api/progress/<task_id>`。后端以当前用户和 task_id 共同隔离任务；终态保留 10 分钟供消费和短暂重连，后续读写时懒清理。
 
 ---
 

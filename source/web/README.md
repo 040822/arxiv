@@ -95,11 +95,11 @@ AI 供应商连接管理：
 - `POST /api/settings/ai-tasks/<task_key>/test`：用未保存的草稿配置发短请求，返回延迟、思考能力检测（reasoning_content / reasoning_tokens / 启发式判断）与思考协议提示
 
 ### `progress.py`
-进程内进度注册表：`update_progress(task_id, data)` 写入带时间戳的 dict，`get_progress(task_id)` 读取。线程安全（`threading.Lock`），仅存内存——服务重启后进度丢失，前端配合 SSE 短轮询使用。
+进程内进度注册表：`update_progress(task_id, data)` 写入带时间戳的 dict，`get_progress(task_id, user_id)` 按当前用户读取。内部以 `(user_id, task_id)` 隔离命名空间，线程安全（`threading.Lock`）；`completed` / `error` 终态保留 10 分钟后在后续读写时懒清理，运行态不使用该 TTL。注册表仅存内存，服务重启后进度丢失，前端配合 SSE 短轮询使用。
 
 ## 注意事项
 
 - **鉴权边界**：新增路由必须在 `route_policy()` 分类；私有存储查询必须从当前 principal 注入 `user_id`，不得接收客户端 user id。隐藏论文是公开展示筛选属性，不是访问控制。
-- **进度上报**：耗时任务通过 `update_progress(task_id, ...)` 上报，前端用 `/api/progress/<task_id>` SSE 订阅；task_id 由前端传入（如 `add_paper`、`fetch`）。
+- **进度上报**：耗时任务通过 `update_progress(task_id, ...)` 上报，前端用 `/api/progress/<task_id>` SSE 订阅；task_id 由前端传入（如 `add_paper`、`fetch`），服务端始终按当前 principal 隔离同名任务。
 - **手动任务日志**：推荐新任务端点使用 `task_endpoint.py` 的装饰器与 `TaskEndpointResult`；`tasks_api.py` 中部分旧端点仍为手写 `start_task_log`/`finish_task_log` 模式。
 - **部分文件存在未使用的共享 import 块**（`analyzer`/`backup`/`fetcher`/`source.pipeline` 整块引入），属历史遗留，维护时无需全部清理。

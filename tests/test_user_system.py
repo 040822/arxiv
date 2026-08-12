@@ -3,6 +3,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from source.settings import store as settings_store
 from source.storage import connection
@@ -126,17 +127,74 @@ class InviteOnlyUserSystemTests(unittest.TestCase):
         self.assertFalse(disabled["enabled"])
         self.assertGreater(disabled["session_version"], old_version)
 
-    def test_async_progress_is_visible_only_to_its_owner(self):
+    def test_async_progress_uses_a_separate_task_namespace_per_user(self):
         progress_store.clear()
         update_progress("private-task", {"status": "running"}, user_id=41)
         self.assertEqual(get_progress("private-task", user_id=41)["status"], "running")
         self.assertIsNone(get_progress("private-task", user_id=42))
-        self.assertFalse(update_progress("private-task", {"status": "spoofed"}, user_id=42))
+        self.assertTrue(update_progress("private-task", {"status": "queued"}, user_id=42))
         self.assertEqual(get_progress("private-task", user_id=41)["status"], "running")
-        self.assertIsNone(get_progress("private-task", user_id=42))
+        self.assertEqual(get_progress("private-task", user_id=42)["status"], "queued")
         progress_store.clear()
 
+    def test_user_can_start_after_another_users_terminal_task_with_the_same_id(self):
+        progress_store.clear()
+        try:
+            for terminal_status in ("completed", "error"):
+                with self.subTest(terminal_status=terminal_status):
+                    task_id = f"shared-{terminal_status}"
+                    self.assertTrue(update_progress(task_id, {"status": terminal_status}, user_id=41))
+                    self.assertTrue(update_progress(task_id, {"status": "running"}, user_id=42))
 
+                    self.assertEqual(get_progress(task_id, user_id=41)["status"], terminal_status)
+                    self.assertEqual(get_progress(task_id, user_id=42)["status"], "running")
+        finally:
+            progress_store.clear()
+
+    def test_terminal_progress_expires_after_ten_minutes(self):
+        progress_store.clear()
+        try:
+            with patch("source.web.progress.time.time") as now:
+                now.return_value = 1000
+                update_progress("finished-task", {"status": "completed"}, user_id=41)
+
+                now.return_value = 1599
+                self.assertEqual(get_progress("finished-task", user_id=41)["status"], "completed")
+
+                now.return_value = 1600
+                self.assertIsNone(get_progress("finished-task", user_id=41))
+        finally:
+            progress_store.clear()
+
+    def test_running_progress_does_not_expire_at_the_terminal_ttl(self):
+        progress_store.clear()
+        try:
+            with patch("source.web.progress.time.time") as now:
+                now.return_value = 1000
+                update_progress("long-task", {"status": "running"}, user_id=41)
+
+                now.return_value = 10000
+                self.assertEqual(get_progress("long-task", user_id=41)["status"], "running")
+        finally:
+            progress_store.clear()
+
+    def test_new_progress_update_sweeps_expired_terminal_entries(self):
+        progress_store.clear()
+        try:
+            with patch("source.web.progress.time.time") as now:
+                now.return_value = 1000
+                update_progress("old-task", {"status": "error"}, user_id=41)
+
+                now.return_value = 1600
+                update_progress("new-task", {"status": "running"}, user_id=42)
+
+                # Move the test clock back so get_progress cannot perform the
+                # expiry itself; the earlier write must already have swept it.
+                now.return_value = 1001
+                self.assertIsNone(get_progress("old-task", user_id=41))
+                self.assertEqual(get_progress("new-task", user_id=42)["status"], "running")
+        finally:
+            progress_store.clear()
 
     def test_audit_metadata_drops_secrets_and_private_content(self):
         record_audit_event(self.admin, "safe.test", "paper", "p1", {
