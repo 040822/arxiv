@@ -11,6 +11,7 @@ from source.settings import get_session_secret
 from source.settings.guardrail import warn_on_settings_rebuild
 from source.storage import init_db, interrupt_running_task_logs
 from .auth import bp as auth_bp
+from .benchmark_api import bp as benchmark_bp
 from .import_api import bp as import_bp
 from .learning_api import bp as learning_bp
 from .pages import bp as pages_bp
@@ -39,7 +40,7 @@ def build_app():
     )
     for blueprint in (
         auth_bp, pages_bp, papers_bp, import_bp, learning_bp,
-        tasks_bp, settings_bp, providers_bp,
+        tasks_bp, settings_bp, providers_bp, benchmark_bp,
     ):
         app.register_blueprint(blueprint)
     return app
@@ -64,6 +65,10 @@ def create_app():
     interrupted = interrupt_running_task_logs()
     if interrupted:
         logger.warning(f"Marked {interrupted} orphaned task logs as interrupted.")
+    from source.storage.benchmark import mark_interrupted_runs
+    interrupted_benchmark_runs = mark_interrupted_runs()
+    if interrupted_benchmark_runs:
+        logger.warning(f"Marked {interrupted_benchmark_runs} orphaned benchmark runs as interrupted.")
     configure_daily_job()
     if not getattr(scheduler, "running", False):
         scheduler.start()

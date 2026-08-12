@@ -169,14 +169,21 @@ def create_draft(subset_name, paper_keys):
     return get_suite(suite_id), failures
 
 
-def generate_cases(suite_id):
+def generate_cases(suite_id, progress_callback=None):
     """对题库全部论文执行出题调用；返回逐论文结果摘要。"""
     suite = _require_not_frozen(suite_id)
     from source.storage.benchmark import list_suite_papers
     papers = list_suite_papers(suite_id)
     summaries = []
-    for paper in papers:
+    for index, paper in enumerate(papers, start=1):
+        if progress_callback:
+            progress_callback({
+                "current": index, "total": len(papers), "phase": "author",
+                "message": f"正在出题（{index}/{len(papers)}）：{paper.get('paper_key', '')}",
+            })
         summaries.append(_author.generate_cases_for_paper(suite_id, paper, suite))
+    if progress_callback:
+        progress_callback({"status": "completed", "message": "出题完成"})
     return summaries
 
 
@@ -316,7 +323,7 @@ def _load_run(run_id):
     return run
 
 
-def start_run(suite_id, candidates, repeats=1, max_calls=None):
+def start_run(suite_id, candidates, repeats=1, max_calls=None, progress_callback=None):
     """启动一次评测运行：执行被测调用、裁判与复核；返回 run_id。
 
     candidates: [{"label": ..., "config": {...provider_key/model/参数...}}]
@@ -347,7 +354,7 @@ def start_run(suite_id, candidates, repeats=1, max_calls=None):
             cfg, config_hash(cfg), {key: value for key, value in actual_params.items() if value is not None},
         )
     try:
-        _execute_run(run_id)
+        _execute_run(run_id, progress_callback=progress_callback)
         set_run_status(run_id, "completed")
     except _runner.BudgetExceeded:
         set_run_status(run_id, "interrupted")
@@ -357,7 +364,7 @@ def start_run(suite_id, candidates, repeats=1, max_calls=None):
     return run_id
 
 
-def resume_run(run_id):
+def resume_run(run_id, progress_callback=None):
     """恢复一次中断/失败的运行：跳过已保存的响应，继续未完成部分。"""
     run = _load_run(run_id)
     if run.get("status") not in ("interrupted", "error", "running"):
@@ -365,7 +372,7 @@ def resume_run(run_id):
     from source.storage.benchmark import set_run_status
     set_run_status(run_id, "running")
     try:
-        _execute_run(run_id)
+        _execute_run(run_id, progress_callback=progress_callback)
         set_run_status(run_id, "completed")
     except _runner.BudgetExceeded:
         set_run_status(run_id, "interrupted")
@@ -375,7 +382,7 @@ def resume_run(run_id):
     return run_id
 
 
-def _execute_run(run_id):
+def _execute_run(run_id, progress_callback=None):
     """执行被测调用（深度阅读 + 三轮交流），跳过已保存响应（输出复用）。"""
     from source.storage.benchmark import (
         get_existing_response,
@@ -391,6 +398,13 @@ def _execute_run(run_id):
     candidates = list_run_candidates(run_id)
     max_calls = run.get("max_calls")
     calls_made = 0
+    total_expected = len(papers) * len(candidates) * run["repeats"] * (1 + CHAT_ROUNDS)
+
+    def _progress(phase, message, done):
+        if progress_callback:
+            progress_callback({
+                "current": done, "total": total_expected, "phase": phase, "message": message,
+            })
 
     def _charge_budget():
         nonlocal calls_made
@@ -408,12 +422,14 @@ def _execute_run(run_id):
         _charge_budget()
         response, calls = runner_fn()
         calls_made += calls
-        return save_benchmark_response(
+        response_id = save_benchmark_response(
             run_id, candidate_id, paper_id, track, repeat_index, round_index,
             response["prompt_snapshot"], response["raw_output"], response["parsed"],
             response["status"], response["finish_reason"], response["usage_json"],
             response["latency_ms"], response["continuation_count"],
         )
+        _progress(track, f"已保存 {track} 响应", calls_made)
+        return response_id
 
     def _chat_step(suite, paper, cfg, paper_ref, chat_cases, round_index, candidate_id,
                    repeat_index):
@@ -459,7 +475,17 @@ def _execute_run(run_id):
                             candidate["id"], repeat_index,
                         ),
                     )
+    if progress_callback:
+        progress_callback({
+            "current": total_expected, "total": total_expected, "phase": "judge",
+            "message": "被测调用完成，开始裁判评分",
+        })
     _judge.judge_run(_load_run(run_id))
+    if progress_callback:
+        progress_callback({
+            "current": total_expected, "total": total_expected, "phase": "judge",
+            "message": "裁判与复核完成", "status": "completed",
+        })
 
 
 def get_run(run_id):

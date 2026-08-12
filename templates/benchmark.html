@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script src="/static/auth.js"></script>
+    <title>论文阅读 Benchmark - AI 论文数据库</title>
+    <link rel="stylesheet" href="/static/css/core.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/pages/benchmark.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div></div>
+                {% if is_admin %}
+                <a href="/settings" class="settings-btn">⚙️ 设置</a>
+                {% endif %}
+            </div>
+            <h1>📏 论文阅读 Benchmark</h1>
+        </header>
+
+        <nav class="nav-bar">
+            <a href="/" class="nav-link">📅 每日论文</a>
+            <a href="/browse" class="nav-link">📂 分类浏览</a>
+            <a href="/search" class="nav-link">🔍 搜索</a>
+            <a href="/tasks" class="nav-link">📋 论文处理</a>
+            <a href="/benchmark" class="nav-link active">📏 Benchmark</a>
+            <a href="/reports" class="nav-link">📊 每日报告</a>
+            <a href="/reading-list" class="nav-link">📌 阅读清单</a>
+        </nav>
+
+        <!-- 任务路由配置 -->
+        <div class="action-panel">
+            <h3>🔧 Benchmark 任务路由</h3>
+            <p class="section-desc">出题/裁判模型路由自管理，复用供应商凭据；候选模型仍从「论文对话」与「深度阅读」路由解析。</p>
+            <div class="form-row">
+                <div class="form-group form-grow">
+                    <label>出题模型（benchmark_author）</label>
+                    <select id="route-author-provider" onchange="refreshRouteModels('author')"></select>
+                    <select id="route-author-model"></select>
+                    <label class="inline-label"><input type="checkbox" id="route-author-thinking" onchange="toggleRouteThinking('author')"> 思考模型</label>
+                    <select id="route-author-effort" style="width:auto">
+                        <option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
+                    </select>
+                    <label class="inline-label">输出上限 <input type="number" id="route-author-max-tokens" min="1" max="200000" style="width:90px"></label>
+                    <button class="btn btn-primary" onclick="saveRoute('author')">保存</button>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group form-grow">
+                    <label>主裁判模型（benchmark_judge）</label>
+                    <select id="route-judge-provider" onchange="refreshRouteModels('judge')"></select>
+                    <select id="route-judge-model"></select>
+                    <label class="inline-label"><input type="checkbox" id="route-judge-thinking" onchange="toggleRouteThinking('judge')"> 思考模型</label>
+                    <select id="route-judge-effort" style="width:auto">
+                        <option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
+                    </select>
+                    <label class="inline-label">输出上限 <input type="number" id="route-judge-max-tokens" min="1" max="200000" style="width:90px"></label>
+                    <button class="btn btn-primary" onclick="saveRoute('judge')">保存</button>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group form-grow">
+                    <label>复核裁判模型（benchmark_judge_review）</label>
+                    <select id="route-judge_review-provider" onchange="refreshRouteModels('judge_review')"></select>
+                    <select id="route-judge_review-model"></select>
+                    <label class="inline-label"><input type="checkbox" id="route-judge_review-thinking" onchange="toggleRouteThinking('judge_review')"> 思考模型</label>
+                    <select id="route-judge_review-effort" style="width:auto">
+                        <option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
+                    </select>
+                    <label class="inline-label">输出上限 <input type="number" id="route-judge_review-max-tokens" min="1" max="200000" style="width:90px"></label>
+                    <button class="btn btn-primary" onclick="saveRoute('judge_review')">保存</button>
+                </div>
+            </div>
+            <div id="route-status" class="action-status"></div>
+        </div>
+
+        <!-- 新建题库 -->
+        <div class="action-panel">
+            <h3>📦 新建题库草稿</h3>
+            <div class="form-row">
+                <div class="form-group form-grow">
+                    <label>题库子集名称（字母/数字/下划线/连字符，如 pilot / core）</label>
+                    <input type="text" id="draft-subset" placeholder="pilot">
+                </div>
+            </div>
+            <div class="form-group form-grow">
+                <label>选择论文（最多 50 篇；全文提取失败的论文无法入题库）</label>
+                <input type="text" id="paper-search" placeholder="搜索标题或 paper_key..." oninput="loadPapers(this.value)">
+            </div>
+            <div id="paper-list" class="benchmark-paper-list"></div>
+            <div class="settings-actions">
+                <button class="btn btn-primary" onclick="createDraft()">📦 创建草稿</button>
+            </div>
+            <div id="draft-status" class="action-status"></div>
+        </div>
+
+        <!-- 题库列表 -->
+        <div class="action-panel">
+            <h3>🗂️ 题库列表</h3>
+            <table class="benchmark-table" id="suite-table">
+                <thead>
+                    <tr><th>版本</th><th>状态</th><th>论文</th><th>已确认题目(深读/交流)</th><th>校验和</th><th>操作</th></tr>
+                </thead>
+                <tbody id="suite-rows"></tbody>
+            </table>
+        </div>
+
+        <!-- 题库详情 -->
+        <div id="suite-detail" class="action-panel" style="display:none">
+            <h3>📋 题库详情 <span id="suite-detail-version"></span></h3>
+            <div id="suite-detail-status"></div>
+            <h4>论文快照</h4>
+            <table class="benchmark-table">
+                <thead><tr><th>paper_key</th><th>标题</th><th>正文字符数</th><th>文本哈希</th></tr></thead>
+                <tbody id="suite-paper-rows"></tbody>
+            </table>
+            <h4>题目与审核 <button class="btn" onclick="reviewAll('accept')">全部接受</button> <button class="btn" onclick="reviewAll('reject')">全部驳回</button></h4>
+            <div class="settings-actions">
+                <button class="btn btn-primary" onclick="generateCases()">🤖 自动出题（每篇论文 1 次调用）</button>
+            </div>
+            <div id="generate-status" class="action-status"></div>
+            <table class="benchmark-table">
+                <thead><tr><th>轨道</th><th>题号</th><th>问题</th><th>状态</th><th>证据/备注</th><th>操作</th></tr></thead>
+                <tbody id="case-rows"></tbody>
+            </table>
+            <div class="settings-actions">
+                <button class="btn btn-primary" onclick="freezeSuite()">🔒 冻结题库</button>
+            </div>
+            <div id="freeze-status" class="action-status"></div>
+
+            <h4>候选模型与运行</h4>
+            <div id="candidate-rows"></div>
+            <div class="settings-actions">
+                <button class="btn" onclick="addCandidateRow()">＋ 添加候选</button>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>重复次数（1-5）</label>
+                    <input type="number" id="run-repeats" min="1" max="5" value="1">
+                </div>
+                <div class="form-group">
+                    <label>硬预算调用数（可留空）</label>
+                    <input type="number" id="run-max-calls" min="1" placeholder="如 100">
+                </div>
+                <div class="form-group form-grow">
+                    <button class="btn" onclick="refreshEstimate()">估算调用量</button>
+                    <span id="estimate-result" class="section-desc"></span>
+                </div>
+            </div>
+            <div class="settings-actions">
+                <button class="btn btn-primary" onclick="startRun()">▶️ 开始评测运行</button>
+            </div>
+            <div id="run-status" class="action-status"></div>
+            <div id="benchmark-progress" style="display:none">
+                <div class="progress-header"><span id="benchmark-progress-title">执行中...</span><span id="benchmark-progress-count">0/0</span></div>
+                <div class="progress-bar-bg"><div id="benchmark-progress-bar" class="progress-bar-fill" style="width:0%"></div></div>
+                <div id="benchmark-progress-detail" class="progress-detail"></div>
+            </div>
+        </div>
+
+        <!-- 运行与报告 -->
+        <div class="action-panel">
+            <h3>📊 运行与报告</h3>
+            <table class="benchmark-table">
+                <thead><tr><th>运行</th><th>状态</th><th>候选</th><th>响应</th><th>操作</th></tr></thead>
+                <tbody id="run-rows"></tbody>
+            </table>
+            <div id="report-area"></div>
+        </div>
+    </div>
+
+    <script>
+    let routeData = null;
+    let currentSuite = null;
+    let candidateCount = 0;
+
+    const TRACK_LABELS = { deep_reading: '深度阅读', chat: '论文交流' };
+    const ROUTE_KEYS = ['benchmark_author', 'benchmark_judge', 'benchmark_judge_review'];
+    const ROUTE_SHORT = { benchmark_author: 'author', benchmark_judge: 'judge', benchmark_judge_review: 'judge_review' };
+
+    async function api(path, options = {}) {
+        const resp = await fetch(path, options);
+        const data = await resp.json();
+        if (!resp.ok || data.status === 'error') {
+            throw new Error(data.message || `HTTP ${resp.status}`);
+        }
+        return data;
+    }
+
+    function setStatus(el, message, kind) {
+        el.className = 'action-status ' + (kind || '');
+        el.textContent = message;
+    }
+
+    // ---------- 任务路由 ----------
+    async function loadRoutes() {
+        const data = await api('/api/benchmark/routes');
+        routeData = data;
+        for (const providerKey of Object.keys(data.providers)) {
+            for (const short of ['author', 'judge', 'judge_review']) {
+                const select = document.getElementById('route-' + short + '-provider');
+                const option = document.createElement('option');
+                option.value = providerKey;
+                option.textContent = data.providers[providerKey].name + ' (' + providerKey + ')';
+                select.appendChild(option);
+            }
+        }
+        for (const taskKey of ROUTE_KEYS) {
+            const cfg = data.routes[taskKey] || {};
+            const short = ROUTE_SHORT[taskKey];
+            document.getElementById('route-' + short + '-provider').value = cfg.provider_key || '';
+            document.getElementById('route-' + short + '-thinking').checked = !!cfg.is_thinking;
+            document.getElementById('route-' + short + '-effort').value = cfg.thinking_effort || 'medium';
+            document.getElementById('route-' + short + '-max-tokens').value = cfg.max_tokens || 2000;
+            refreshRouteModels(short, cfg.model);
+            toggleRouteThinking(short);
+        }
+        renderCandidateProviderOptions();
+    }
+
+    function routeProviderKey(short) {
+        return document.getElementById('route-' + short + '-provider').value;
+    }
+
+    function refreshRouteModels(short, selectedModel) {
+        const providerKey = routeProviderKey(short);
+        const models = (routeData.providers[providerKey] || {}).available_models || [];
+        const select = document.getElementById('route-' + short + '-model');
+        select.innerHTML = '';
+        for (const model of models) {
+            const option = document.createElement('option');
+            option.value = model;
+            option.textContent = model;
+            select.appendChild(option);
+        }
+        if (selectedModel && models.includes(selectedModel)) select.value = selectedModel;
+    }
+
+    function toggleRouteThinking(short) {
+        const thinking = document.getElementById('route-' + short + '-thinking').checked;
+        const effort = document.getElementById('route-' + short + '-effort');
+        effort.disabled = !thinking;
+    }
+
+    async function saveRoute(short) {
+        const taskKey = ROUTE_KEYS.find(key => ROUTE_SHORT[key] === short);
+        const statusEl = document.getElementById('route-status');
+        setStatus(statusEl, '保存中...', 'info');
+        try {
+            const config = {
+                provider_key: routeProviderKey(short),
+                model: document.getElementById('route-' + short + '-model').value,
+                is_thinking: document.getElementById('route-' + short + '-thinking').checked,
+                thinking_effort: document.getElementById('route-' + short + '-effort').value,
+                max_tokens: parseInt(document.getElementById('route-' + short + '-max-tokens').value) || 2000,
+            };
+            await api('/api/benchmark/routes/' + taskKey, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({config}),
+            });
+            setStatus(statusEl, '✅ 路由已保存', 'success');
+        } catch (e) {
+            setStatus(statusEl, '❌ ' + e.message, 'error');
+        }
+    }
+
+    // ---------- 论文选择 ----------
+    let paperOptions = [];
+    let selectedPapers = new Set();
+
+    async function loadPapers(query) {
+        try {
+            const data = await api('/api/benchmark/papers' + (query ? '?q=' + encodeURIComponent(query) : ''));
+            paperOptions = data.papers;
+        } catch (e) {
+            paperOptions = [];
+        }
+        const list = document.getElementById('paper-list');
+        list.innerHTML = '';
+        if (!paperOptions.length) {
+            list.innerHTML = '<p class="section-desc">没有可选论文（请先抓取论文）。</p>';
+            return;
+        }
+        for (const paper of paperOptions) {
+            const label = document.createElement('label');
+            label.className = 'benchmark-paper-item';
+            const check = document.createElement('input');
+            check.type = 'checkbox';
+            check.checked = selectedPapers.has(paper.paper_key);
+            check.onchange = () => {
+                if (check.checked) selectedPapers.add(paper.paper_key);
+                else selectedPapers.delete(paper.paper_key);
+            };
+            label.appendChild(check);
+            const span = document.createElement('span');
+            span.textContent = '[' + paper.paper_key + '] ' + paper.title;
+            label.appendChild(span);
+            list.appendChild(label);
+        }
+    }
+
+    async function createDraft() {
+        const statusEl = document.getElementById('draft-status');
+        const subset = document.getElementById('draft-subset').value.trim();
+        if (!subset) { setStatus(statusEl, '请填写题库子集名称', 'error'); return; }
+        if (!selectedPapers.size) { setStatus(statusEl, '请至少选择 1 篇论文', 'error'); return; }
+        setStatus(statusEl, '创建中...', 'info');
+        try {
+            const data = await api('/api/benchmark/drafts', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({subset_name: subset, paper_keys: [...selectedPapers]}),
+            });
+            setStatus(statusEl, '✅ ' + data.message + (data.failures.length ? '；失败：' + JSON.stringify(data.failures) : ''), data.failures.length ? 'warning' : 'success');
+            await loadSuites();
+            if (data.suite) openSuite(data.suite.id);
+        } catch (e) {
+            setStatus(statusEl, '❌ ' + e.message, 'error');
+        }
+    }
+
+    // ---------- 题库列表 ----------
+    async function loadSuites() {
+        const data = await api('/api/benchmark/suites');
+        const tbody = document.getElementById('suite-rows');
+        tbody.innerHTML = '';
+        for (const suite of data.suites) {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${suite.version_label}</td>
+                <td><span class="status-pill status-${suite.status}">${suite.status}</span></td>
+                <td>${suite.paper_count}</td>
+                <td>${suite.accepted_case_counts.deep_reading || 0} / ${suite.accepted_case_counts.chat || 0}</td>
+                <td class="mono">${(suite.suite_checksum || '').slice(0, 12)}</td>
+                <td><button class="btn" onclick="openSuite(${suite.id})">查看/运行</button></td>`;
+            tbody.appendChild(row);
+        }
+    }
+
+    // ---------- 题库详情 ----------
+    async function openSuite(suiteId) {
+        const detail = document.getElementById('suite-detail');
+        detail.style.display = 'block';
+        detail.dataset.suiteId = suiteId;
+        currentSuite = null;
+        document.getElementById('report-area').innerHTML = '';
+        try {
+            const data = await api('/api/benchmark/suites/' + suiteId);
+            currentSuite = data.suite;
+            document.getElementById('suite-detail-version').textContent = data.suite.version_label + '（' + data.suite.status + '）';
+            renderSuitePapers(data.suite.papers);
+            renderCases(data.suite.cases);
+            await loadRuns();
+            window.scrollTo({top: detail.offsetTop - 10, behavior: 'smooth'});
+        } catch (e) {
+            setStatus(document.getElementById('freeze-status'), '❌ ' + e.message, 'error');
+        }
+    }
+
+    function renderSuitePapers(papers) {
+        const tbody = document.getElementById('suite-paper-rows');
+        tbody.innerHTML = '';
+        for (const paper of papers) {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td class="mono">${paper.paper_key}</td>
+                <td>${paper.title}</td>
+                <td>${paper.text_chars}</td>
+                <td class="mono">${(paper.text_sha256 || '').slice(0, 12)}</td>`;
+            tbody.appendChild(row);
+        }
+    }
+
+    function renderCases(cases) {
+        const tbody = document.getElementById('case-rows');
+        tbody.innerHTML = '';
+        for (const caseItem of cases) {
+            const row = document.createElement('tr');
+            const evidence = (caseItem.evidence || []).join(' | ');
+            row.innerHTML = `
+                <td>${TRACK_LABELS[caseItem.track] || caseItem.track}</td>
+                <td>${caseItem.kind}</td>
+                <td>${caseItem.question}</td>
+                <td><span class="status-pill status-${caseItem.status}">${caseItem.status}</span></td>
+                <td class="benchmark-cell-small">${evidence || caseItem.review_note || ''}</td>
+                <td>
+                    ${caseItem.status !== 'accepted' ? `<button class="btn" onclick="reviewCase(${caseItem.id}, 'accept')">接受</button>` : ''}
+                    ${caseItem.status !== 'rejected' ? `<button class="btn" onclick="reviewCase(${caseItem.id}, 'reject')">驳回</button>` : ''}
+                    ${caseItem.status !== 'pending' ? `<button class="btn" onclick="reviewCase(${caseItem.id}, 'pending')">重审</button>` : ''}
+                </td>`;
+            tbody.appendChild(row);
+        }
+    }
+
+    async function reviewCase(caseId, decision) {
+        try {
+            await api('/api/benchmark/cases/' + caseId + '/review', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({decision}),
+            });
+            openSuite(document.getElementById('suite-detail').dataset.suiteId);
+        } catch (e) {
+            alert(e.message);
+        }
+    }
+
+    async function reviewAll(decision) {
+        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
+        try {
+            await api('/api/benchmark/suites/' + suiteId + '/review-all', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({decision}),
+            });
+            openSuite(suiteId);
+        } catch (e) {
+            alert(e.message);
+        }
+    }
+
+    // ---------- 出题与冻结 ----------
+    function generateCases() {
+        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
+        const statusEl = document.getElementById('generate-status');
+        setStatus(statusEl, '正在出题...', 'info');
+        watchProgress('benchmark-generate-' + suiteId, statusEl);
+        api('/api/benchmark/suites/' + suiteId + '/generate?task_id=benchmark-generate-' + suiteId, {
+            method: 'POST',
+        }).then(data => {
+            setStatus(statusEl, '✅ ' + data.message, data.errors && data.errors.length ? 'warning' : 'success');
+            openSuite(suiteId);
+        }).catch(e => setStatus(statusEl, '❌ ' + e.message, 'error'));
+    }
+
+    async function freezeSuite() {
+        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
+        const statusEl = document.getElementById('freeze-status');
+        setStatus(statusEl, '冻结中...', 'info');
+        try {
+            const data = await api('/api/benchmark/suites/' + suiteId + '/freeze', {method: 'POST'});
+            setStatus(statusEl, '✅ ' + data.message, 'success');
+            await loadSuites();
+            openSuite(suiteId);
+        } catch (e) {
+            setStatus(statusEl, '❌ ' + e.message, 'error');
+        }
+    }
+
+    // ---------- 候选与运行 ----------
+    function renderCandidateProviderOptions() {
+        const providers = routeData ? Object.keys(routeData.providers) : [];
+        for (const select of document.querySelectorAll('.candidate-provider')) {
+            const current = select.value;
+            select.innerHTML = '';
+            for (const providerKey of providers) {
+                const option = document.createElement('option');
+                option.value = providerKey;
+                option.textContent = providerKey;
+                select.appendChild(option);
+            }
+            if (providers.includes(current)) select.value = current;
+        }
+    }
+
+    function addCandidateRow() {
+        candidateCount += 1;
+        const container = document.getElementById('candidate-rows');
+        const div = document.createElement('div');
+        div.className = 'benchmark-candidate-row';
+        div.id = 'candidate-' + candidateCount;
+        div.innerHTML = `
+            <label>标签 <input type="text" class="candidate-label" placeholder="如 deepseek-chat / 思考高" value="候选${candidateCount}"></label>
+            <label>供应商 <select class="candidate-provider" onchange="refreshCandidateModels(this)"></select></label>
+            <label>模型 <select class="candidate-model"></select></label>
+            <label><input type="checkbox" class="candidate-thinking"> 思考</label>
+            <label>强度 <select class="candidate-effort"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
+            <label>输出上限 <input type="number" class="candidate-max-tokens" min="1" max="200000" value="4000" style="width:90px"></label>
+            <button class="btn" onclick="this.parentElement.remove()">删除</button>`;
+        container.appendChild(div);
+        renderCandidateProviderOptions();
+        refreshCandidateModels(div.querySelector('.candidate-provider'));
+    }
+
+    function refreshCandidateModels(select) {
+        const providerKey = select.value;
+        const models = (routeData.providers[providerKey] || {}).available_models || [];
+        const modelSelect = select.parentElement.querySelector('.candidate-model');
+        modelSelect.innerHTML = '';
+        for (const model of models) {
+            const option = document.createElement('option');
+            option.value = model;
+            option.textContent = model;
+            modelSelect.appendChild(option);
+        }
+    }
+
+    async function refreshEstimate() {
+        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
+        const candidates = document.querySelectorAll('#candidate-rows .benchmark-candidate-row').length;
+        const repeats = document.getElementById('run-repeats').value || 1;
+        const span = document.getElementById('estimate-result');
+        if (!candidates) { span.textContent = '请先添加候选模型'; return; }
+        try {
+            const data = await api(`/api/benchmark/suites/${suiteId}/estimate?candidates=${candidates}&repeats=${repeats}`);
+            const e = data.estimate;
+            span.textContent = `被测调用 ${e.measured_calls}，裁判 ${e.judge_calls}，复核 ${e.review_calls}，最坏合计 ${e.worst_total_calls} 次`;
+        } catch (err) {
+            span.textContent = err.message;
+        }
+    }
+
+    function collectCandidates() {
+        const candidates = [];
+        for (const row of document.querySelectorAll('#candidate-rows .benchmark-candidate-row')) {
+            const providerKey = row.querySelector('.candidate-provider').value;
+            const model = row.querySelector('.candidate-model').value;
+            if (!providerKey || !model) continue;
+            candidates.push({
+                label: row.querySelector('.candidate-label').value || model,
+                config: {
+                    provider_key: providerKey,
+                    model: model,
+                    is_thinking: row.querySelector('.candidate-thinking').checked,
+                    thinking_effort: row.querySelector('.candidate-effort').value,
+                    temperature_enabled: !row.querySelector('.candidate-thinking').checked,
+                    temperature: 0.2,
+                    max_tokens_enabled: true,
+                    max_tokens: parseInt(row.querySelector('.candidate-max-tokens').value) || 4000,
+                },
+            });
+        }
+        return candidates;
+    }
+
+    function startRun() {
+        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
+        const statusEl = document.getElementById('run-status');
+        const candidates = collectCandidates();
+        if (!candidates.length) { setStatus(statusEl, '请先添加候选模型', 'error'); return; }
+        const body = {
+            candidates,
+            repeats: parseInt(document.getElementById('run-repeats').value) || 1,
+            max_calls: parseInt(document.getElementById('run-max-calls').value) || null,
+        };
+        setStatus(statusEl, '评测运行开始（耗时任务，请保持页面打开，进度见下方）', 'info');
+        watchProgress('benchmark-run-' + suiteId, statusEl);
+        api(`/api/benchmark/suites/${suiteId}/runs?task_id=benchmark-run-${suiteId}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        }).then(data => {
+            setStatus(statusEl, '✅ 运行结束（' + data.run.status + '）', data.run.status === 'completed' ? 'success' : 'warning');
+            loadRuns();
+        }).catch(e => setStatus(statusEl, '❌ ' + e.message, 'error'));
+    }
+
+    function watchProgress(taskId, statusEl) {
+        const container = document.getElementById('benchmark-progress');
+        container.style.display = 'block';
+        const bar = document.getElementById('benchmark-progress-bar');
+        const count = document.getElementById('benchmark-progress-count');
+        const detail = document.getElementById('benchmark-progress-detail');
+        const source = new EventSource('/api/benchmark/progress/' + taskId);
+        source.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            bar.style.width = (data.total ? (data.current / data.total * 100) : 0) + '%';
+            count.textContent = (data.current || 0) + '/' + (data.total || '?');
+            detail.textContent = data.message || '';
+            if (data.status === 'completed' || data.status === 'error') {
+                source.close();
+                container.style.display = 'none';
+            }
+        };
+        source.onerror = () => { source.close(); container.style.display = 'none'; };
+    }
+
+    // ---------- 运行与报告 ----------
+    async function loadRuns() {
+        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
+        if (!suiteId) return;
+        const data = await api('/api/benchmark/suites/' + suiteId);
+        const runs = data.suite.runs || [];
+        const tbody = document.getElementById('run-rows');
+        tbody.innerHTML = '';
+        if (!runs.length) { tbody.innerHTML = '<tr><td colspan="4">暂无运行记录</td></tr>'; return; }
+        for (const run of runs) {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>#${run.id}（${run.created_at}）</td>
+                <td><span class="status-pill status-${run.status}">${run.status}</span></td>
+                <td>${run.candidate_count || 0} 个候选 × ${run.repeats} 次</td>
+                <td>
+                    <button class="btn" onclick="loadReport(${run.id})">查看报告</button>
+                    ${(run.status === 'interrupted' || run.status === 'error') ? `<button class="btn" onclick="resumeRun(${run.id})">恢复运行</button>` : ''}
+                </td>`;
+            tbody.appendChild(row);
+        }
+    }
+
+    async function resumeRun(runId) {
+        const statusEl = document.getElementById('run-status');
+        setStatus(statusEl, '恢复运行中...', 'info');
+        watchProgress('benchmark-resume-' + runId, statusEl);
+        try {
+            const data = await api('/api/benchmark/runs/' + runId + '/resume?task_id=benchmark-resume-' + runId, {method: 'POST'});
+            setStatus(statusEl, '✅ ' + data.message, 'success');
+            loadRuns();
+        } catch (e) {
+            setStatus(statusEl, '❌ ' + e.message, 'error');
+        }
+    }
+
+    async function loadReport(runId) {
+        const area = document.getElementById('report-area');
+        area.innerHTML = '<p class="section-desc">加载报告...</p>';
+        try {
+            const data = await api('/api/benchmark/runs/' + runId + '/report');
+            renderReport(data.report);
+        } catch (e) {
+            area.innerHTML = '<p class="action-status error">❌ ' + e.message + '</p>';
+        }
+    }
+
+    function renderReport(report) {
+        const area = document.getElementById('report-area');
+        window.__bmPerCase = {deep_reading: [], chat: []};
+        const warnings = (report.warnings || []).map(w => `<li>⚠️ ${w}</li>`).join('');
+        let html = `<h4>报告 #${report.run_id}（${report.suite.version_label}）</h4>`;
+        html += `<p class="section-desc">状态 ${report.status} · ${report.paper_count} 篇论文 · 重复 ${report.repeats} 次 · runner ${report.runner_version}</p>`;
+        html += `<ul class="benchmark-warnings">${warnings || '<li>无</li>'}</ul>`;
+
+        for (const track of ['deep_reading', 'chat']) {
+            html += `<h4>${TRACK_LABELS[track]}榜</h4><table class="benchmark-table"><thead><tr>
+                <th>候选</th><th>得分</th><th>幻觉</th><th>缺题</th><th>tokens</th><th>延迟(ms)</th><th>调用</th></tr></thead><tbody>`;
+            for (const entry of report.tracks[track]) {
+                html += `<tr>
+                    <td>${entry.label}</td>
+                    <td>${entry.score === null ? '—' : entry.score.toFixed(1)}</td>
+                    <td>${entry.hallucination_critical}</td>
+                    <td>${entry.missing_qs}</td>
+                    <td>${entry.usage.total_tokens}</td>
+                    <td>${entry.usage.latency_ms}</td>
+                    <td>${entry.usage.calls}</td></tr>`;
+            }
+            html += '</tbody></table>';
+
+            html += `<h4>${TRACK_LABELS[track]}逐题明细</h4><table class="benchmark-table"><thead><tr>
+                <th>论文</th><th>题号</th><th>问题</th><th>得分</th><th>裁判</th><th>幻觉</th><th>人工覆盖</th></tr></thead><tbody>`;
+            for (const entry of report.tracks[track]) {
+                entry.per_case.forEach((item, index) => {
+                    window.__bmPerCase[track].push(item);
+                    html += `<tr>
+                        <td class="mono">${item.paper_key}</td>
+                        <td>${item.kind}</td>
+                        <td class="benchmark-cell-small">${item.question}</td>
+                        <td>${item.score === null ? '—' : item.score.toFixed(1)}</td>
+                        <td>${item.judge || '—'}</td>
+                        <td>${item.hallucination_critical ? '⚠️' : ''}</td>
+                        <td><button class="btn" onclick="humanOverridePrompt(${report.run_id}, '${track}', ${index})">覆盖</button></td></tr>`;
+                });
+            }
+            html += '</tbody></table>';
+        }
+
+        html += `<h4>裁判校准</h4><p class="section-desc">人工对比 ${report.calibration.compared} 例 · 逐条件一致率 ${report.calibration.condition_agreement ?? '—'} · 分数误差 ${report.calibration.mean_score_error ?? '—'} · 已校准 ${report.calibration.calibrated}</p>`;
+        area.innerHTML = html;
+    }
+
+    async function humanOverridePrompt(runId, track, index) {
+        const item = window.__bmPerCase[track][index];
+        const input = window.prompt('人工覆盖分数（0-100）与备注，格式：分数 备注');
+        if (!input) return;
+        const parts = input.split(' ');
+        const score = parseFloat(parts[0]);
+        const notes = parts.slice(1).join(' ');
+        if (isNaN(score)) { alert('分数必须是数字'); return; }
+        const run = await api('/api/benchmark/runs/' + runId);
+        const responses = run.run.responses || [];
+        let target = null;
+        for (const resp of responses) {
+            if (resp.track === track && resp.parsed && Object.prototype.hasOwnProperty.call(resp.parsed, item.kind)) {
+                target = resp;
+                break;
+            }
+            const round = parseInt(item.kind.replace('chat_round', ''));
+            if (resp.track === track && resp.round_index === round) {
+                target = resp;
+                break;
+            }
+        }
+        if (!target) { alert('未找到对应响应'); return; }
+        const caseItem = (run.run.cases || []).find(c => c.kind === item.kind && c.paper_ref_id === item.paper_ref_id);
+        if (!caseItem) { alert('未找到对应题目'); return; }
+        try {
+            await api('/api/benchmark/judgments', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({run_id: runId, response_id: target.id, case_id: caseItem.id, score, notes}),
+            });
+            loadReport(runId);
+        } catch (e) {
+            alert(e.message);
+        }
+    }
+
+    // ---------- 初始化 ----------
+    (async function init() {
+        try {
+            await loadRoutes();
+            await loadSuites();
+            await loadPapers('');
+        } catch (e) {
+            document.getElementById('suite-rows').innerHTML = '<tr><td colspan="6">❌ ' + e.message + '</td></tr>';
+        }
+    })();
+    </script>
+</body>
+</html>

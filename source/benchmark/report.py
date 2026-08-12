@@ -134,6 +134,7 @@ def _track_entry(candidate, track, run, case_by_id, paper_by_id, response_by_id,
             if not response_ids:
                 per_case.append({
                     "paper_key": paper.get("paper_key", ""),
+                    "paper_ref_id": paper.get("id"),
                     "kind": case.get("kind", ""),
                     "position": case.get("position", 0),
                     "question": case.get("question", ""),
@@ -148,6 +149,7 @@ def _track_entry(candidate, track, run, case_by_id, paper_by_id, response_by_id,
                 score = judgment["score"] if judgment is not None else None
                 per_case.append({
                     "paper_key": paper.get("paper_key", ""),
+                    "paper_ref_id": paper.get("id"),
                     "kind": case.get("kind", ""),
                     "position": case.get("position", 0),
                     "question": case.get("question", ""),

@@ -121,35 +121,47 @@ def _plain_jsonify(*args, **kwargs):
 
 
 def setup_web_test_base():
-    global _WEB_APP, _WEB_APP_CONTEXT, _ORIGINAL_JSONIFY
+    """启用共享 Web 测试基座；支持嵌套调用（深度计数，最后一次 teardown 才还原）。
+
+    嵌套支持允许随机顺序下多个测试类交叠使用同一 app context，
+    避免顺序耦合导致的 "not torn down" 级联错误。
+    """
+    global _WEB_APP, _WEB_APP_CONTEXT, _ORIGINAL_JSONIFY, _WEB_BASE_DEPTH
     global web_application, web_auth, web_pages, web_papers_api
     global web_providers_api, web_settings_api, web_tasks_api, web_learning_api
     if _WEB_APP_CONTEXT is not None:
-        raise RuntimeError("web test app context was not torn down")
-    if web_application is None:
-        install_import_stubs()
-        web_application = importlib.import_module("source.web.application")
-        web_auth = importlib.import_module("source.web.auth")
-        web_learning_api = importlib.import_module("source.web.learning_api")
-        web_pages = importlib.import_module("source.web.pages")
-        web_papers_api = importlib.import_module("source.web.papers_api")
-        web_providers_api = importlib.import_module("source.web.providers_api")
-        web_settings_api = importlib.import_module("source.web.settings_api")
-        web_tasks_api = importlib.import_module("source.web.tasks_api")
+        _WEB_BASE_DEPTH += 1
+        return
+    install_import_stubs()
+    web_application = importlib.import_module("source.web.application")
+    web_auth = importlib.import_module("source.web.auth")
+    web_benchmark_api = importlib.import_module("source.web.benchmark_api")
+    web_learning_api = importlib.import_module("source.web.learning_api")
+    web_pages = importlib.import_module("source.web.pages")
+    web_papers_api = importlib.import_module("source.web.papers_api")
+    web_providers_api = importlib.import_module("source.web.providers_api")
+    web_settings_api = importlib.import_module("source.web.settings_api")
+    web_tasks_api = importlib.import_module("source.web.tasks_api")
     _WEB_APP = web_application.app
     _WEB_APP_CONTEXT = _WEB_APP.app_context()
     _WEB_APP_CONTEXT.push()
     for mod in (
         web_auth, web_pages, web_papers_api, web_providers_api,
-        web_settings_api, web_tasks_api, web_learning_api,
+        web_settings_api, web_tasks_api, web_learning_api, web_benchmark_api,
     ):
         if mod is not None:
             _ORIGINAL_JSONIFY[mod] = mod.jsonify
             mod.jsonify = _plain_jsonify
+    _WEB_BASE_DEPTH = 1
 
 
 def teardown_web_test_base():
-    global _WEB_APP, _WEB_APP_CONTEXT, _ORIGINAL_JSONIFY
+    global _WEB_APP, _WEB_APP_CONTEXT, _ORIGINAL_JSONIFY, _WEB_BASE_DEPTH
+    if _WEB_APP_CONTEXT is None:
+        return
+    _WEB_BASE_DEPTH -= 1
+    if _WEB_BASE_DEPTH > 0:
+        return  # 仍有外层测试类在使用共享基座
     for mod, original_jsonify in _ORIGINAL_JSONIFY.items():
         mod.jsonify = original_jsonify
     _ORIGINAL_JSONIFY.clear()
@@ -166,6 +178,7 @@ pipeline_orchestrator = None
 pipeline_scheduler = None
 web_application = None
 web_auth = None
+web_benchmark_api = None
 web_learning_api = None
 web_pages = None
 web_papers_api = None
@@ -174,4 +187,5 @@ web_settings_api = None
 web_tasks_api = None
 _WEB_APP = None
 _WEB_APP_CONTEXT = None
+_WEB_BASE_DEPTH = 0
 _ORIGINAL_JSONIFY = {}

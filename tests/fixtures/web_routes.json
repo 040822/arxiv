@@ -66,6 +66,108 @@
     ]
   },
   {
+    "rule": "/api/benchmark/cases/<int:case_id>/review",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/drafts",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/judgments",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/papers",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/progress/<task_id>",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/routes",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/routes/<task_key>",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/runs/<int:run_id>",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/runs/<int:run_id>/report",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/runs/<int:run_id>/resume",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/suites",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/suites/<int:suite_id>",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/suites/<int:suite_id>/estimate",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/suites/<int:suite_id>/freeze",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/suites/<int:suite_id>/generate",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/suites/<int:suite_id>/review-all",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "rule": "/api/benchmark/suites/<int:suite_id>/runs",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "rule": "/api/db/info",
     "methods": [
       "GET"
@@ -489,6 +591,12 @@
     "rule": "/api/users/<int:user_id>/reset-password",
     "methods": [
       "POST"
+    ]
+  },
+  {
+    "rule": "/benchmark",
+    "methods": [
+      "GET"
     ]
   },
   {

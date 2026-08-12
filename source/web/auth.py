@@ -45,6 +45,12 @@ MEMBER_ENDPOINTS = {
 ADMIN_ENDPOINTS = {
     "api_add_paper", "api_add_provider", "api_analyze", "api_attach_paper_pdf", "api_audit_events",
     "api_batch_analyze_papers", "api_batch_delete_papers", "api_batch_hide_papers",
+    "api_benchmark_create_draft", "api_benchmark_estimate", "api_benchmark_freeze",
+    "api_benchmark_generate_cases", "api_benchmark_human_judgment", "api_benchmark_papers",
+    "api_benchmark_progress", "api_benchmark_report", "api_benchmark_resume_run",
+    "api_benchmark_review_all", "api_benchmark_review_case", "api_benchmark_routes",
+    "api_benchmark_run", "api_benchmark_save_route", "api_benchmark_start_run",
+    "api_benchmark_suite", "api_benchmark_suites", "benchmark_page",
     "api_clear_logs", "api_db_info", "api_delete_paper", "api_delete_provider",
     "api_fetch", "api_generate", "api_get_ai_tasks", "api_get_ai_usage",
     "api_get_email_report", "api_get_fetch_config", "api_get_personalization",

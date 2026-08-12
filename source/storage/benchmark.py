@@ -452,12 +452,20 @@ def set_run_status(run_id, status):
 
 
 def mark_interrupted_runs():
-    """将遗留的 running 运行标记为 interrupted（应用启动时调用）。"""
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE benchmark_runs SET status = 'interrupted', finished_at = ? WHERE status = 'running'",
-            (_now(),),
-        )
+    """将遗留的 running 运行标记为 interrupted（应用启动时调用）。
+
+    benchmark 表尚未迁移（旧库或测试桩）时安全跳过。
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE benchmark_runs SET status = 'interrupted', finished_at = ? WHERE status = 'running'",
+                (_now(),),
+            )
+            return cursor.rowcount
+    except Exception as exc:
+        logger.debug(f"mark_interrupted_runs skipped: {exc}")
+        return 0
 
 
 # ---------------------------------------------------------------------------

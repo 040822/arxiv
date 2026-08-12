@@ -1,0 +1,151 @@
+/* Benchmark 管理页样式 */
+
+.benchmark-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 0.9em;
+}
+
+.benchmark-table th,
+.benchmark-table td {
+    border: 1px solid #e1e4e8;
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.benchmark-table th {
+    background: #f1f3f5;
+    white-space: nowrap;
+}
+
+.benchmark-table td.mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.85em;
+}
+
+.benchmark-cell-small {
+    max-width: 320px;
+    font-size: 0.85em;
+    word-break: break-word;
+}
+
+.benchmark-paper-list {
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 8px;
+    margin: 8px 0;
+}
+
+.benchmark-paper-item {
+    display: block;
+    padding: 4px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.benchmark-paper-item:hover {
+    background: #f1f3f5;
+}
+
+.benchmark-paper-item input {
+    margin-right: 8px;
+}
+
+.benchmark-candidate-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    padding: 10px;
+    margin: 8px 0;
+    border: 1px solid #e1e4e8;
+    border-radius: 8px;
+    background: #fafbfc;
+}
+
+.benchmark-candidate-row label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.85em;
+}
+
+.inline-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 10px;
+    font-size: 0.9em;
+}
+
+.candidate-label,
+.candidate-max-tokens {
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 0.9em;
+    outline: none;
+}
+
+.candidate-provider,
+.candidate-model,
+.candidate-effort {
+    padding: 6px 8px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 0.9em;
+    outline: none;
+}
+
+.candidate-thinking {
+    accent-color: #1a73e8;
+}
+
+.benchmark-warnings {
+    margin: 8px 0 12px;
+    padding-left: 20px;
+    color: #8a6d1a;
+    font-size: 0.9em;
+}
+
+.status-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.8em;
+}
+
+.status-frozen,
+.status-accepted,
+.status-completed {
+    background: #e6f4ea;
+    color: #137333;
+}
+
+.status-draft,
+.status-pending,
+.status-running {
+    background: #e8f0fe;
+    color: #174ea6;
+}
+
+.status-review {
+    background: #fef7e0;
+    color: #8a6d1a;
+}
+
+.status-rejected,
+.status-error {
+    background: #fce8e6;
+    color: #c5221f;
+}
+
+.status-retired,
+.status-interrupted {
+    background: #e8eaed;
+    color: #5f6368;
+}

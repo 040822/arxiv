@@ -21,6 +21,7 @@ EXPECTED = {
     "paper.html": [*BASE, "/static/css/rich-text.css", "/static/css/pages/paper.css"],
     "paper_chat.html": [*BASE, "/static/css/rich-text.css", "/static/css/pages/learning.css"],
     "tasks.html": [*BASE, "/static/css/pages/tasks.css"],
+    "benchmark.html": [*BASE, "/static/css/pages/benchmark.css"],
     "settings.html": [*BASE, "/static/css/pages/settings.css"],
     "reports.html": [*BASE, "/static/css/pages/reports.css"],
     "report_detail.html": [*BASE, "/static/css/pages/reports.css"],
