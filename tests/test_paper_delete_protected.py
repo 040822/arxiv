@@ -6,9 +6,11 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from source.settings import store as settings_store
 from source.storage import connection
+from source.storage import papers as papers_storage
 from source.storage import (
     add_paper_chat_message,
     add_to_reading_list,
@@ -226,37 +228,70 @@ class DeletePaperRaceTests(unittest.TestCase):
             else:
                 self.fail(f"round {round_index}: unexpected outcome {outcomes}")
 
-    def test_insert_inside_check_delete_critical_section_is_blocked(self):
-        """Deterministic interleaving: a no-wait writer must be blocked while
-        the deleter holds BEGIN IMMEDIATE (after the impact check), and must be
-        rejected by the FK after the delete commits. This pins the critical
-        section itself, complementing the barrier-based end-state test."""
+    def test_delete_paper_protected_blocks_writer_inside_critical_section(self):
+        """Deterministic interleaving through the PRODUCTION function: the impact
+        query is wrapped so the deleter pauses inside delete_paper_protected()
+        after the real impact check, while still holding BEGIN IMMEDIATE. A
+        no-wait writer must then be blocked by the write lock, and the delete
+        must complete atomically once released. This pins the production
+        check-then-delete transaction boundary itself."""
+        key = "2608.00999"
         paper_id = insert_paper({
-            "paper_key": "2608.00999", "arxiv_id": "2608.00999", "source_type": "arxiv",
-            "source_id": "2608.00999", "ingest_mode": "feed",
+            "paper_key": key, "arxiv_id": key, "source_type": "arxiv",
+            "source_id": key, "ingest_mode": "feed",
             "title": "Paper", "authors": [], "abstract": "Abstract", "categories": [],
         })
-        no_wait = sqlite3.connect(connection.DB_PATH, timeout=0)
-        no_wait.execute("PRAGMA foreign_keys=ON")
-        try:
-            with connection.get_connection() as deleter:
-                deleter.execute("BEGIN IMMEDIATE")
-                self.assertIsNotNone(deleter.execute(
-                    "SELECT * FROM papers WHERE id = ?", (paper_id,)
-                ).fetchone())
+        impact_done = threading.Event()
+        release = threading.Event()
+        real_impact = papers_storage._paper_private_impact_in_conn
+        outcome = []
+
+        def paused_impact(conn, paper_key):
+            impact = real_impact(conn, paper_key)
+            impact_done.set()
+            assert release.wait(timeout=5)
+            return impact
+
+        def deleter():
+            outcome.append(delete_paper_protected(key))
+
+        with patch.object(
+            papers_storage, "_paper_private_impact_in_conn", side_effect=paused_impact
+        ):
+            thread = threading.Thread(target=deleter)
+            thread.start()
+            self.assertTrue(
+                impact_done.wait(timeout=5),
+                "production impact check did not run within timeout",
+            )
+            no_wait = sqlite3.connect(connection.DB_PATH, timeout=0)
+            no_wait.execute("PRAGMA foreign_keys=ON")
+            try:
                 with self.assertRaises(sqlite3.OperationalError):
                     no_wait.execute(
                         "INSERT INTO reading_list (user_id, paper_id) VALUES (?, ?)",
                         (self.admin_id, paper_id),
                     )
-                deleter.execute("DELETE FROM papers WHERE id = ?", (paper_id,))
-            with self.assertRaises(sqlite3.IntegrityError):
-                no_wait.execute(
-                    "INSERT INTO reading_list (user_id, paper_id) VALUES (?, ?)",
-                    (self.admin_id, paper_id),
-                )
-        finally:
-            no_wait.close()
+            finally:
+                no_wait.close()
+            release.set()
+            thread.join(timeout=10)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(outcome), 1)
+        result = outcome[0]
+        self.assertTrue(result["deleted"])
+        self.assertFalse(result["conflict"])
+        self.assertEqual(result["impact"]["total"], 0)
+        self.assertIsNone(get_paper_by_key(key))
+        with connection.get_connection() as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM reading_list WHERE paper_id = ?",
+                    (paper_id,),
+                ).fetchone()[0],
+                0,
+            )
 
 
 if __name__ == "__main__":
