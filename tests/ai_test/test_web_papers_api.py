@@ -4,7 +4,7 @@ test_web_papers_api.py — 由 tests/test_ai_provider_config.py 拆分迁入（Q
 
 import unittest
 import importlib
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from .common import (
     FakeRequest,
@@ -142,11 +142,18 @@ class PapersApiTests(unittest.TestCase):
 
         with patch.object(web_papers_api, "get_paper_by_arxiv_id", return_value=paper), \
              patch.object(web_papers_api, "analyze_paper_full", return_value=(paper, deep_result, None)), \
-             patch.object(web_papers_api, "update_analysis") as update_analysis:
+             patch.object(web_papers_api, "get_analysis_by_paper_id", return_value={"qa_analysis": "old"}), \
+             patch.object(web_papers_api, "update_analysis") as update_analysis, \
+             patch.object(web_papers_api, "_audit") as audit:
             result = web_papers_api.api_reanalyze_paper("2601.00009")
 
         self.assertEqual(result["status"], "ok")
         update_analysis.assert_called_once_with(9, {"qa_analysis": "### Q1: deep"})
+        audit.assert_called_once_with(
+            "paper.deep_reading_generated",
+            "2601.00009",
+            {"replaced_existing": True},
+        )
 
     def test_reanalyze_warns_and_preserves_old_qa_when_repair_is_incomplete(self):
         web_papers_api = self.web_papers_api
@@ -211,19 +218,32 @@ class PapersApiTests(unittest.TestCase):
             return True
 
         with patch.object(web_papers_api, "parse_arxiv_id", return_value="2601.00010"), \
+             patch.object(web_papers_api, "get_paper_by_arxiv_id", return_value=None), \
              patch.object(web_papers_api, "fetch_paper_by_id", return_value=paper), \
              patch.object(web_papers_api, "current_user", return_value={"id": 7, "role": "member"}), \
              patch.object(web_papers_api, "get_analysis_by_paper_id", return_value=None), \
              patch.object(web_papers_api, "analyze_paper_basic", side_effect=fake_basic), \
              patch.object(web_papers_api, "insert_analysis", side_effect=fake_insert), \
              patch.object(web_papers_api, "analyze_paper_full", side_effect=fake_deep), \
-             patch.object(web_papers_api, "update_analysis", side_effect=fake_update):
+             patch.object(web_papers_api, "update_analysis", side_effect=fake_update), \
+             patch.object(web_papers_api, "_audit") as audit:
             result = web_papers_api.api_add_paper()
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["rating"], 4)
         self.assertEqual(result["tags"], ["VLA"])
         self.assertEqual(events, ["basic", "insert", "deep", "update"])
+        self.assertEqual(
+            audit.call_args_list,
+            [
+                call("paper.imported", "2601.00010", {"source_type": "arxiv"}),
+                call(
+                    "paper.deep_reading_generated",
+                    "2601.00010",
+                    {"replaced_existing": False},
+                ),
+            ],
+        )
 
     def test_add_paper_preserves_basic_analysis_when_deep_reading_is_incomplete(self):
         web_papers_api = self.web_papers_api
@@ -247,19 +267,24 @@ class PapersApiTests(unittest.TestCase):
         }
 
         with patch.object(web_papers_api, "parse_arxiv_id", return_value="2601.00012"), \
+             patch.object(web_papers_api, "get_paper_by_arxiv_id", return_value=None), \
              patch.object(web_papers_api, "fetch_paper_by_id", return_value=paper), \
              patch.object(web_papers_api, "current_user", return_value={"id": 7, "role": "member"}), \
              patch.object(web_papers_api, "get_analysis_by_paper_id", return_value=None), \
              patch.object(web_papers_api, "analyze_paper_basic", return_value=(paper, basic_result, None)), \
              patch.object(web_papers_api, "insert_analysis", return_value=1), \
              patch.object(web_papers_api, "analyze_paper_full", return_value=(paper, deep_result, None)), \
-             patch.object(web_papers_api, "update_analysis") as update_analysis:
+             patch.object(web_papers_api, "update_analysis") as update_analysis, \
+             patch.object(web_papers_api, "_audit") as audit:
             result = web_papers_api.api_add_paper()
 
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["deep_reading_incomplete"])
         self.assertEqual(result["missing_questions"], ["Q6"])
         update_analysis.assert_not_called()
+        audit.assert_called_once_with(
+            "paper.imported", "2601.00012", {"source_type": "arxiv"}
+        )
 
     def test_add_paper_with_manual_rating_only_still_runs_basic_analysis(self):
         web_papers_api = self.web_papers_api
@@ -277,19 +302,32 @@ class PapersApiTests(unittest.TestCase):
         deep_result = {"qa_analysis": "### Q1: deep"}
 
         with patch.object(web_papers_api, "parse_arxiv_id", return_value="2601.00011"), \
+             patch.object(web_papers_api, "get_paper_by_arxiv_id", return_value=None), \
              patch.object(web_papers_api, "fetch_paper_by_id", return_value=paper), \
              patch.object(web_papers_api, "current_user", return_value={"id": 7, "role": "member"}), \
              patch.object(web_papers_api, "get_analysis_by_paper_id", return_value={"rating": 4, "tags": [], "summary_cn": "", "value_comment": ""}), \
              patch.object(web_papers_api, "analyze_paper_basic", return_value=(paper, basic_result, None)) as basic, \
              patch.object(web_papers_api, "insert_analysis", return_value=None) as insert, \
              patch.object(web_papers_api, "analyze_paper_full", return_value=(paper, deep_result, None)), \
-             patch.object(web_papers_api, "update_analysis", return_value=True):
+             patch.object(web_papers_api, "update_analysis", return_value=True), \
+             patch.object(web_papers_api, "_audit") as audit:
             result = web_papers_api.api_add_paper()
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["rating"], 4)
         basic.assert_called_once()
         insert.assert_called_once()
+        self.assertEqual(
+            audit.call_args_list,
+            [
+                call("paper.imported", "2601.00011", {"source_type": "arxiv"}),
+                call(
+                    "paper.deep_reading_generated",
+                    "2601.00011",
+                    {"replaced_existing": False},
+                ),
+            ],
+        )
 
 
 if __name__ == "__main__":
