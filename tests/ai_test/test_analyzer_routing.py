@@ -83,6 +83,18 @@ class AiCallRoutingTests(unittest.TestCase):
         self.assertIn("invalid markdown _", parsed["qa_analysis"])
         self.assertIn("latex uparrow", parsed["qa_analysis"])
 
+    def test_json_cleaner_repairs_raw_control_chars_inside_strings(self):
+        content = '{"qa_analysis": "第一行\n第二行\t带制表符"}'
+        cleaned = self.json_support._clean_json_content(content)
+        parsed = json.loads(cleaned)
+        self.assertEqual(parsed["qa_analysis"], "第一行\n第二行\t带制表符")
+
+    def test_extract_first_json_object_handles_nested_and_escaped_content(self):
+        content = '前文 {"a": "含}花括号和\\"引号\\"", "b": 1} 后文 {"c": 2}'
+        first = self.json_support._extract_first_json_object(content)
+        cleaned = self.json_support._clean_json_content(first)
+        self.assertEqual(json.loads(cleaned), {"a": '含}花括号和"引号"', "b": 1})
+
     def test_deep_reading_uses_full_pdf_without_text_limit(self):
         paper = {
             "id": 1,

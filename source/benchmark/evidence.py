@@ -3,13 +3,28 @@
 import hashlib
 import json
 import re
+import unicodedata
 
 _WS_RE = re.compile(r"\s+")
+# 词内/词尾连字符：行断连字（"obser- va tions"）与复合连字（"demonstration-efficient"）
+# 在匹配两侧使用同一变换，保证一致性。
+_HYPHEN_ARTIFACT = re.compile(r"(?<=\w)[\u2013\u2014-](\s+|(?=\w))")
+_PAREN_SPACE = re.compile(r"\(\s+|\s+\)")
+_BEFORE_PUNCT = re.compile(r"\s+([,.;:!?])")
+_QUOTE_LIKE = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
 
 
 def normalize_text(text):
-    """折叠空白（统一为单个空格），用于证据片段与全文的精确匹配。"""
-    return _WS_RE.sub(" ", str(text or "")).strip()
+    """归一化文本用于证据匹配（两侧使用同一变换，保持一致性）：
+    NFKC（连字/智能引号/减号）→ 折叠空白（含断行）→ 移除词内/行断连字符
+    → 移除括号内外多余空白与标点前空白（PDF 提取毛刺）。
+    """
+    text = unicodedata.normalize("NFKC", str(text or "")).translate(_QUOTE_LIKE)
+    text = _WS_RE.sub(" ", text)
+    text = _HYPHEN_ARTIFACT.sub("", text)
+    text = _PAREN_SPACE.sub("", text)
+    text = _BEFORE_PUNCT.sub(r"\1", text)
+    return text.strip()
 
 
 def evidence_matches(fragment, full_text):

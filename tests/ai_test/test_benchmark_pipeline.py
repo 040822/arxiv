@@ -394,6 +394,53 @@ class BenchmarkPipelineTests(unittest.TestCase):
             bm.freeze_suite(suite["id"])
         self.assertIn("Q1", str(ctx.exception))
 
+    def test_qa_sections_extract_from_malformed_json_envelopes(self):
+        from source.benchmark.runner import _qa_sections_from_content
+        # 模型把转义换行与原始换行混合、并在字符串内嵌入第二个 JSON 包络
+        content = (
+            '{"qa_analysis": "### Q1: 动机\\n\\n第一段回答。\\n\\n'
+            '### Q2: 方法\\n\\n第二段回答。\\n\\n'
+            '{\\n  \\"qa_analysis\\": \\"### Q2: 方法\\n\\n重复包络回答。\\"\\n}"}'
+        )
+        sections = _qa_sections_from_content(content)
+        self.assertEqual(sorted(sections.keys()), [1, 2])
+        self.assertIn("第一段回答", sections[1])
+
+    def test_judge_kind_rename_falls_back_to_position(self):
+        import source.benchmark as bm
+        suite = self._create_frozen_suite()
+        QueueOpenAI.push(
+            completion(deep_reading_response()),
+            completion("第一轮回答"), completion("第二轮回答"), completion("第三轮回答"),
+            # 裁判把 chat_round1/2/3 重命名为 q1/q2/q3（按顺序返回）
+            completion(judge_response(["q1", "q2", "q3"])),
+            completion(judge_response(["chat_round1", "chat_round2", "chat_round3"])),
+            completion(judge_response(["q1", "q2", "q3"], confidence=0.85)),
+            completion(judge_response(["chat_round1", "chat_round2", "chat_round3"], confidence=0.85)),
+        )
+        run_id = bm.start_run(suite["id"], [self._candidate()])
+        report = bm.get_report(run_id)
+        chat = report["tracks"]["chat"][0]
+        self.assertEqual(chat["score"], 100.0)
+        self.assertTrue(all(item["score"] == 100.0 for item in chat["per_case"]))
+
+    def test_partial_evidence_keeps_case_pending_with_warning(self):
+        import source.benchmark as bm
+        self._add_paper()
+        with patch.object(bm, "_extract_full_text", return_value=FULL_TEXT):
+            suite, _failures = bm.create_draft("pilot", ["2608.00001"])
+        response = author_response()
+        response["deep_reading"][0]["evidence"] = [
+            "This paper proposes FROB, a new method for robot navigation.",
+            "这段文字不存在于论文中",
+        ]
+        QueueOpenAI.push(completion(json.dumps(response, ensure_ascii=False)))
+        bm.generate_cases(suite["id"])
+        q1 = next(c for c in bm.list_cases(suite["id"]) if c["kind"] == "q1")
+        self.assertEqual(q1["status"], "pending")
+        self.assertIn("自动提示", q1["review_note"])
+        self.assertIn("这段文字不存在于论文中", q1["author_raw"].get("evidence_raw", []))
+
     def test_start_run_requires_frozen_suite_and_candidates(self):
         import source.benchmark as bm
         suite = self._create_frozen_suite()

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 
 from ._ai import call_model
 from .config import resolve_model_config
@@ -73,27 +74,30 @@ def _call(cfg, messages, task_key, paper_ref):
     return content, usage
 
 
+def _qa_sections_from_content(content):
+    """从深度阅读输出中提取 Q 章节（文本级解析，不依赖 JSON 完整性）。
+
+    模型输出可能是：合法 JSON（转义换行）、原始换行文本、嵌套/重复 JSON 包络。
+    统一把转义换行展开、把 `### Qn:` 前的引号换成换行后，
+    按 `### Qn:` 标题解析章节，天然兼容以上各种形态。
+    """
+    text = str(content or "").replace("\\n", "\n").replace('\\"', '"')
+    text = re.sub(r'"\s*(?=###\s*Q\d+\s*:)', "\n", text)
+    return split_qa_sections(text)
+
+
 def run_deep_reading(suite, paper, cfg, paper_ref):
     """深度阅读轨：一次冻结 Prompt 调用 + 最多一次续写；返回 (response, 调用次数)。"""
-    from source.analysis.json_support import _clean_json_content
-
     messages = _deep_reading_messages(suite, paper)
     content, usage = _call(cfg, messages, "benchmark_runner_deep_reading", paper_ref)
     continuation_count = 0
     finish_reason = usage.get("finish_reason", "")
 
     def _parse_qa(content):
-        sections = split_qa_sections(_qa_text(content))
+        sections = _qa_sections_from_content(content)
         if sections:
             return {"q{}".format(number): text for number, text in sections.items()}, "ok"
         return {}, "format_error"
-
-    def _qa_text(content):
-        try:
-            parsed = json.loads(_clean_json_content(content))
-            return str((parsed or {}).get("qa_analysis", ""))
-        except (TypeError, json.JSONDecodeError):
-            return ""
 
     parsed, status = _parse_qa(content)
     if finish_reason in {"length", "max_tokens"} or not parsed:

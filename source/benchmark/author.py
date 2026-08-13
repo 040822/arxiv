@@ -3,7 +3,7 @@
 import json
 import logging
 
-from source.analysis.json_support import _clean_json_content
+from source.analysis.json_support import _clean_json_content, _extract_first_json_object
 
 from ._ai import call_model
 from .config import get_route_config, get_route_prompts, resolve_model_config
@@ -31,7 +31,7 @@ def _paper_payload(paper):
 def _call_author(route_key, messages, paper_ref):
     cfg = resolve_model_config(get_route_config(route_key))
     content, usage = call_model(cfg, messages, route_key, paper_ref=paper_ref)
-    return json.loads(_clean_json_content(content)), usage
+    return json.loads(_clean_json_content(_extract_first_json_object(content))), usage
 
 
 def _build_messages(profile, payload):
@@ -59,8 +59,11 @@ def _validate_rubric(rubric):
     return 0.9 <= total <= 1.1
 
 
-def _review_evidence(paper, item, problems):
-    """校验证据；证据缺失或全部失败时给 problems 追加原因，返回校验后的证据列表。"""
+def _review_evidence(paper, item, problems, warnings):
+    """校验证据：全部可验证才无提示；部分匹配给出警告（保留已验证片段）；
+    完全没有可验证证据时记入 problems（自动驳回）。
+    同时把出题模型原始证据写入 author_raw，供人工审核追溯。
+    """
     evidence = item.get("evidence") or []
     if not isinstance(evidence, list) or not evidence:
         problems.append("证据为空，无法从全文验证")
@@ -68,13 +71,19 @@ def _review_evidence(paper, item, problems):
     matched = check_evidence(evidence, paper.get("full_text", ""))
     failed = [fragment for fragment, ok in matched.items() if not ok]
     if failed:
-        problems.append(f"证据无法在冻结全文中精确匹配（{len(failed)}/{len(evidence)} 条）")
-        return [fragment for fragment, ok in matched.items() if ok]
+        kept = [fragment for fragment, ok in matched.items() if ok]
+        if kept:
+            warnings.append(
+                f"{len(failed)}/{len(evidence)} 条证据未能精确匹配，已保留可验证片段，请人工复核"
+            )
+        else:
+            problems.append(f"证据无法在冻结全文中精确匹配（{len(failed)}/{len(evidence)} 条）")
+        return kept
     return evidence
 
 
 def _save_case(paper, suite_id, track, position, kind, question, reference_answer,
-               evidence, rubric, requires_reject, problems, author_raw):
+               evidence, rubric, requires_reject, problems, warnings, author_raw):
     from source.storage.benchmark import add_benchmark_case, set_case_review
 
     case_id = add_benchmark_case({
@@ -88,11 +97,16 @@ def _save_case(paper, suite_id, track, position, kind, question, reference_answe
         "evidence": evidence,
         "rubric": rubric,
         "requires_reject": requires_reject,
-        "author_raw": {"problems": problems, **author_raw},
+        "author_raw": {"evidence_raw": author_raw.get("evidence_raw"), "problems": problems, **author_raw},
     })
     if problems:
         set_case_review(case_id, "rejected", note="自动驳回：" + "；".join(problems))
-    return {"position": position, "kind": kind, "ok": not problems, "problems": problems}
+    elif warnings:
+        set_case_review(case_id, "pending", note="自动提示：" + "；".join(warnings))
+    return {
+        "position": position, "kind": kind, "ok": not problems,
+        "problems": problems, "warnings": warnings,
+    }
 
 
 def generate_cases_for_paper(suite_id, paper, suite):
@@ -129,7 +143,8 @@ def generate_cases_for_paper(suite_id, paper, suite):
         if not question:
             continue
         problems = []
-        evidence = _review_evidence(paper, item, problems)
+        warnings = []
+        evidence = _review_evidence(paper, item, problems, warnings)
         if not _validate_rubric(item.get("rubric")):
             problems.append("rubric 缺少可判定条件或权重不合法")
         if not str(item.get("reference_answer") or "").strip():
@@ -137,13 +152,14 @@ def generate_cases_for_paper(suite_id, paper, suite):
         summary["deep_reading"].append(_save_case(
             paper, suite_id, "deep_reading", number, f"q{number}", question,
             str(item.get("reference_answer") or ""), evidence,
-            item.get("rubric") or {}, bool(item.get("requires_reject")), problems,
-            {"generated": True},
+            item.get("rubric") or {}, bool(item.get("requires_reject")), problems, warnings,
+            {"generated": True, "evidence_raw": item.get("evidence") or []},
         ))
 
     for position, item in enumerate((result.get("chat_script") or [])[:CHAT_ROUNDS], start=1):
         problems = []
-        evidence = _review_evidence(paper, item, problems)
+        warnings = []
+        evidence = _review_evidence(paper, item, problems, warnings)
         if not _validate_rubric(item.get("rubric")):
             problems.append("rubric 缺少可判定条件或权重不合法")
         if not str(item.get("question") or "").strip():
@@ -154,6 +170,6 @@ def generate_cases_for_paper(suite_id, paper, suite):
             paper, suite_id, "chat", position, f"chat_round{position}",
             str(item.get("question") or ""), str(item.get("reference_answer") or ""),
             evidence, item.get("rubric") or {}, bool(item.get("requires_reject")),
-            problems, {"generated": True},
+            problems, warnings, {"generated": True, "evidence_raw": item.get("evidence") or []},
         ))
     return summary

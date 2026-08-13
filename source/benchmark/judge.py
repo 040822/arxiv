@@ -4,7 +4,7 @@ import json
 import logging
 import math
 
-from source.analysis.json_support import _clean_json_content
+from source.analysis.json_support import _clean_json_content, _extract_first_json_object
 
 from ._ai import call_model
 from .config import get_route_config, get_route_prompts, resolve_model_config
@@ -50,7 +50,7 @@ def _build_cases(paper_cases, response_by_kind):
 def _call_judge(route_key, messages, paper_ref):
     cfg = resolve_model_config(get_route_config(route_key))
     content, usage = call_model(cfg, messages, route_key, paper_ref=paper_ref)
-    return json.loads(_clean_json_content(content)), usage
+    return json.loads(_clean_json_content(_extract_first_json_object(content))), usage
 
 
 def _judge_messages(route_key, payload):
@@ -126,13 +126,18 @@ def _judge_group(run_id, route_key, judge_role, scoring_revision, group, paper_r
         return 0
     scores = result.get("scores") or []
     by_kind = {str(entry.get("kind")): entry for entry in scores}
+    # 位置兜底：裁判可能把 kind 重命名（如 chat_round1 → q1），按输入顺序对齐
+    if len(scores) == len(payload_cases):
+        for case, entry in zip(payload_cases, scores):
+            by_kind.setdefault(str(case["kind"]), entry)
     for case in payload_cases:
         entry = by_kind.get(str(case["kind"]))
         if entry is None:
             save_benchmark_judgment(
                 run_id, group["response_ids"].get(case["kind"]), judge_role, route_key,
                 scoring_revision, case["id"], [], 0.0, False, None,
-                {"reason": "judge_missing_kind"}, "裁判未返回该题判定",
+                {"reason": "judge_missing_kind", "judge_response": result},
+                "裁判未返回该题判定",
             )
             continue
         result_data = _score_for_case(case, entry)

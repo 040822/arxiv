@@ -50,6 +50,75 @@ def _repair_invalid_json_escapes(content):
     return "".join(result)
 
 
+_CONTROL_ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t", "\f": "\\f", "\b": "\\b"}
+
+
+def _repair_raw_control_chars(content):
+    """把 JSON 字符串内部的原始控制字符转义为合法形式。
+
+    部分模型会在 JSON 字符串值内输出真实换行/制表符，
+    直接 json.loads 会报 Invalid control character。
+    """
+    result = []
+    in_string = False
+    escaped = False
+    for char in content:
+        if not in_string:
+            result.append(char)
+            if char == '"':
+                in_string = True
+            continue
+        if escaped:
+            result.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            result.append(char)
+            escaped = True
+            continue
+        if char == '"':
+            result.append(char)
+            in_string = False
+            continue
+        if char in _CONTROL_ESCAPES:
+            result.append(_CONTROL_ESCAPES[char])
+            continue
+        result.append(char)
+    return "".join(result)
+
+
+def _extract_first_json_object(content):
+    """提取首个配平的大括号 JSON 对象（字符串感知、支持转义）。
+
+    部分模型在续写时会输出两个完整 JSON 对象，
+    直接整体解析会失败；生产与 benchmark 解析均可用此函数兜底。
+    """
+    content = str(content or "")
+    depth = 0
+    in_string = False
+    escaped = False
+    for index, char in enumerate(content):
+        if not in_string:
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[:index + 1]
+            elif char == '"':
+                in_string = True
+            continue
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            in_string = False
+    return content
+
+
 def _clean_json_content(content):
     """Strip Markdown fences, isolate a JSON object and repair invalid escapes."""
     if content.startswith("```"):
@@ -60,4 +129,4 @@ def _clean_json_content(content):
     json_match = re.search(r"\{[\s\S]*\}", content)
     if json_match:
         content = json_match.group(0)
-    return _repair_invalid_json_escapes(content)
+    return _repair_raw_control_chars(_repair_invalid_json_escapes(content))
