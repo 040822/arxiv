@@ -1,5 +1,16 @@
 # 更新日志
 
+## v0.7.1 — 论文阅读 Benchmark pilot（2026-08-13，分支 feature/paper-benchmark）
+
+- 新增私有论文阅读 Benchmark（v1 pilot）：从数据库选论文 → 冻结全文与生产 Prompt → 自动出题（证据必须精确匹配全文）→ 逐题人工审核 → 冻结题库 → 多候选模型运行 → LLM 裁判 + 复核抽样 + 人工覆盖 → 双轨分榜报告
+- 数据库 schema v5 新增 benchmark_routes/suites/suite_papers/cases/runs/candidates/responses/judgments 八张表；迁移在真实生产库（85MB）上验证通过
+- 深度阅读与论文交流分开排名；缺题计零、严重幻觉该题封顶 60 分；`max_calls` 硬预算中断、恢复运行输出复用（只重判不重跑）
+- benchmark 出题/裁判任务路由自管理（存 benchmark_routes 表，不进入共享 ai_tasks），供应商凭据仍从 settings 解析
+- 新增 `/benchmark` admin 管理页与全套 API（草稿/出题/审核/冻结/估算/运行/恢复/报告/人工覆盖/路由配置），SSE 进度
+- 模型输出鲁棒性修复：JSON 原始控制字符修复、多 JSON 包络文本级章节解析、证据匹配归一化（NFKC/断行连字/括号空白）——真实 pilot（FLEX-π，deepseek v4-flash/pro）实测驱动
+- 共享 Web 测试基座改为可嵌套（深度计数），消除随机顺序下的级联 setup 错误；测试 295 → 312+
+- pilot 实测结论：v4-pro 深度阅读 97.9/交流 100 vs v4-flash 深度阅读 93.8/交流 96.7（单篇，不构成可靠排名）
+
 ## v0.7.0 — 邀请制用户系统与三级权限（2026-08-12）
 
 - 新增访客、成员、唯一 `admin` 管理员三级权限；成员由管理员邀请创建，无自助注册

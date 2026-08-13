@@ -85,6 +85,21 @@ source.analysis.analyze_paper_full(paper_data)
   → 保存 chat messages / quiz sessions / questions / attempts
 ```
 
+### 6. 论文阅读 Benchmark 流程（v1）
+
+```
+GET /benchmark（admin）→ 选论文 → 创建草稿（快照全文 + 复制生产 Prompt）
+  → 自动出题（benchmark_author 路由，1 次调用/篇）
+  → 证据须精确匹配冻结全文；全部失败自动驳回，部分匹配提示人工复核
+  → 逐题/批量人工确认 → 冻结（不可变 + 校验和）
+  → 选候选 → start_run：深度阅读 1 次 + 三轮交流（候选自身历史）
+  → 主裁判全量 + 复核抽样（≥10% 下限 1 组）+ 人工覆盖优先
+  → 双轨分榜报告（未校准/同家族偏置警告）
+```
+
+自管理路由（benchmark_author/judge/judge_review）存 benchmark_routes 表，
+供应商凭据仍从 settings providers 解析；候选配置与路由同构。
+
 ### 5. 定时任务流程
 
 ```

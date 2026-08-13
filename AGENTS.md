@@ -29,6 +29,7 @@ arxiv/
 ├── app.py                  # 唯一 Web 入口（main + 可导入 Flask app）
 ├── source/
 │   ├── analysis/         # LLM 客户端、消息、分析、学习、导读与批处理
+│   ├── benchmark/        # 私有论文阅读 Benchmark 深模块（出题/冻结/运行/裁判/报告）
 │   ├── backups/          # WebDAV 快照打包、上传、清理与编排
 │   ├── documents/        # PDF 校验、持久上传、缓存下载、删除与提取
 │   ├── ingestion/        # arXiv 日期窗口抓取、分批与单篇查询
@@ -181,6 +182,118 @@ CREATE TABLE paper_quiz_attempts (
 
 删除论文时，以上学习记录会随 papers 外键级联删除；删除用户时，其私有学习记录随 users 外键级联删除。
 
+### 论文阅读 Benchmark 表（v5）
+
+```sql
+-- 自管理任务路由（不进入共享 ai_tasks 设置）
+CREATE TABLE benchmark_routes (
+    task_key TEXT PRIMARY KEY,          -- benchmark_author/benchmark_judge/benchmark_judge_review
+    provider_key TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '',
+    is_thinking INTEGER DEFAULT 0, thinking_effort TEXT DEFAULT 'medium',
+    temperature_enabled INTEGER DEFAULT 0, temperature REAL DEFAULT 0.2,
+    max_tokens_enabled INTEGER DEFAULT 1, max_tokens INTEGER DEFAULT 2000,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 题库：draft → review → frozen → retired；冻结后不可修改，变更须克隆新版本
+CREATE TABLE benchmark_suites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subset_name TEXT NOT NULL, version_label TEXT NOT NULL,  -- pprb-<subset>-YYYY.MM.DD-rN
+    status TEXT NOT NULL DEFAULT 'draft',
+    deep_reading_prompt TEXT NOT NULL DEFAULT '{}',          -- 冻结 Prompt 快照
+    paper_chat_prompt TEXT NOT NULL DEFAULT '{}',
+    suite_checksum TEXT NOT NULL DEFAULT '',
+    scoring_revision TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(subset_name, version_label)
+);
+
+-- 论文快照：全文与哈希在冻结时固化，原论文删除不影响已冻结题库
+CREATE TABLE benchmark_suite_papers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    suite_id INTEGER NOT NULL, paper_id INTEGER,             -- 原业务 papers.id，可空
+    paper_key TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', authors TEXT NOT NULL DEFAULT '[]',
+    source_type TEXT NOT NULL DEFAULT '', source_id TEXT NOT NULL DEFAULT '',
+    abstract TEXT NOT NULL DEFAULT '', full_text TEXT NOT NULL DEFAULT '',
+    text_chars INTEGER DEFAULT 0, text_sha256 TEXT NOT NULL DEFAULT '',
+    pdf_sha256 TEXT NOT NULL DEFAULT '', extractor_version TEXT NOT NULL DEFAULT '',
+    position INTEGER DEFAULT 0,
+    FOREIGN KEY (suite_id) REFERENCES benchmark_suites(id) ON DELETE CASCADE,
+    UNIQUE(suite_id, paper_key)
+);
+
+-- 题目：轨道（deep_reading/chat）、参考答案、证据片段与逐项 rubric
+CREATE TABLE benchmark_cases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    suite_id INTEGER NOT NULL, paper_ref_id INTEGER NOT NULL,
+    track TEXT NOT NULL, position INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT '',
+    question TEXT NOT NULL DEFAULT '', reference_answer TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL DEFAULT '[]',                     -- JSON 字符串数组，冻结前须能精确匹配全文
+    rubric TEXT NOT NULL DEFAULT '{}',                       -- JSON {conditions:[{text,weight,critical}]}
+    requires_reject INTEGER DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',                  -- pending/accepted/rejected
+    review_note TEXT NOT NULL DEFAULT '', reviewed_at TEXT,
+    author_raw TEXT NOT NULL DEFAULT '{}',                   -- 出题原始结果与证据追溯
+    FOREIGN KEY (suite_id) REFERENCES benchmark_suites(id) ON DELETE CASCADE,
+    FOREIGN KEY (paper_ref_id) REFERENCES benchmark_suite_papers(id) ON DELETE CASCADE
+);
+
+-- 运行：异步、持久化、可恢复；启动时遗留 running 标记为 interrupted
+CREATE TABLE benchmark_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    suite_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'running',
+    repeats INTEGER DEFAULT 1, max_calls INTEGER,            -- 硬预算，NULL 不限
+    runner_version TEXT NOT NULL DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT,
+    FOREIGN KEY (suite_id) REFERENCES benchmark_suites(id) ON DELETE CASCADE
+);
+
+-- 候选配置快照：不保存 API Key，config_hash 用于输出复用
+CREATE TABLE benchmark_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL, position INTEGER NOT NULL, label TEXT NOT NULL DEFAULT '',
+    provider_key TEXT NOT NULL DEFAULT '', provider_name TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '', is_thinking INTEGER DEFAULT 0,
+    thinking_effort TEXT DEFAULT 'medium', temperature_enabled INTEGER DEFAULT 0,
+    temperature REAL DEFAULT 0.2, max_tokens_enabled INTEGER DEFAULT 1,
+    max_tokens INTEGER DEFAULT 4000, config_hash TEXT NOT NULL DEFAULT '',
+    actual_params TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (run_id) REFERENCES benchmark_runs(id) ON DELETE CASCADE
+);
+
+-- 候选原始输出：UNIQUE 键保证恢复/重跑时输出复用（只重判不重跑）
+CREATE TABLE benchmark_responses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL, candidate_id INTEGER NOT NULL, paper_ref_id INTEGER NOT NULL,
+    track TEXT NOT NULL, repeat_index INTEGER DEFAULT 0, round_index INTEGER,
+    prompt_snapshot TEXT NOT NULL DEFAULT '[]', raw_output TEXT NOT NULL DEFAULT '',
+    parsed TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'ok',
+    finish_reason TEXT NOT NULL DEFAULT '', usage_json TEXT NOT NULL DEFAULT '{}',
+    latency_ms REAL DEFAULT 0, continuation_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_id) REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY (candidate_id) REFERENCES benchmark_candidates(id) ON DELETE CASCADE,
+    FOREIGN KEY (paper_ref_id) REFERENCES benchmark_suite_papers(id) ON DELETE CASCADE,
+    UNIQUE(candidate_id, paper_ref_id, track, repeat_index, round_index)
+);
+
+-- 判定：primary/review/system/human；人工覆盖优先级最高且不覆盖原始裁判记录
+CREATE TABLE benchmark_judgments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL, response_id INTEGER NOT NULL,
+    judge_role TEXT NOT NULL,            -- primary/review/system/human
+    judge_route_key TEXT NOT NULL DEFAULT '', scoring_revision TEXT NOT NULL DEFAULT '',
+    case_id INTEGER NOT NULL, condition_scores TEXT NOT NULL DEFAULT '[]',
+    score REAL NOT NULL DEFAULT 0,       -- 0-100；严重幻觉时该题封顶 60
+    hallucination_critical INTEGER DEFAULT 0, confidence REAL, raw_json TEXT NOT NULL DEFAULT '{}',
+    notes TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_id) REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY (response_id) REFERENCES benchmark_responses(id) ON DELETE CASCADE,
+    FOREIGN KEY (case_id) REFERENCES benchmark_cases(id) ON DELETE CASCADE,
+    UNIQUE(response_id, judge_role, case_id, scoring_revision)
+);
+```
+
 ---
 
 ### users、audit_events 与私有归属（v4）
@@ -263,6 +376,37 @@ POST /api/paper/<arxiv_id>/socratic/sessions
 POST /api/paper/<arxiv_id>/socratic/sessions/<session_id>/reply
   → paper_quiz 任务模型根据历史连续追问
 ```
+
+### 4.5 论文阅读 Benchmark 流程（v1，pilot）
+```
+GET /benchmark（admin）→ 选论文 → POST /api/benchmark/drafts 创建草稿
+  → create_draft()：get_paper_by_key + _extract_full_text（失败阻止冻结，不回退摘要）
+      + get_prompt_profiles() 复制 deep_reading/paper_chat Prompt 为不可变快照
+  → POST .../generate：每篇论文 1 次出题调用（benchmark_author 路由）
+      → 生成 6 个深度阅读参考答案/rubric/证据 + 3 轮交流脚本
+      → 证据须能精确匹配冻结全文（normalize_text：NFKC/断行连字/括号空白归一）
+      → 全部失败自动驳回；部分匹配标记警告（pending 人工复核）；通过后 pending 待审
+  → 逐题 review_case / 批量 review_all_cases（accept/reject）
+  → freeze_suite()：校验全文、证据、rubric、题量覆盖后置为 frozen 并写入校验和
+  → start_run(suite, candidates, repeats, max_calls)：每候选每论文 1 次深度阅读 + 3 轮交流
+      → 交流轨每轮用候选自身历史（可复用已保存响应，恢复运行只补缺）
+      → 深度阅读输出按文本级 `### Qn:` 解析（兼容转义/原始换行、重复 JSON 包络）
+  → judge_run()：主裁判按（候选, 论文, 轨道）批量评分，缺题计零（system 判定）
+      → 复核裁判抽样（每候选每轨道 ≥10% 下限 1 组，覆盖低置信度/幻觉）
+      → 裁判 kind 重命名时按位置对齐兜底
+  → get_report()：双轨分榜、逐题明细、幻觉/缺题计数、token/延迟/续写、
+      pilot 未校准警告、同家族偏置提示、人工校准统计
+```
+
+### 4.6 配置说明（benchmark 自管理路由）
+- `benchmark_author` / `benchmark_judge` / `benchmark_judge_review` 三个任务路由存在
+  `benchmark_routes` 表，不进入共享 `ai_tasks`；供应商凭据仍从 settings.json 的
+  `providers` 解析（`resolve_model_config()` 复用归一化与 `build_chat_completion_kwargs()`）
+- 路由默认值在 `source/benchmark/config.py` 的 `DEFAULT_BENCHMARK_ROUTES`；出题/裁判
+  Prompt 为代码常量（`source/benchmark/prompts.py`），v1 修改 Prompt 需改代码
+- 候选模型配置与路由同构（provider_key/model/思考开关/强度/输出上限），运行前
+  `build_chat_completion_kwargs` 校验可构建并快照 actual_params；`config_hash` 供
+  未来输出复用去重
 
 ### 4.4 定时任务流程
 ```
@@ -490,6 +634,28 @@ APScheduler cron(day_of_week, hour, minute)
 | `/api/tasks/scheduled` | GET | 内置日报配置、时区、下次执行与最近运行 |
 | `/api/tasks/clear` | POST | 清理旧日志（?keep_days=30） |
 
+### 论文阅读 Benchmark API（admin 专属）
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/benchmark` | GET | Benchmark 管理页 |
+| `/api/benchmark/suites` | GET | 题库列表 |
+| `/api/benchmark/papers?q=` | GET | 可选论文列表 |
+| `/api/benchmark/drafts` | POST | 创建题库草稿 {subset_name, paper_keys} |
+| `/api/benchmark/suites/<id>` | GET | 题库详情（论文/题目/运行记录） |
+| `/api/benchmark/suites/<id>/generate` | POST | 自动出题（SSE 进度） |
+| `/api/benchmark/cases/<id>/review` | POST | 人工审核 {decision, note} |
+| `/api/benchmark/suites/<id>/review-all` | POST | 批量审核 |
+| `/api/benchmark/suites/<id>/freeze` | POST | 冻结题库 |
+| `/api/benchmark/suites/<id>/estimate` | GET | 调用量估算 ?candidates=&repeats= |
+| `/api/benchmark/suites/<id>/runs` | POST | 启动评测运行（SSE 进度） |
+| `/api/benchmark/runs/<id>` | GET | 运行详情 |
+| `/api/benchmark/runs/<id>/resume` | POST | 恢复中断/失败运行（输出复用） |
+| `/api/benchmark/runs/<id>/report` | GET | 双轨分榜报告 |
+| `/api/benchmark/judgments` | POST | 人工覆盖裁判判定 |
+| `/api/benchmark/routes` | GET | 自管理任务路由（无凭据） |
+| `/api/benchmark/routes/<task_key>` | POST | 保存任务路由 |
+| `/api/benchmark/progress/<task_id>` | GET | SSE 进度 |
+
 ---
 
 ## 7. 开发规范
@@ -571,6 +737,23 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 - `source/web/progress.py` 的内部任务键必须包含当前 `user_id` 与客户端 `task_id`；不同用户可同时使用同一 task_id，调用方不得自行拼接用户标识实现隔离
 - `completed` / `error` 终态保留 600 秒供 SSE 消费和短暂重连，后续读写时懒清理；`running` 等非终态不使用该 TTL，避免误删长任务
 - SSE 读取必须从当前 principal 注入 `user_id`，不得接受客户端 user id；`update_progress()` / `get_progress()` 的接口和事件 JSON 不暴露内部复合键
+
+### 7.10 Benchmark 深模块约定（v1）
+- 外部只允许通过 `source/benchmark` 公共接口操作（create_draft/generate_cases/review_case/
+  freeze_suite/start_run/resume_run/get_report/set_human_judgment/路由配置）；Web 层不得
+  直接拼接裁判 Prompt 或操作 benchmark SQL
+- 题库冻结后不可原地修改（review/generate 抛 BenchmarkError）；变更必须克隆新版本
+  （create_draft 自动递增 `pprb-<subset>-YYYY.MM.DD-rN`）
+- 证据匹配必须走 `evidence.normalize_text()`（NFKC + 断行连字符 + 括号/标点空白归一，
+  匹配两侧同一变换）；冻结要求证据非空且逐题已人工确认，题目覆盖冻结 Prompt 全部
+  `### Qn:` 与 3 轮交流
+- 深度阅读输出解析是文本级的（`runner._qa_sections_from_content`：转义换行展开 +
+  `### Qn:` 标题），不依赖 JSON 完整性；模型输出可用 `json_support._clean_json_content`
+  与 `_extract_first_json_object` 兜底修复
+- 运行按（候选, 论文, 轨道, 重复槽, 轮次）唯一键保存响应，`get_existing_response` 跳过
+  已保存项实现恢复/重跑输出复用；`max_calls` 硬预算在每次被测调用前检查
+- 裁判判定优先序：human > review > system（缺题计零）> primary；严重幻觉该题封顶 60 分；
+  同家族偏置与非等预算比较必须出现在报告 warnings
 
 ---
 

@@ -20,6 +20,7 @@
 | `paper.html` | `GET /paper/<key>` | 论文详情：元数据、AI 基础分析、深度阅读 Q&A、手动编辑评级/标签/摘要 |
 | `paper_chat.html` | `GET /paper/<key>/chat` | 论文学习页：自由讨论 / 主动问答练习 / 苏格拉底追问三个标签页，正文全部由内嵌 JS 调学习 API 渲染 |
 | `tasks.html` | `GET /tasks` | 成员可见两步手动导入；admin 另见抓取、分析、日报与完整流水线 |
+| `benchmark.html` | `GET /benchmark` | admin 论文阅读 Benchmark：路由配置、建题库、逐题审核、冻结、候选运行与双轨分榜报告 |
 | `settings.html` | `GET /settings` | 管理员设置页：供应商/功能路由、用户管理、审计、网络、备份、邮件与定时任务 |
 | `login.html` | `GET /login` | 用户名与密码登录页 |
 | `account_password.html` | `GET /account/password` | 首次改密阻断页与普通账号改密页 |

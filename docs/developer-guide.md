@@ -34,6 +34,7 @@ arxiv/
 ├── app.py                  # 唯一 Web 入口
 ├── source/
 │   ├── analysis/         # LLM 调用、分析、学习与批处理
+│   ├── benchmark/        # 私有论文阅读 Benchmark（出题/冻结/运行/裁判/报告）
 │   ├── backups/          # WebDAV 备份
 │   ├── documents/        # PDF 文档操作
 │   ├── ingestion/        # arXiv 摄取
@@ -303,6 +304,18 @@ def api_new_endpoint():
 宣传类独立页面使用 `static/promo.css`，所有类名以 `.promo-` 为前缀，避免影响现有业务页面。
 
 ---
+
+### Benchmark 表（v5）
+
+论文阅读 Benchmark（v1 pilot）使用 8 张表：`benchmark_routes`（自管理任务路由）、
+`benchmark_suites`（题库/冻结 Prompt 快照/校验和）、`benchmark_suite_papers`（论文
+全文快照）、`benchmark_cases`（题目/证据/rubric）、`benchmark_runs`、`benchmark_candidates`、
+`benchmark_responses`（原始输出，唯一键支持输出复用）、`benchmark_judgments`
+（primary/review/system/human 判定）。
+
+业务规则集中在 `source/benchmark/`（深模块），存储层不感知冻结/证据语义；
+题库冻结后不可修改，变更走克隆新版本。完整约定见 `AGENTS.md §7.10` 与规划文档
+`docs/plan/paper-reading-benchmark-2026-08-04.md`。
 
 ## 数据库迁移模式
 

@@ -11,6 +11,7 @@
 - [论文学习 API](#论文学习-api)
 - [设置 API](#设置-api)
 - [任务日志 API](#任务日志-api)
+- [论文阅读 Benchmark API](#论文阅读-benchmark-api)
 
 ---
 
@@ -29,6 +30,7 @@
 | `GET /vision` | GET | vision.html | 实验室科研情报基础设施愿景；仅直接访问 |
 | `GET /settings` | GET | settings.html | admin 设置、用户管理与审计 |
 | `GET /tasks` | GET | tasks.html | 成员可手动导入；admin 另可抓取、批处理和生成日报 |
+| `GET /benchmark` | GET | benchmark.html | admin 论文阅读 Benchmark 管理页 |
 | `GET /reports` | GET | reports.html | 报告列表 |
 | `GET /reports/<date>` | GET | report_detail.html | 报告详情 |
 | `GET /reading-list` | GET | reading_list.html | 阅读清单 |
@@ -796,6 +798,45 @@ POST /api/tasks/clear
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `keep_days` | int | 保留天数（默认 30） |
+
+---
+
+## 论文阅读 Benchmark API
+
+以下端点均为 admin 专属（未登录 401/未授权 403）；耗时操作支持 `?task_id=` 参数并配合
+`GET /api/benchmark/progress/<task_id>` SSE 订阅进度。
+
+### 题库管理
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/benchmark/suites` | GET | 题库列表（版本、状态、论文数、已确认题目数） |
+| `/api/benchmark/papers?q=` | GET | 可选业务论文（标题/paper_key 过滤，上限 50） |
+| `/api/benchmark/drafts` | POST | 创建草稿：`{subset_name, paper_keys: []}`；返回 suite 与逐论文失败原因 |
+| `/api/benchmark/suites/<id>` | GET | 详情：论文快照、题目（含证据/rubric/审核状态）、运行记录 |
+| `/api/benchmark/suites/<id>/generate` | POST | 自动出题（每篇论文 1 次调用）；返回通过/驳回/警告统计 |
+| `/api/benchmark/cases/<id>/review` | POST | 人工审核：`{decision: accept/reject/pending, note}` |
+| `/api/benchmark/suites/<id>/review-all` | POST | 批量审核：`{decision: accept/reject, note}` |
+| `/api/benchmark/suites/<id>/freeze` | POST | 冻结题库；不满足条件返回 400 及原因清单 |
+
+### 运行与报告
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/benchmark/suites/<id>/estimate?candidates=&repeats=` | GET | 运行前调用量估算（被测/裁判/复核/最坏合计） |
+| `/api/benchmark/suites/<id>/runs` | POST | 启动运行：`{candidates: [{label, config}], repeats, max_calls}` |
+| `/api/benchmark/runs/<id>` | GET | 运行详情（候选、响应、判定数） |
+| `/api/benchmark/runs/<id>/resume` | POST | 恢复中断/失败运行（已保存响应不重跑） |
+| `/api/benchmark/runs/<id>/report` | GET | 报告：双轨分榜、逐题明细、幻觉/缺题、token/延迟、裁判校准与警告 |
+| `/api/benchmark/judgments` | POST | 人工覆盖：`{run_id, response_id, case_id, score, notes}`，优先级最高 |
+| `/api/benchmark/progress/<task_id>` | GET | SSE 进度（generate/run/resume 使用） |
+
+### 自管理任务路由
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/benchmark/routes` | GET | 出题/主裁判/复核裁判路由 + 供应商模型列表（不含凭据） |
+| `/api/benchmark/routes/<task_key>` | POST | 保存路由：`{config: {provider_key, model, is_thinking, thinking_effort, max_tokens}}` |
 
 ---
 
