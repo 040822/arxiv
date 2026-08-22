@@ -15,9 +15,25 @@
         <header>
             <div class="header-top">
                 <a href="/about" class="settings-btn" title="了解项目">✨ 项目介绍</a>
-                {% if is_admin %}
-                <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
-                {% endif %}
+                <div class="header-actions">
+                    {% if is_admin %}
+                    <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
+                    {% endif %}
+                    {% if is_authenticated %}
+                    <span class="account-identity" aria-label="当前账号">
+                        {% if current_user.display_name %}
+                        <span class="account-display-name" title="{{ current_user.display_name }}">{{ current_user.display_name }}</span>
+                        <code class="account-username" title="@{{ current_user.username }}">@{{ current_user.username }}</code>
+                        {% else %}
+                        <span class="account-display-name" title="{{ current_user.username }}">{{ current_user.username }}</span>
+                        {% endif %}
+                    </span>
+                    <a href="/account/password" class="settings-btn" title="修改密码">🔑 修改密码</a>
+                    <button type="button" class="settings-btn" onclick="AuthUI.logout()">退出登录</button>
+                    {% else %}
+                    <a href="/login" class="settings-btn" title="登录">🔐 登录</a>
+                    {% endif %}
+                </div>
             </div>
             <h1>🤖 AI 论文数据库</h1>
             <p class="subtitle">具身智能 & 人工智能 · 自动抓取 · AI 快速阅读</p>

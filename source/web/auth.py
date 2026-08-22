@@ -241,6 +241,7 @@ def auth_processor():
         "is_admin": bool(user and user.get("role") == "admin"),
         "current_user": user,
         "password_change_recommended": bool(user and user.get("must_change_password")),
+        "password_min_length": PASSWORD_MIN_LENGTH,
         "csrf_token": _csrf_token(),
     }
 

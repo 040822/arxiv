@@ -13,34 +13,69 @@
 <body>
     <div class="container">
         <header>
-            <h1>🔒 管理登录</h1>
+            <h1>🔒 账号登录</h1>
         </header>
 
         <div class="settings-section login-card">
             <h3>登录账号</h3>
             <p class="section-desc">成员账号由管理员邀请创建，不开放自助注册。</p>
             <div class="form-group">
-                <label>用户名</label>
+                <label for="username">用户名</label>
                 <input type="text" id="username" autocomplete="username" autofocus>
             </div>
             <div class="form-group">
-                <label>密码</label>
-                <input type="password" id="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
+                <label for="password">密码</label>
+                <div class="input-group password-input-group">
+                    <input type="password" id="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
+                    <button type="button" class="password-toggle" data-password-toggle="password" aria-label="显示密码" aria-pressed="false" onclick="AuthUI.togglePassword('password', this)">👁</button>
+                </div>
             </div>
             <div class="settings-actions">
-                <button class="btn btn-primary" onclick="login()">登录</button>
+                <button class="btn btn-primary" id="login-button" type="button" onclick="login()">登录</button>
                 <a class="btn" href="/">返回首页</a>
             </div>
-            <div id="login-status" class="action-status"></div>
+            <div id="login-status" class="action-status" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
     </div>
 
     <script>
         const NEXT_URL = {{ next_url | tojson }};
+        let loginRetryTimer = null;
+
+        function startLoginCooldown(seconds) {
+            const button = document.getElementById('login-button');
+            const statusEl = document.getElementById('login-status');
+            let remaining = Math.max(0, Math.ceil(Number(seconds) || 0));
+            if (loginRetryTimer) clearInterval(loginRetryTimer);
+            if (!remaining) {
+                button.disabled = false;
+                return;
+            }
+            button.disabled = true;
+            const update = () => {
+                if (remaining <= 0) {
+                    clearInterval(loginRetryTimer);
+                    loginRetryTimer = null;
+                    button.disabled = false;
+                    statusEl.className = 'action-status';
+                    statusEl.textContent = '';
+                    return;
+                }
+                statusEl.className = 'action-status warning';
+                statusEl.textContent = `登录冷却中，请 ${remaining} 秒后再试`;
+                remaining -= 1;
+            };
+            update();
+            loginRetryTimer = setInterval(update, 1000);
+        }
+
         async function login() {
+            const button = document.getElementById('login-button');
+            if (button.disabled) return;
             const statusEl = document.getElementById('login-status');
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
+            button.disabled = true;
             statusEl.className = 'action-status info';
             statusEl.textContent = '正在登录...';
             try {
@@ -55,12 +90,18 @@
                         ? '/account/password'
                         : (NEXT_URL || '/');
                 } else {
-                    statusEl.className = 'action-status error';
-                    statusEl.textContent = '❌ ' + (result.message || '登录失败');
+                    if (resp.status === 429) {
+                        startLoginCooldown(result.retry_after);
+                    } else {
+                        statusEl.className = 'action-status error';
+                        statusEl.textContent = '❌ ' + (result.message || '登录失败');
+                        button.disabled = false;
+                    }
                 }
             } catch (e) {
                 statusEl.className = 'action-status error';
                 statusEl.textContent = '❌ ' + e.message;
+                button.disabled = false;
             }
         }
     </script>

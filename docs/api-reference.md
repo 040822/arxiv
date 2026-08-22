@@ -43,7 +43,7 @@
 
 签名 session 保存 `user_id` 与 `session_version`，30 天滑动有效。每次请求校验账号存在、启用且版本一致；改密、管理员重置、停用或删除会撤销旧 session。签名密钥仍来自 `session_secret`（`FLASK_SECRET_KEY` 优先）。
 
-临时密码首次登录后仅允许改密或退出。登录按来源 IP和规范化用户名分别限制 15 分钟内 5 次失败；失败统一返回“用户名或密码错误”。所有非安全方法（包括登录、退出）必须携带 session-backed CSRF token，推荐放在 `X-CSRF-Token`。
+临时密码首次登录后仅允许改密或退出。登录按来源 IP 和规范化用户名分别限制滚动 15 分钟内 5 次失败；第 6 次请求返回 HTTP 429，并在响应 JSON 的 `retry_after` 与 `Retry-After` 响应头中返回剩余等待秒数。失败统一返回“用户名或密码错误”。成功登录清理当前 IP 和用户名的失败记录。计数只保存在单个 Flask 进程内存中，重启会清空，多 worker 不共享；默认不信任 `X-Forwarded-For`。所有非安全方法（包括登录、退出）必须携带 session-backed CSRF token，推荐放在 `X-CSRF-Token`。
 
 ```
 GET  /api/auth/status
@@ -726,11 +726,13 @@ DELETE /api/users/<id>
 GET  /api/audit-events?page=1&per_page=50
 ```
 
-修改密码必须同时传当前密码，新密码至少 12 个字符：
+修改密码必须同时传当前密码，新密码至少 8 个字符：
 
 ```json
-{"current_password": "当前账号密码", "new_password": "至少12个字符的新密码"}
+{"current_password": "当前账号密码", "new_password": "至少8个字符的新密码"}
 ```
+
+新密码最低长度由服务端 `source.storage.users.PASSWORD_MIN_LENGTH` 统一校验，当前为 8；页面通过认证上下文注入该值。现有密码和管理员/成员生成的一次性临时密码不会因该策略变化而迁移或缩短。`/api/account/password` 与兼容的 `/api/admin/password` 均会在新密码过短时返回 HTTP 400。
 
 密码哈希保存在 `users` 表并使用 scrypt；`settings.json` 不保存账号凭据。忘记 admin 密码时运行 `python scripts/reset_admin_password.py`，脚本直接更新 admin、递增会话版本并打印一次随机临时密码。
 

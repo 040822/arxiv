@@ -13,7 +13,7 @@ from .connection import get_connection
 
 
 USERNAME_RE = re.compile(r"[a-z0-9._-]{3,32}")
-PASSWORD_MIN_LENGTH = 12
+PASSWORD_MIN_LENGTH = 8
 _LEGACY_SHA256_RE = re.compile(r"[0-9a-fA-F]{64}")
 AUDIT_STRING_MAX_LENGTH = 500
 AUDIT_LIST_MAX_ITEMS = 50

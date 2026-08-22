@@ -114,6 +114,95 @@ class AuthApiTests(unittest.TestCase):
             self.assertEqual(status, 403)
             self.assertTrue(response["password_change_required"])
 
+    def test_password_minimum_is_exposed_to_account_password_template(self):
+        with _WEB_APP.test_request_context():
+            with patch.object(web_auth, "current_user", return_value=_user()):
+                rendered = render_template("account_password.html")
+
+        self.assertIn("至少 8 个字符", rendered)
+        self.assertNotIn("至少 12 个字符", rendered)
+
+    def test_account_password_form_has_confirmation_and_visibility_controls(self):
+        with _WEB_APP.test_request_context():
+            with patch.object(web_auth, "current_user", return_value=_user()):
+                rendered = render_template("account_password.html")
+
+        self.assertIn('id="confirm-password"', rendered)
+        self.assertIn('id="password-form"', rendered)
+        self.assertIn('onsubmit="changePassword(event)"', rendered)
+        for field_id in ("current-password", "new-password", "confirm-password"):
+            self.assertIn(f'data-password-toggle="{field_id}"', rendered)
+        self.assertEqual(rendered.count('type="button" class="password-toggle"'), 3)
+
+    def test_homepage_shows_login_for_guests_and_account_controls_for_members(self):
+        template_data = {
+            "papers": [], "page": 1, "total_pages": 1, "per_page": 20,
+            "tag": None, "date": None, "min_rating": None,
+            "total_papers": 0, "analyzed_papers": 0, "tags": [],
+        }
+        with _WEB_APP.test_request_context("/"):
+            with patch.object(web_auth, "current_user", return_value=None):
+                guest = render_template("index.html", **template_data)
+            member = {**_user(), "display_name": "论文读者"}
+            with patch.object(web_auth, "current_user", return_value=member):
+                signed_in = render_template("index.html", **template_data)
+
+        self.assertIn('href="/login"', guest)
+        self.assertNotIn('href="/account/password"', guest)
+        self.assertIn("论文读者", signed_in)
+        self.assertIn("@reader", signed_in)
+        self.assertIn('href="/account/password"', signed_in)
+        self.assertIn("AuthUI.logout", signed_in)
+
+        without_display_name = {**_user(), "username": "reader", "display_name": None}
+        with _WEB_APP.test_request_context("/"):
+            rendered_without_display_name = render_template(
+                "index.html", current_user=without_display_name,
+                is_authenticated=True, is_admin=False, **template_data,
+            )
+        self.assertIn('title="reader">reader</span>', rendered_without_display_name)
+        self.assertNotIn('title="@reader">@reader</code>', rendered_without_display_name)
+
+    def test_homepage_preserves_long_username_in_account_identity_title(self):
+        long_username = "u" * 32
+        member = {**_user(), "username": long_username, "display_name": "读者"}
+        with _WEB_APP.test_request_context("/"):
+            rendered = render_template(
+                "index.html", current_user=member,
+                is_authenticated=True, is_admin=False,
+                papers=[], page=1, total_pages=1, per_page=20,
+                tag=None, date=None, min_rating=None,
+                total_papers=0, analyzed_papers=0, tags=[],
+            )
+
+        self.assertIn(f'title="@{long_username}">@{long_username}</code>', rendered)
+
+    def test_login_form_has_password_visibility_and_rate_limit_countdown_hooks(self):
+        with _WEB_APP.test_request_context("/login"):
+            rendered = render_template("login.html", next_url="/", csrf_token="csrf")
+
+        self.assertIn('data-password-toggle="password"', rendered)
+        self.assertIn("AuthUI.togglePassword", rendered)
+        self.assertIn("retry_after", rendered)
+        self.assertIn("登录冷却", rendered)
+        self.assertIn('id="login-status" class="action-status" role="status" aria-live="polite"', rendered)
+
+    def test_account_password_status_is_announced_to_assistive_technology(self):
+        with _WEB_APP.test_request_context():
+            with patch.object(web_auth, "current_user", return_value=_user()):
+                rendered = render_template("account_password.html")
+
+        self.assertIn('id="status" class="action-status" role="status" aria-live="polite"', rendered)
+
+    def test_admin_password_form_uses_shared_minimum_length(self):
+        with _WEB_APP.test_request_context("/settings"):
+            rendered = render_template("settings.html", is_admin=True)
+
+        self.assertIn("新密码（至少 8 个字符）", rendered)
+        self.assertIn("minPasswordLength", rendered)
+        self.assertIn('onclick="AuthUI.logout()"', rendered)
+        self.assertNotIn("togglePwd(", rendered)
+
     def test_login_failure_message_is_uniform_and_rate_limited_by_ip_and_username(self):
         with _WEB_APP.test_request_context(
             "/api/auth/login", method="POST", json={"username": "missing", "password": "wrong"}
@@ -125,6 +214,74 @@ class AuthApiTests(unittest.TestCase):
                 result, status, headers = web_auth.api_auth_login()
             self.assertEqual(status, 429)
             self.assertEqual(headers["Retry-After"], str(result["retry_after"]))
+
+    def test_login_rate_limit_expires_after_fifteen_minutes(self):
+        clock = [1000.0]
+        member = _user()
+        with _WEB_APP.test_request_context(
+            "/api/auth/login", method="POST", json={"username": "missing", "password": "wrong"}
+        ), patch.object(web_auth.time, "monotonic", side_effect=lambda: clock[0]):
+            with patch.object(web_auth, "authenticate_user", return_value=None):
+                for _ in range(5):
+                    result, status = web_auth.api_auth_login()
+                    self.assertEqual(status, 403)
+                result, status, _ = web_auth.api_auth_login()
+                self.assertEqual(status, 429)
+
+                clock[0] += web_auth.LOGIN_FAILURE_WINDOW_SECONDS + 1
+                with patch.object(web_auth, "authenticate_user", return_value=member):
+                    result = web_auth.api_auth_login()
+                self.assertEqual(result["status"], "ok")
+
+    def test_successful_login_clears_the_current_ip_and_username_buckets(self):
+        with _WEB_APP.test_request_context(
+            "/api/auth/login", method="POST", json={"username": "reader", "password": "wrong"}
+        ):
+            with patch.object(web_auth, "authenticate_user", return_value=None):
+                for _ in range(4):
+                    web_auth.api_auth_login()
+
+            with patch.object(web_auth, "authenticate_user", return_value=_user()):
+                with _WEB_APP.test_request_context(
+                    "/api/auth/login", method="POST", json={"username": "reader", "password": "right"}
+                ):
+                    result = web_auth.api_auth_login()
+            self.assertEqual(result["status"], "ok")
+
+            with patch.object(web_auth, "authenticate_user", return_value=None):
+                for _ in range(5):
+                    result, status = web_auth.api_auth_login()
+                    self.assertEqual(status, 403)
+                result, status, _ = web_auth.api_auth_login()
+            self.assertEqual(status, 429)
+
+    def test_login_rate_limit_applies_to_both_ip_and_normalized_username(self):
+        with _WEB_APP.test_request_context(
+            "/api/auth/login", method="POST",
+            json={"username": "Reader", "password": "wrong"},
+            environ_base={"REMOTE_ADDR": "192.0.2.10"},
+        ):
+            with patch.object(web_auth, "authenticate_user", return_value=None):
+                for _ in range(5):
+                    web_auth.api_auth_login()
+
+        with _WEB_APP.test_request_context(
+            "/api/auth/login", method="POST",
+            json={"username": "reader", "password": "wrong"},
+            environ_base={"REMOTE_ADDR": "192.0.2.11"},
+        ):
+            result, status, _ = web_auth.api_auth_login()
+            self.assertEqual(status, 429)
+            self.assertGreater(result["retry_after"], 0)
+
+        with _WEB_APP.test_request_context(
+            "/api/auth/login", method="POST",
+            json={"username": "other", "password": "wrong"},
+            environ_base={"REMOTE_ADDR": "192.0.2.10"},
+        ):
+            result, status, _ = web_auth.api_auth_login()
+            self.assertEqual(status, 429)
+            self.assertGreater(result["retry_after"], 0)
 
     def test_route_policy_is_fail_closed_and_explicitly_exposes_member_capabilities(self):
         self.assertEqual(web_auth.route_policy("api_paper_chat_send", "POST"), "member")

@@ -30,6 +30,43 @@ header {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 10px;
+    gap: 12px;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.account-identity {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    color: #374151;
+    font-size: 0.88em;
+}
+
+.account-display-name {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+.account-username {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #64748b;
+    font-size: 0.9em;
 }
 
 .settings-btn {
@@ -118,6 +155,18 @@ footer {
 
     header h1 {
         font-size: 1.5em;
+    }
+
+    .header-top {
+        align-items: flex-start;
+    }
+
+    .header-actions {
+        max-width: 68%;
+    }
+
+    .account-identity {
+        max-width: 100%;
     }
 
     .stats {

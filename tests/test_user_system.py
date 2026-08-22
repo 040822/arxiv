@@ -12,6 +12,7 @@ from source.storage import (
     add_paper_quiz_question,
     add_to_reading_list,
     create_member,
+    change_user_password,
     create_paper_quiz_session,
     delete_member,
     get_audit_events,
@@ -56,6 +57,16 @@ class InviteOnlyUserSystemTests(unittest.TestCase):
             "title": "Paper", "authors": [], "abstract": "Abstract", "categories": [],
             "imported_by_user_id": importer,
         })
+
+    def test_new_password_requires_eight_characters_and_accepts_eight(self):
+        member, temporary_password = create_member("password-user")
+
+        with self.assertRaisesRegex(ValueError, "至少需要 8 个字符"):
+            change_user_password(member["id"], temporary_password, "1234567")
+
+        self.assertTrue(
+            change_user_password(member["id"], temporary_password, "12345678")
+        )
 
     def test_settings_credential_is_removed_field_by_field_after_database_commit(self):
         with open(settings_store.SETTINGS_PATH, encoding="utf-8") as handle:

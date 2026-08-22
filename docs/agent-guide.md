@@ -117,6 +117,9 @@ APScheduler cron(day_of_week, hour, minute)
 - `route_policy()` 将每个非静态路由归为 public/member/admin；未知路由按 admin 失败关闭，API 未登录返回 401、权限不足返回 403
 - session 保存 `user_id/session_version` 并 30 天滑动有效；逐请求检查用户存在、启用和版本，改密/重置/停用/删除通过递增版本撤销旧 cookie
 - 所有 cookie 认证的非安全方法（包括登录和退出）必须通过 session-backed CSRF；前端统一由 `static/auth.js` 添加请求头
+- 首页保持 public：访客看到登录入口，已登录用户看到显示名、明确的 `@username`、改密和退出入口；`static/auth.js` 的 `window.AuthUI` 提供密码显隐和退出辅助，不要在模板中复制实现
+- 新密码由 `source.storage.users.PASSWORD_MIN_LENGTH` 统一校验，当前最低 8 个字符；模板使用认证上下文中的 `password_min_length`，不要在 HTML/JavaScript 中另写固定策略
+- 登录限流按 IP 和规范化用户名分别计算，滚动 15 分钟内 5 次失败后第 6 次返回 429/`Retry-After`；计数是单进程内存状态，默认不信任 `X-Forwarded-For`，登录页可用 `retry_after` 做倒计时
 - 私有学习存储接口必须显式接收当前 principal 的 `user_id`；不得信任 URL、JSON 或表单中的用户 ID，管理员也只能看其他用户的数量汇总
 - `GET /api/providers` 只能返回 `api_key_masked`，不要返回完整 `api_key`
 

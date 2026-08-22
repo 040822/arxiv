@@ -2,3 +2,30 @@
     max-width: 420px;
     margin: 40px auto;
 }
+
+.password-input-group {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+}
+
+.password-input-group input {
+    flex: 1;
+    min-width: 0;
+    border-radius: 6px 0 0 6px;
+}
+
+.password-toggle {
+    flex: 0 0 auto;
+    min-width: 44px;
+    padding: 0 10px;
+    border: 1px solid #ddd;
+    border-left: 0;
+    border-radius: 0 6px 6px 0;
+    background: #fff;
+    cursor: pointer;
+}
+
+.password-toggle:hover {
+    background: #f0f4f8;
+}
