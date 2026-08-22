@@ -21,7 +21,85 @@
         }
     };
 
+    AuthUI.initAccountMenu = function (doc = root.document) {
+        if (!doc || !doc.querySelector) return;
+        const toggle = doc.getElementById('account-menu-toggle');
+        const menu = doc.getElementById('account-menu');
+        if (!toggle || !menu || toggle.__authMenuReady) return;
+        toggle.__authMenuReady = true;
+
+        const menuItems = () => Array.from(menu.querySelectorAll('[role="menuitem"]'));
+        const setOpen = (open, focusFirst = false) => {
+            toggle.setAttribute('aria-expanded', String(open));
+            menu.hidden = !open;
+            if (open && focusFirst) {
+                menuItems()[0]?.focus();
+            }
+        };
+        const close = (restoreFocus = false) => {
+            setOpen(false);
+            if (restoreFocus) toggle.focus();
+        };
+        const focusItem = (index) => {
+            const items = menuItems();
+            if (!items.length) return;
+            items[(index + items.length) % items.length].focus();
+        };
+
+        toggle.addEventListener('click', () => {
+            const open = toggle.getAttribute('aria-expanded') !== 'true';
+            setOpen(open);
+        });
+        toggle.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                setOpen(true, false);
+                focusItem(event.key === 'ArrowDown' ? 0 : -1);
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                close();
+            }
+        });
+        menu.addEventListener('keydown', (event) => {
+            const items = menuItems();
+            const current = items.indexOf(doc.activeElement);
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                focusItem(current + 1);
+            } else if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                focusItem(current - 1);
+            } else if (event.key === 'Home') {
+                event.preventDefault();
+                focusItem(0);
+            } else if (event.key === 'End') {
+                event.preventDefault();
+                focusItem(-1);
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                close(true);
+            }
+        });
+        doc.addEventListener('click', (event) => {
+            if (!menu.contains(event.target) && !toggle.contains(event.target)) {
+                close();
+            }
+        });
+        doc.addEventListener('focusin', (event) => {
+            if (!menu.contains(event.target) && !toggle.contains(event.target)) {
+                close();
+            }
+        });
+    };
+
     root.AuthUI = AuthUI;
+
+    const initializeAccountMenu = () => AuthUI.initAccountMenu();
+    if (root.document && root.document.readyState === 'loading' && root.document.addEventListener) {
+        root.document.addEventListener('DOMContentLoaded', initializeAccountMenu);
+    } else {
+        initializeAccountMenu();
+    }
 
     const originalFetch = window.fetch.bind(window);
     window.fetch = function (input, options) {

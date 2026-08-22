@@ -84,18 +84,20 @@ print(json.dumps({url: [client.get(url).status_code, client.get(url).content_typ
                 with self.subTest(template=template_name, class_name=class_name):
                     self.assertRegex(css, rf"\.{re.escape(class_name)}(?![-_a-zA-Z0-9])")
 
-    def test_account_identity_can_shrink_long_usernames(self):
+    def test_account_menu_shrinks_long_labels_and_stays_inside_viewport(self):
         css = (CSS_ROOT / "core.css").read_text(encoding="utf-8")
         self.assertRegex(css, r"\.header-actions\s*\{[^}]*min-width:\s*0")
-        self.assertRegex(css, r"\.account-identity\s*\{[^}]*min-width:\s*0")
+        self.assertRegex(css, r"\.account-menu\s*\{[^}]*max-width:\s*100%")
         self.assertRegex(
             css,
-            r"\.account-username\s*\{[^}]*max-width:\s*100%[^}]*"
+            r"\.account-menu-label\s*\{[^}]*max-width:\s*180px[^}]*"
             r"overflow:\s*hidden[^}]*text-overflow:\s*ellipsis",
         )
+        self.assertRegex(css, r"\.account-menu-panel\s*\{[^}]*position:\s*absolute[^}]*")
+        self.assertRegex(css, r"\.account-menu-panel\s*\{[^}]*max-width:\s*calc\(100vw - 20px\)")
 
         template = (TEMPLATES / "index.html").read_text(encoding="utf-8")
-        self.assertIn('title="{{ current_user.username }}"', template)
+        self.assertIn('title="{{ account_label }}"', template)
         self.assertIn('title="@{{ current_user.username }}"', template)
 
 

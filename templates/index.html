@@ -16,22 +16,36 @@
             <div class="header-top">
                 <a href="/about" class="settings-btn" title="了解项目">✨ 项目介绍</a>
                 <div class="header-actions">
-                    {% if is_admin %}
-                    <a href="/settings" class="settings-btn" title="设置">⚙️ 设置</a>
-                    {% endif %}
                     {% if is_authenticated %}
-                    <span class="account-identity" aria-label="当前账号">
-                        {% if current_user.display_name %}
-                        <span class="account-display-name" title="{{ current_user.display_name }}">{{ current_user.display_name }}</span>
-                        <code class="account-username" title="@{{ current_user.username }}">@{{ current_user.username }}</code>
-                        {% else %}
-                        <span class="account-display-name" title="{{ current_user.username }}">{{ current_user.username }}</span>
-                        {% endif %}
-                    </span>
-                    <a href="/account/password" class="settings-btn" title="修改密码">🔑 修改密码</a>
-                    <button type="button" class="settings-btn" onclick="AuthUI.logout()">退出登录</button>
+                    {% set account_label = current_user.display_name or current_user.username %}
+                    <div class="account-menu">
+                        <button
+                            type="button"
+                            id="account-menu-toggle"
+                            class="account-menu-toggle"
+                            aria-expanded="false"
+                            aria-haspopup="menu"
+                            aria-controls="account-menu"
+                            title="{{ account_label }}"
+                        >
+                            <span class="account-avatar" aria-hidden="true">{{ account_label[:1] | upper }}</span>
+                            <span class="account-menu-label">{{ account_label }}</span>
+                            <span class="account-menu-chevron" aria-hidden="true">⌄</span>
+                        </button>
+                        <div id="account-menu" class="account-menu-panel" role="menu" aria-labelledby="account-menu-toggle" hidden>
+                            <div class="account-menu-user" role="presentation">
+                                <span class="account-menu-user-label">当前账号</span>
+                                <strong class="account-menu-username" title="@{{ current_user.username }}">@{{ current_user.username }}</strong>
+                            </div>
+                            {% if is_admin %}
+                            <a href="/settings" class="account-menu-item" role="menuitem">设置</a>
+                            {% endif %}
+                            <a href="/account/password" class="account-menu-item" role="menuitem">修改密码</a>
+                            <button type="button" class="account-menu-item account-menu-logout" role="menuitem" onclick="AuthUI.logout()">退出登录</button>
+                        </div>
+                    </div>
                     {% else %}
-                    <a href="/login" class="settings-btn" title="登录">🔐 登录</a>
+                    <a href="/login" class="settings-btn login-link" title="登录">登录</a>
                     {% endif %}
                 </div>
             </div>

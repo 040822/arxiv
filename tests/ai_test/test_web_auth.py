@@ -149,10 +149,22 @@ class AuthApiTests(unittest.TestCase):
 
         self.assertIn('href="/login"', guest)
         self.assertNotIn('href="/account/password"', guest)
+        self.assertNotIn('id="account-menu-toggle"', guest)
+        self.assertNotIn("🔐", guest)
         self.assertIn("论文读者", signed_in)
         self.assertIn("@reader", signed_in)
+        self.assertIn('id="account-menu-toggle"', signed_in)
+        self.assertIn('aria-expanded="false"', signed_in)
+        self.assertIn('aria-haspopup="menu"', signed_in)
+        self.assertIn('aria-controls="account-menu"', signed_in)
+        self.assertIn('id="account-menu"', signed_in)
+        self.assertIn('role="menu"', signed_in)
+        self.assertIn(' hidden', signed_in)
+        self.assertIn('role="menuitem"', signed_in)
         self.assertIn('href="/account/password"', signed_in)
         self.assertIn("AuthUI.logout", signed_in)
+        self.assertNotIn("🔑 修改密码", signed_in)
+        self.assertNotIn('href="/settings"', signed_in)
 
         without_display_name = {**_user(), "username": "reader", "display_name": None}
         with _WEB_APP.test_request_context("/"):
@@ -160,8 +172,25 @@ class AuthApiTests(unittest.TestCase):
                 "index.html", current_user=without_display_name,
                 is_authenticated=True, is_admin=False, **template_data,
             )
-        self.assertIn('title="reader">reader</span>', rendered_without_display_name)
+        self.assertIn('title="reader"', rendered_without_display_name)
+        self.assertIn('>reader</span>', rendered_without_display_name)
+        self.assertIn('title="@reader">@reader</strong>', rendered_without_display_name)
         self.assertNotIn('title="@reader">@reader</code>', rendered_without_display_name)
+
+    def test_guest_homepage_has_one_plain_login_control_without_auth_icons(self):
+        template_data = {
+            "papers": [], "page": 1, "total_pages": 1, "per_page": 20,
+            "tag": None, "date": None, "min_rating": None,
+            "total_papers": 0, "analyzed_papers": 0, "tags": [],
+        }
+        with _WEB_APP.test_request_context("/"):
+            with patch.object(web_auth, "current_user", return_value=None):
+                rendered = render_template("index.html", **template_data)
+
+        self.assertEqual(rendered.count('href="/login"'), 1)
+        self.assertIn('class="settings-btn login-link"', rendered)
+        self.assertNotIn("🔐", rendered)
+        self.assertNotIn("🔑 登录", rendered)
 
     def test_homepage_preserves_long_username_in_account_identity_title(self):
         long_username = "u" * 32
@@ -175,7 +204,23 @@ class AuthApiTests(unittest.TestCase):
                 total_papers=0, analyzed_papers=0, tags=[],
             )
 
-        self.assertIn(f'title="@{long_username}">@{long_username}</code>', rendered)
+        self.assertIn(f'title="@{long_username}">@{long_username}</strong>', rendered)
+        self.assertIn(f'title="读者"', rendered)
+
+    def test_admin_homepage_puts_settings_inside_account_menu(self):
+        with _WEB_APP.test_request_context("/"):
+            rendered = render_template(
+                "index.html", current_user=_user("admin"),
+                is_authenticated=True, is_admin=True,
+                papers=[], page=1, total_pages=1, per_page=20,
+                tag=None, date=None, min_rating=None,
+                total_papers=0, analyzed_papers=0, tags=[],
+            )
+
+        self.assertEqual(rendered.count('id="account-menu-toggle"'), 1)
+        self.assertIn('<a href="/settings" class="account-menu-item" role="menuitem">设置</a>', rendered)
+        self.assertIn('<a href="/account/password" class="account-menu-item" role="menuitem">修改密码</a>', rendered)
+        self.assertIn('class="account-menu-item account-menu-logout"', rendered)
 
     def test_login_form_has_password_visibility_and_rate_limit_countdown_hooks(self):
         with _WEB_APP.test_request_context("/login"):
