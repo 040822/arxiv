@@ -1,11 +1,20 @@
 # 更新日志
 
-## 未发布 — Benchmark v6 调用预算与公共边界（2026-08-20）
+## 未发布 — Benchmark v7 异步运行与可追溯评分（2026-08-24）
 
-- `benchmark_runs` 迁移至 v6：持久化 `candidate_calls_made`，每次候选 API 尝试原子计数，深度阅读续写计入，裁判调用不计入；启动前拒绝不足预算，耗尽后恢复的 `max_calls` 只能严格上调
-- 新建运行固定保存非空 `source.benchmark.RUNNER_VERSION`；历史空版本不伪造回填，报告保留明确 provenance warning
-- `source.benchmark` 新增 `list_suite_papers`、`list_runs`、`mark_interrupted_runs` 公共包装接口，调用方无需直连 benchmark 存储层
-- 报告逐题携带精确 `response_id`/`case_id`、`primary_score`/`review_score` 与 `needs_human_review`；主/复核条件级冲突等待人工，冲突题不计入对应轨道/榜单聚合（全题冲突时轨道分数为空）
+- schema 迁移至 v7：运行支持 `queued`、`active_scoring_revision`；响应保存 `retry_count`、`error_json` 与 `reused_from_response_id`；新增 `benchmark_scoring_revisions` 和 `benchmark_case_revisions`
+- 出题、运行、恢复和重判统一进入单 worker 后台队列，Web API 立即返回 HTTP 202/task_id；进程重启将 queued/running 标记为 interrupted，人工恢复且保留已保存响应与调用计数
+- `max_calls` 只计候选模型尝试，包含深度阅读续写及网络/timeout/429/5xx 的额外重试，不计裁判；启动前按未复用槽位校验，耗尽后恢复只能严格上调上限
+- 跨运行响应复用要求 suite checksum、runner version、candidate config hash 和槽位精确匹配；`retry_failed`/未完成响应不复用，复用不增加目标运行预算
+- 新增独立 scoring revision 与 `/api/benchmark/runs/<id>/rejudge`；只重判保存输出，旧判定保留，成功后切换 active 版本；人工判定按完整 rubric `condition_scores` 加权并保存 actor 快照
+- 新运行固定保存 `source.benchmark.RUNNER_VERSION=pprb-runner-v7`；历史空版本不伪造回填，报告保留 provenance warning
+
+## 已发布历史 — Benchmark v6 调用预算与公共边界（2026-08-20）
+
+以下条目保留用于历史追溯；当前实现以 v7 schema、异步 worker 和独立 scoring revision 为准。
+
+- v6 首次持久化 `candidate_calls_made`，每次候选 API 尝试原子计数，深度阅读续写计入，裁判调用不计入；启动前拒绝不足预算，耗尽后恢复的 `max_calls` 只能严格上调
+- v6 报告逐题携带精确 `response_id`/`case_id`、`primary_score`/`review_score` 与 `needs_human_review`；主/复核条件级冲突等待人工，冲突题不计入对应轨道/榜单聚合（全题冲突时轨道分数为空）
 
 ## v0.7.1 — 论文阅读 Benchmark pilot（2026-08-13，分支 feature/paper-benchmark）
 

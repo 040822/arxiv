@@ -3,17 +3,61 @@
 import json
 import logging
 import math
+import hashlib
 
-from source.analysis.json_support import _clean_json_content, _extract_first_json_object
+from .json_support import _clean_json_content, _extract_first_json_object
 
-from ._ai import call_model
-from .config import get_route_config, get_route_prompts, resolve_model_config
+from ._ai import RetryFailed, call_model_with_retries
+from .config import (
+    build_actual_request_params, get_route_config, get_route_prompts,
+    resolve_model_config,
+)
 
 logger = logging.getLogger(__name__)
 
 MET_VALUES = {"met": 1.0, "partial": 0.5, "unmet": 0.0}
 HALLUCINATION_CAP = 60.0
 LOW_CONFIDENCE_THRESHOLD = 0.7
+
+
+def scoring_revision_key(suite_checksum=""):
+    """Hash judge routes and prompts without credentials or dynamic output."""
+    payload = {
+        "suite_checksum": str(suite_checksum or ""),
+        "routes": {
+            key: _safe_route_snapshot(key)
+            for key in ("benchmark_judge", "benchmark_judge_review")
+        },
+        "prompts": get_route_prompts(),
+    }
+
+    def sanitize(value):
+        if isinstance(value, dict):
+            return {
+                str(key): sanitize(item)
+                for key, item in value.items()
+                if str(key).lower() not in {"api_key", "apikey", "authorization"}
+            }
+        if isinstance(value, (list, tuple)):
+            return [sanitize(item) for item in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    canonical = json.dumps(sanitize(payload), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+
+
+def _safe_route_snapshot(route_key):
+    cfg = resolve_model_config(get_route_config(route_key))
+    return {
+        "provider_key": cfg.get("provider_key", ""),
+        "provider_name": cfg.get("provider_name", ""),
+        "model": cfg.get("model", ""),
+        "is_thinking": bool(cfg.get("is_thinking")),
+        "thinking_effort": cfg.get("thinking_effort", "medium"),
+        "actual_params": build_actual_request_params(cfg),
+    }
 
 
 def _judge_payload(track, paper, cases):
@@ -49,7 +93,7 @@ def _build_cases(paper_cases, response_by_kind):
 
 def _call_judge(route_key, messages, paper_ref):
     cfg = resolve_model_config(get_route_config(route_key))
-    content, usage = call_model(cfg, messages, route_key, paper_ref=paper_ref)
+    content, usage = call_model_with_retries(cfg, messages, route_key, paper_ref=paper_ref)
     return json.loads(_clean_json_content(_extract_first_json_object(content))), usage
 
 
@@ -184,11 +228,31 @@ def _judge_group(run_id, route_key, judge_role, scoring_revision, group, paper_r
     """对 (候选, 论文, 轨道, 重复槽) 执行一次裁判调用；缺题内容直接计零。"""
     from source.storage.benchmark import save_benchmark_judgment
 
+    from source.storage.benchmark import get_response_judgment
+
     payload_cases, missing = _build_cases(group["cases"], group["output_by_kind"])
+    expected_response_cases = [
+        (group["response_ids"].get(case["kind"]), case["id"])
+        for case in payload_cases
+        if group["response_ids"].get(case["kind"]) is not None
+    ]
+    if expected_response_cases and all(
+        get_response_judgment(response_id, judge_role, scoring_revision, case_id)
+        for response_id, case_id in expected_response_cases
+    ):
+        return 0
     for case in missing:
         response_id = group["response_ids"].get(case["kind"])
         if response_id is None:
             continue  # 候选响应缺失属于基础设施失败，不计零
+        response = next(
+            (item for item in group.get("responses", []) if item.get("id") == response_id),
+            None,
+        )
+        if response and response.get("status") == "retry_failed":
+            # A temporary provider failure is infrastructure state, not a
+            # candidate score.  Leave the case unjudged for later recovery.
+            continue
         save_benchmark_judgment(
             run_id, response_id, "system", route_key,
             scoring_revision, case["id"], [], 0.0, False, None,
@@ -199,6 +263,8 @@ def _judge_group(run_id, route_key, judge_role, scoring_revision, group, paper_r
     payload = _judge_payload(group["track"], group["paper"], payload_cases)
     try:
         result, _usage = _call_judge(route_key, _judge_messages(route_key, payload), paper_ref)
+    except RetryFailed:
+        raise
     except Exception as exc:
         logger.warning(f"benchmark judge call failed for {group['paper_key']}/{group['track']}: {exc}")
         return 0
@@ -338,69 +404,151 @@ def review_sampling(groups, judgments, judge_provider_keys=None):
         flagged = list(dict.fromkeys(id(g) for g in flagged))
         flagged = [next(g for g in group_list if id(g) == group_id) for group_id in flagged]
         others = [g for g in group_list if g not in flagged]
-        sampled.extend(flagged + others[:max(0, count - len(flagged))])
+        # The ordinary floor is a separate sample from the anomaly set.  An
+        # anomalous group must never consume the candidate/track's baseline
+        # 10% slot; this keeps the nominal sample while adding every flagged
+        # group, even when the anomaly count is already above that floor.
+        sampled.extend(flagged + others[:count])
     return sampled
 
 
 def judge_run(run):
     """对一次运行执行主裁判与抽样复核；返回判定统计。"""
-    from source.storage.benchmark import get_run_judgments
+    from source.storage.benchmark import (
+        create_benchmark_scoring_revision,
+        get_run_judgments,
+        get_scoring_revision,
+        set_active_scoring_revision,
+        set_benchmark_scoring_revision_status,
+    )
 
     responses = run["responses"]
     groups = build_groups(run, responses)
-    scoring_revision = str((run.get("suite") or {}).get("scoring_revision") or "") or "pprb-r1"
-
-    judged = 0
-    for group in groups:
-        if not group["cases"]:
-            continue
-        paper_ref = {"paper_id": group["paper"].get("paper_id"), "arxiv_id": group["paper"].get("arxiv_id", "")}
-        judged += _judge_group(
-            run["id"], "benchmark_judge", "primary", scoring_revision, group, paper_ref
-        )
-
-    primary_judgments = get_run_judgments(run["id"])
-    judge_provider_keys = set()
-    for route_key in ("benchmark_judge", "benchmark_judge_review"):
-        try:
-            route_cfg = resolve_model_config(get_route_config(route_key))
-            if route_cfg.get("provider_key"):
-                judge_provider_keys.add(route_cfg["provider_key"])
-        except Exception:
-            # A missing judge route is already represented by the per-group
-            # call failure above; sampling must remain a pure report decision
-            # and must not turn that recoverable condition into a run crash.
-            continue
-    sampled = review_sampling(
-        groups,
-        primary_judgments,
-        judge_provider_keys=judge_provider_keys,
+    scoring_revision = scoring_revision_key((run.get("suite") or {}).get("suite_checksum"))
+    existing_revision = get_scoring_revision(run["id"], scoring_revision)
+    if existing_revision and existing_revision.get("status") == "completed":
+        # A route may be switched back to a previously completed revision.
+        # Make that revision authoritative before returning the reuse result.
+        set_active_scoring_revision(run["id"], scoring_revision)
+        return {"judged_groups": 0, "reviewed_groups": 0, "judged_cases": 0,
+                "scoring_revision": scoring_revision, "reused": True}
+    revision = create_benchmark_scoring_revision(
+        run["id"], scoring_revision,
+        primary_route_key="benchmark_judge", review_route_key="benchmark_judge_review",
+        primary_route_snapshot=_safe_route_snapshot("benchmark_judge"),
+        review_route_snapshot=_safe_route_snapshot("benchmark_judge_review"),
+        primary_prompt_snapshot=get_route_prompts().get("benchmark_judge"),
+        review_prompt_snapshot=get_route_prompts().get("benchmark_judge_review"),
     )
-    for group in sampled:
-        paper_ref = {"paper_id": group["paper"].get("paper_id"), "arxiv_id": group["paper"].get("arxiv_id", "")}
-        _judge_group(
-            run["id"], "benchmark_judge_review", "review", scoring_revision, group, paper_ref
+    set_benchmark_scoring_revision_status(revision["id"], "running")
+
+    try:
+        judged = 0
+        for group in groups:
+            if not group["cases"]:
+                continue
+            paper_ref = {"paper_id": group["paper"].get("paper_id"), "arxiv_id": group["paper"].get("arxiv_id", "")}
+            judged += _judge_group(
+                run["id"], "benchmark_judge", "primary", scoring_revision, group, paper_ref
+            )
+
+        primary_judgments = [
+            item for item in get_run_judgments(run["id"])
+            if item.get("scoring_revision") == scoring_revision
+        ]
+        judge_provider_keys = set()
+        for route_key in ("benchmark_judge", "benchmark_judge_review"):
+            try:
+                route_cfg = resolve_model_config(get_route_config(route_key))
+                if route_cfg.get("provider_key"):
+                    judge_provider_keys.add(route_cfg["provider_key"])
+            except Exception:
+                continue
+        sampled = review_sampling(groups, primary_judgments, judge_provider_keys=judge_provider_keys)
+        for group in sampled:
+            paper_ref = {"paper_id": group["paper"].get("paper_id"), "arxiv_id": group["paper"].get("arxiv_id", "")}
+            _judge_group(
+                run["id"], "benchmark_judge_review", "review", scoring_revision, group, paper_ref
+            )
+        set_benchmark_scoring_revision_status(revision["id"], "completed")
+        set_active_scoring_revision(run["id"], scoring_revision)
+        return {"judged_groups": len(groups), "reviewed_groups": len(sampled),
+                "judged_cases": judged, "scoring_revision": scoring_revision}
+    except Exception as exc:
+        set_benchmark_scoring_revision_status(
+            revision["id"], "error", {"message": str(exc), "type": type(exc).__name__},
         )
-    return {"judged_groups": len(groups), "reviewed_groups": len(sampled), "judged_cases": judged}
+        raise
 
 
-def set_human_judgment(run_id, response_id, case_id, score, notes=""):
+def _validate_human_conditions(case, condition_scores):
+    """Require exactly one normalized 0/0.5/1 value for every rubric item."""
+    rubric = ((case or {}).get("rubric") or {}).get("conditions") or []
+    if isinstance(rubric, dict):
+        rubric = [rubric]
+    if not isinstance(condition_scores, list):
+        raise ValueError("人工判定必须提交 condition_scores 数组")
+    expected = [str(item.get("text") or item.get("condition") or "").strip() for item in rubric]
+    if not expected or any(not item for item in expected):
+        raise ValueError("题目 rubric 条件无效")
+    seen = set()
+    normalized = []
+    for item in condition_scores:
+        key = str(item.get("condition") or item.get("text") or "").strip()
+        if key in seen or key not in expected:
+            raise ValueError("人工判定条件必须与 rubric 一一对应")
+        value = item.get("met")
+        if isinstance(value, bool):
+            value = 1.0 if value else 0.0
+        try:
+            value = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("人工判定 met 必须为 0、0.5 或 1") from exc
+        if value not in (0.0, 0.5, 1.0):
+            raise ValueError("人工判定 met 必须为 0、0.5 或 1")
+        seen.add(key)
+        normalized.append({"condition": key, "met": value, "note": str(item.get("note") or "")})
+    if set(expected) != seen or len(expected) != len(seen):
+        raise ValueError("人工判定必须覆盖全部 rubric 条件")
+    return normalized
+
+
+def set_human_judgment(run_id, response_id, case_id, condition_scores, notes="",
+                       actor_user_id=None, actor_username="",
+                       hallucination_critical=False):
     """人工覆盖判定：优先级最高，且不覆盖原始裁判记录。"""
     from source.storage.benchmark import save_benchmark_judgment
 
-    try:
-        score = max(0.0, min(100.0, float(score)))
-    except (TypeError, ValueError):
-        raise ValueError("人工评分必须是 0-100 的数字")
-    from source.storage.benchmark import get_benchmark_run, get_benchmark_suite
+    from source.storage.benchmark import (
+        get_benchmark_case, get_benchmark_run, get_benchmark_suite, get_response,
+    )
     run = get_benchmark_run(run_id)
     if not run:
         raise ValueError("运行不存在")
+    response = get_response(response_id)
+    case = get_benchmark_case(case_id)
+    if not response or response.get("run_id") != int(run_id):
+        raise ValueError("response_id 不属于该运行")
+    if not case or case.get("suite_id") != run.get("suite_id"):
+        raise ValueError("case_id 不属于该运行题库")
+    if response.get("paper_ref_id") != case.get("paper_ref_id") or response.get("track") != case.get("track"):
+        raise ValueError("response_id 与 case_id 不匹配")
     suite = get_benchmark_suite(run["suite_id"])
-    scoring_revision = str((suite or {}).get("scoring_revision") or "") or "pprb-r1"
+    scoring_revision = str(run.get("active_scoring_revision") or "") or scoring_revision_key(
+        (suite or {}).get("suite_checksum")
+    )
+    normalized = _validate_human_conditions(case, condition_scores)
+    scored = _score_for_case(case, {
+        "conditions": normalized,
+        "hallucination_critical": bool(hallucination_critical),
+    })
     save_benchmark_judgment(
         run_id, response_id, "human", "human", scoring_revision, case_id,
-        [], score, False, None, {"human": True}, str(notes or ""),
+        scored["condition_scores"], scored["score"],
+        bool(hallucination_critical), None,
+        {"human": True, "hallucination_critical": bool(hallucination_critical)},
+        str(notes or ""),
+        actor_user_id=actor_user_id, actor_username=actor_username,
     )
 
 
@@ -421,12 +569,13 @@ def calibrate(run):
     condition_agree = 0
     score_errors = []
     for primary, human in pairs:
-        condition_total += 1
-        condition_agree += 1 if abs(primary["score"] - human["score"]) <= 10 else 0
         score_errors.append(abs(primary["score"] - human["score"]))
         primary_conditions = {c["condition"]: c["met"] for c in primary.get("condition_scores", [])}
         human_conditions = {c["condition"]: c["met"] for c in human.get("condition_scores", [])}
-        for key in set(primary_conditions) | set(human_conditions):
+        # Only same-named conditions are comparable.  A historical human
+        # judgment with an empty condition list remains readable, but cannot
+        # inflate or dilute condition agreement.
+        for key in set(primary_conditions) & set(human_conditions):
             if primary_conditions.get(key) == human_conditions.get(key):
                 condition_agree += 1
             condition_total += 1
@@ -445,6 +594,12 @@ def _collect_judgments(run):
     from source.storage.benchmark import get_run_judgments
 
     judgments = get_run_judgments(run["id"])
+    active_revision = str(run.get("active_scoring_revision") or "").strip()
+    if active_revision:
+        judgments = [
+            item for item in judgments
+            if item.get("scoring_revision") == active_revision
+        ]
     by_case = {}
     for judgment in judgments:
         by_case.setdefault(judgment["case_id"], {}).setdefault(

@@ -48,7 +48,7 @@ ADMIN_ENDPOINTS = {
     "api_benchmark_create_draft", "api_benchmark_estimate", "api_benchmark_freeze",
     "api_benchmark_generate_cases", "api_benchmark_human_judgment", "api_benchmark_papers",
     "api_benchmark_progress", "api_benchmark_report", "api_benchmark_resume_run",
-    "api_benchmark_review_all", "api_benchmark_review_case", "api_benchmark_routes",
+    "api_benchmark_rejudge_run", "api_benchmark_review_all", "api_benchmark_review_case", "api_benchmark_routes",
     "api_benchmark_run", "api_benchmark_save_route", "api_benchmark_start_run",
     "api_benchmark_suite", "api_benchmark_suites", "benchmark_page",
     "api_clear_logs", "api_db_info", "api_delete_paper", "api_delete_provider",

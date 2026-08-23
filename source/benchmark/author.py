@@ -3,9 +3,9 @@
 import json
 import logging
 
-from source.analysis.json_support import _clean_json_content, _extract_first_json_object
+from .json_support import _clean_json_content, _extract_first_json_object
 
-from ._ai import call_model
+from ._ai import RetryFailed, call_model_with_retries
 from .config import get_route_config, get_route_prompts, resolve_model_config
 from .evidence import check_evidence, parse_deep_reading_questions
 
@@ -30,7 +30,7 @@ def _paper_payload(paper):
 
 def _call_author(route_key, messages, paper_ref):
     cfg = resolve_model_config(get_route_config(route_key))
-    content, usage = call_model(cfg, messages, route_key, paper_ref=paper_ref)
+    content, usage = call_model_with_retries(cfg, messages, route_key, paper_ref=paper_ref)
     return json.loads(_clean_json_content(_extract_first_json_object(content))), usage
 
 

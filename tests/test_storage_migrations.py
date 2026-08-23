@@ -15,7 +15,10 @@ from source.storage import (
     init_db, insert_analysis, insert_paper, update_analysis,
 )
 from source.storage.snapshot import copy_sqlite_snapshot
-from source.storage.benchmark_migrations import migrate_benchmark_tables
+from source.storage.benchmark_migrations import (
+    migrate_benchmark_candidate_call_budget, migrate_benchmark_tables,
+    migrate_benchmark_v7,
+)
 from source.settings import store as settings_store
 from source.storage.user_migration import take_generated_admin_password
 
@@ -134,7 +137,7 @@ class SchemaMigrationTests(unittest.TestCase):
             conn.commit()
 
             # Invoke the registered v6 migration, not a test-only ALTER TABLE.
-            migration = migrations.MIGRATIONS[-1]
+            migration = next(item for item in migrations.MIGRATIONS if item[0] == 6)
             self.assertEqual(migration[0], 6)
             migration[2](conn)
             column = next(
@@ -149,6 +152,36 @@ class SchemaMigrationTests(unittest.TestCase):
         self.assertEqual((column[1], column[2], column[3], column[4]),
                          ("candidate_calls_made", "INTEGER", 1, "0"))
         self.assertEqual(calls, 4)
+
+    def test_v7_migration_adds_reuse_review_and_audit_schema_idempotently(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            migrate_benchmark_tables(conn)
+            migrate_benchmark_candidate_call_budget(conn)
+            migrate_benchmark_v7(conn)
+            migrate_benchmark_v7(conn)
+
+            run_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(benchmark_runs)")
+            }
+            response_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(benchmark_responses)")
+            }
+            judgment_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(benchmark_judgments)")
+            }
+            tables = {
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+        finally:
+            conn.close()
+
+        self.assertIn("active_scoring_revision", run_columns)
+        self.assertTrue({"reused_from_response_id", "retry_count", "error_json"} <= response_columns)
+        self.assertTrue({"actor_user_id", "actor_username"} <= judgment_columns)
+        self.assertTrue({"benchmark_scoring_revisions", "benchmark_case_revisions"} <= tables)
 
     def test_v4_preserves_all_legacy_private_records_under_admin(self):
         with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as handle:

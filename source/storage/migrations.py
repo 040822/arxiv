@@ -11,7 +11,7 @@ from datetime import datetime
 from . import connection
 from .analysis_migrations import migrate_analysis_unique
 from .benchmark_migrations import (
-    migrate_benchmark_candidate_call_budget, migrate_benchmark_tables,
+    migrate_benchmark_candidate_call_budget, migrate_benchmark_tables, migrate_benchmark_v7,
 )
 from .paper_identity_migration import migrate_generic_paper_identity
 from .schema import apply_baseline_schema
@@ -31,6 +31,7 @@ MIGRATIONS = (
     (4, "invite_only_users", migrate_invite_only_users),
     (5, "benchmark_tables", migrate_benchmark_tables),
     (6, "benchmark_candidate_call_budget", migrate_benchmark_candidate_call_budget),
+    (7, "benchmark_v7_run_reuse_review_audit", migrate_benchmark_v7),
 )
 
 

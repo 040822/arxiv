@@ -10,8 +10,16 @@ logger = logging.getLogger(__name__)
 
 
 BENCHMARK_ROUTE_KEYS = ("benchmark_author", "benchmark_judge", "benchmark_judge_review")
-BENCHMARK_RUN_STATUSES = ("running", "interrupted", "completed", "error")
+BENCHMARK_RUN_STATUSES = (
+    "queued", "running", "interrupted", "completed", "error",
+)
 BENCHMARK_CASE_STATUSES = ("pending", "accepted", "rejected")
+BENCHMARK_SCORING_REVISION_STATUSES = (
+    "pending", "running", "completed", "interrupted", "error",
+)
+REUSABLE_RESPONSE_STATUSES = {
+    "ok", "format_error", "truncated", "empty", "reused",
+}
 
 
 def _now():
@@ -319,46 +327,160 @@ def get_benchmark_case(case_id):
     return _decode_case(row)
 
 
-def set_case_review(case_id, status, note=""):
-    """人工审核单个题目：pending/accepted/rejected。"""
+def update_benchmark_case(
+    case_id, fields=None, actor_user_id=None, actor_username="", note="", **kwargs
+):
+    """Edit a case and append one immutable audit revision.
+
+    Lifecycle rules such as whether a suite is frozen belong to the benchmark
+    service.  This storage function only validates the case/fields and writes
+    the update and audit row in one transaction.
+    """
+    case_id = as_int(case_id)
+    updates = dict(fields or {})
+    updates.update(kwargs)
+    allowed = {
+        "track", "position", "kind", "question", "reference_answer",
+        "evidence", "rubric", "requires_reject", "author_raw",
+    }
+    updates = {key: value for key, value in updates.items() if key in allowed}
+    with get_connection() as conn:
+        before_row = conn.execute(
+            "SELECT * FROM benchmark_cases WHERE id = ?",
+            (case_id,),
+        ).fetchone()
+        if not before_row:
+            raise ValueError("题目不存在")
+        before = _decode_case(before_row)
+        if not updates:
+            return before
+        sets = []
+        params = []
+        for key, value in updates.items():
+            if key in {"evidence", "rubric", "author_raw"}:
+                value = json.dumps(value or ([] if key == "evidence" else {}), ensure_ascii=False)
+            elif key == "requires_reject":
+                value = 1 if value else 0
+            elif key in {"position"}:
+                value = as_int(value)
+            else:
+                value = str(value or "")
+            sets.append(f"{key} = ?")
+            params.append(value)
+        sets.extend(["status = 'pending'", "review_note = ''", "reviewed_at = NULL"])
+        conn.execute(
+            f"UPDATE benchmark_cases SET {', '.join(sets)} WHERE id = ?",
+            tuple(params) + (case_id,),
+        )
+        after_row = conn.execute(
+            "SELECT * FROM benchmark_cases WHERE id = ?", (case_id,)
+        ).fetchone()
+        after = _decode_case(after_row)
+        _append_case_revision_conn(
+            conn, case_id, "edit", before, after,
+            actor_user_id=actor_user_id, actor_username=actor_username, note=note,
+        )
+    return get_benchmark_case(case_id)
+
+
+def edit_benchmark_case(*args, **kwargs):
+    """Compatibility alias for :func:`update_benchmark_case`."""
+    return update_benchmark_case(*args, **kwargs)
+
+
+def set_case_review(case_id, status, note="", actor_user_id=None, actor_username=""):
+    """Write one case review and its audit row in one transaction.
+
+    The benchmark service owns the suite lifecycle/frozen check; storage only
+    validates the case and requested status.
+    """
     case_id = as_int(case_id)
     status = str(status or "").strip()
     if status not in BENCHMARK_CASE_STATUSES:
         raise ValueError(f"未知题目审核状态: {status}")
     with get_connection() as conn:
+        before_row = conn.execute(
+            "SELECT * FROM benchmark_cases WHERE id = ?", (case_id,)
+        ).fetchone()
+        if not before_row:
+            raise ValueError("题目不存在")
+        before = _decode_case(before_row)
+        reviewed_at = _now()
         conn.execute(
             "UPDATE benchmark_cases SET status = ?, review_note = ?, reviewed_at = ? WHERE id = ?",
-            (status, str(note or ""), _now(), case_id),
+            (status, str(note or ""), reviewed_at, case_id),
+        )
+        after_row = conn.execute(
+            "SELECT * FROM benchmark_cases WHERE id = ?", (case_id,)
+        ).fetchone()
+        _append_case_revision_conn(
+            conn, case_id, "review", before, _decode_case(after_row),
+            actor_user_id=actor_user_id, actor_username=actor_username,
+            note=note,
         )
     return get_benchmark_case(case_id)
 
 
-def set_cases_review(suite_id, status, note=""):
-    """批量设置题库内所有题目的审核状态（如全部接受）。"""
+def set_cases_review(suite_id, status, note="", actor_user_id=None, actor_username=""):
+    """Write reviews for all cases in a suite in one transaction.
+
+    Frozen-suite policy is enforced by the benchmark service, not storage.
+    """
     status = str(status or "").strip()
     if status not in BENCHMARK_CASE_STATUSES:
         raise ValueError(f"未知题目审核状态: {status}")
     with get_connection() as conn:
-        conn.execute(
-            "UPDATE benchmark_cases SET status = ?, review_note = ?, reviewed_at = ? WHERE suite_id = ?",
-            (status, str(note or ""), _now(), as_int(suite_id)),
-        )
+        suite = conn.execute(
+            "SELECT id FROM benchmark_suites WHERE id = ?", (as_int(suite_id),)
+        ).fetchone()
+        if not suite:
+            raise ValueError("题库不存在")
+        rows = conn.execute(
+            """
+            SELECT * FROM benchmark_cases WHERE suite_id = ? ORDER BY id
+            """,
+            (as_int(suite_id),),
+        ).fetchall()
+        reviewed_at = _now()
+        for before_row in rows:
+            before = _decode_case(before_row)
+            conn.execute(
+                "UPDATE benchmark_cases SET status = ?, review_note = ?, reviewed_at = ? WHERE id = ?",
+                (status, str(note or ""), reviewed_at, before["id"]),
+            )
+            after_row = conn.execute(
+                "SELECT * FROM benchmark_cases WHERE id = ?", (before["id"],)
+            ).fetchone()
+            _append_case_revision_conn(
+                conn, before["id"], "review", before, _decode_case(after_row),
+                actor_user_id=actor_user_id, actor_username=actor_username,
+                note=note,
+            )
 
 
 # ---------------------------------------------------------------------------
 # benchmark_runs / benchmark_candidates
 # ---------------------------------------------------------------------------
 
-def create_benchmark_run(suite_id, repeats=1, max_calls=None, runner_version=""):
+def create_benchmark_run(
+    suite_id, repeats=1, max_calls=None, runner_version="", status="running",
+):
     """创建一次评测运行，返回 run_id。"""
     repeats = max(1, min(5, as_int(repeats, 1)))
+    status = str(status or "running").strip()
+    if status not in BENCHMARK_RUN_STATUSES:
+        raise ValueError(f"未知运行状态: {status}")
     with get_connection() as conn:
         cursor = conn.execute(
             """
             INSERT INTO benchmark_runs (suite_id, status, repeats, max_calls, runner_version)
-            VALUES (?, 'running', ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (as_int(suite_id), repeats, as_int(max_calls) if max_calls else None, str(runner_version or "")),
+            (
+                as_int(suite_id), status, repeats,
+                as_int(max_calls) if max_calls else None,
+                str(runner_version or ""),
+            ),
         )
         return cursor.lastrowid
 
@@ -443,12 +565,40 @@ def set_run_status(run_id, status):
     status = str(status or "").strip()
     if status not in BENCHMARK_RUN_STATUSES:
         raise ValueError(f"未知运行状态: {status}")
-    finished_at = _now() if status in ("completed", "error") else None
+    terminal = status in ("interrupted", "completed", "error")
+    finished_at = _now() if terminal else None
     with get_connection() as conn:
         conn.execute(
-            "UPDATE benchmark_runs SET status = ?, finished_at = COALESCE(?, finished_at) WHERE id = ?",
-            (status, finished_at, as_int(run_id)),
+            """
+            UPDATE benchmark_runs
+            SET status = ?,
+                finished_at = CASE
+                    WHEN ? IS NULL THEN NULL
+                    ELSE COALESCE(finished_at, ?)
+                END
+            WHERE id = ?
+            """,
+            (status, finished_at, finished_at, as_int(run_id)),
         )
+
+
+def claim_benchmark_run(run_id):
+    """Atomically claim a queued run for the in-process worker.
+
+    Only a queued row can be claimed.  This makes duplicate worker delivery
+    harmless: the first UPDATE returns one affected row and all later claims
+    return False, including claims after a terminal transition.
+    """
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE benchmark_runs
+            SET status = 'running', finished_at = NULL
+            WHERE id = ? AND status = 'queued'
+            """,
+            (as_int(run_id),),
+        )
+        return cursor.rowcount == 1
 
 
 def update_run_max_calls(run_id, max_calls):
@@ -498,14 +648,18 @@ def consume_candidate_call(run_id):
 
 
 def mark_interrupted_runs():
-    """将遗留的 running 运行标记为 interrupted（应用启动时调用）。
+    """将遗留的 queued/running 运行标记为 interrupted（应用启动时调用）。
 
     benchmark 表尚未迁移（旧库或测试桩）时安全跳过。
     """
     try:
         with get_connection() as conn:
             cursor = conn.execute(
-                "UPDATE benchmark_runs SET status = 'interrupted', finished_at = ? WHERE status = 'running'",
+                """
+                UPDATE benchmark_runs
+                SET status = 'interrupted', finished_at = COALESCE(finished_at, ?)
+                WHERE status IN ('queued', 'running')
+                """,
                 (_now(),),
             )
             return cursor.rowcount
@@ -514,13 +668,19 @@ def mark_interrupted_runs():
         return 0
 
 
+def mark_interrupted():
+    """Compatibility alias for callers using the shorter v7 name."""
+    return mark_interrupted_runs()
+
+
 # ---------------------------------------------------------------------------
 # benchmark_responses
 # ---------------------------------------------------------------------------
 
 def save_benchmark_response(run_id, candidate_id, paper_ref_id, track, repeat_index,
                             round_index, prompt_snapshot, raw_output, parsed, status,
-                            finish_reason, usage_json, latency_ms, continuation_count=0):
+                            finish_reason, usage_json, latency_ms, continuation_count=0,
+                            retry_count=0, error_json=None, reused_from_response_id=None):
     """保存一条候选输出；相同键（候选/论文/轨道/重复槽/轮次）已存在时跳过并返回已有 id。"""
     with get_connection() as conn:
         existing = conn.execute(
@@ -538,8 +698,9 @@ def save_benchmark_response(run_id, candidate_id, paper_ref_id, track, repeat_in
             INSERT INTO benchmark_responses (
                 run_id, candidate_id, paper_ref_id, track, repeat_index, round_index,
                 prompt_snapshot, raw_output, parsed, status, finish_reason,
-                usage_json, latency_ms, continuation_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                usage_json, latency_ms, continuation_count, retry_count,
+                error_json, reused_from_response_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 as_int(run_id), as_int(candidate_id), as_int(paper_ref_id), str(track),
@@ -552,6 +713,9 @@ def save_benchmark_response(run_id, candidate_id, paper_ref_id, track, repeat_in
                 json.dumps(usage_json or {}, ensure_ascii=False),
                 as_float(latency_ms, 0),
                 as_int(continuation_count, 0),
+                max(0, as_int(retry_count, 0)),
+                json.dumps(error_json or {}, ensure_ascii=False),
+                as_int(reused_from_response_id) if reused_from_response_id else None,
             ),
         )
         # Direct storage callers (including legacy repair/import tooling) may
@@ -565,7 +729,10 @@ def save_benchmark_response(run_id, candidate_id, paper_ref_id, track, repeat_in
             SET candidate_calls_made = MAX(
                 candidate_calls_made,
                 COALESCE(
-                    (SELECT SUM(1 + COALESCE(continuation_count, 0))
+                    (SELECT SUM(
+                        1 + COALESCE(continuation_count, 0)
+                          + COALESCE(retry_count, 0)
+                    )
                      FROM benchmark_responses WHERE run_id = ?),
                     0
                 )
@@ -602,6 +769,257 @@ def get_existing_response(candidate_id, paper_ref_id, track, repeat_index, round
     return row["id"] if row else None
 
 
+def replace_retry_failed_response(response_id, run_id, response=None, *payload, **fields):
+    """Atomically replace a retry-failed response in its original slot.
+
+    ``response_id`` must belong to ``run_id`` and currently have
+    ``status='retry_failed'``.  The response slot, candidate ownership and
+    reuse provenance are immutable; only the result payload and attempt
+    metadata are replaced.  Candidate call accounting is intentionally left
+    untouched because the runner reserves every retry before calling the API.
+
+    The preferred form passes a response mapping returned by the runner::
+
+        replace_retry_failed_response(response_id, run_id, response)
+
+    Keyword fields are also accepted for small storage/import callers.  The
+    function returns the unchanged response id, matching
+    :func:`save_benchmark_response`.
+    """
+    if payload:
+        positional_values = [response, *payload]
+        positional_names = (
+            "prompt_snapshot", "raw_output", "parsed", "status", "finish_reason",
+            "usage_json", "latency_ms", "continuation_count", "retry_count", "error_json",
+        )
+        if len(positional_values) > len(positional_names):
+            raise TypeError("replace_retry_failed_response 参数过多")
+        response_values = dict(zip(positional_names, positional_values))
+    elif response is None:
+        response_values = {}
+    elif isinstance(response, dict):
+        response_values = dict(response)
+    else:
+        # The first positional payload field is prompt_snapshot.  Supporting
+        # this form keeps the API convenient for callers mirroring
+        # save_benchmark_response's payload order.
+        response_values = {"prompt_snapshot": response}
+    response_values.update(fields)
+
+    prompt_snapshot = response_values.get("prompt_snapshot") or []
+    raw_output = str(response_values.get("raw_output") or "")
+    parsed = response_values.get("parsed") or {}
+    status = str(response_values.get("status") or "ok")
+    finish_reason = str(response_values.get("finish_reason") or "")
+    usage_json = response_values.get("usage_json") or {}
+    latency_ms = as_float(response_values.get("latency_ms"), 0)
+    continuation_count = max(0, as_int(response_values.get("continuation_count"), 0))
+    retry_count = max(0, as_int(response_values.get("retry_count"), 0))
+    error_json = response_values.get("error_json") or {}
+    response_id = as_int(response_id)
+    run_id = as_int(run_id)
+
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT br.id, br.run_id, br.status, c.run_id AS candidate_run_id
+            FROM benchmark_responses AS br
+            JOIN benchmark_candidates AS c ON c.id = br.candidate_id
+            WHERE br.id = ? AND br.run_id = ?
+            """,
+            (response_id, run_id),
+        ).fetchone()
+        if not row:
+            raise ValueError("候选输出不存在或不属于目标运行")
+        if row["candidate_run_id"] != run_id:
+            raise ValueError("候选输出所属候选与目标运行不一致")
+        if row["status"] != "retry_failed":
+            raise ValueError("只有 retry_failed 响应可以被替换")
+        cursor = conn.execute(
+            """
+            UPDATE benchmark_responses
+            SET prompt_snapshot = ?, raw_output = ?, parsed = ?,
+                status = ?, finish_reason = ?, usage_json = ?,
+                latency_ms = ?, continuation_count = ?, retry_count = ?,
+                error_json = ?
+            WHERE id = ? AND run_id = ? AND status = 'retry_failed'
+            """,
+            (
+                json.dumps(prompt_snapshot, ensure_ascii=False),
+                raw_output,
+                json.dumps(parsed, ensure_ascii=False),
+                status,
+                finish_reason,
+                json.dumps(usage_json, ensure_ascii=False),
+                latency_ms,
+                continuation_count,
+                retry_count,
+                json.dumps(error_json, ensure_ascii=False),
+                response_id,
+                run_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("retry_failed 响应已被其他事务替换")
+    return response_id
+
+
+def replace_benchmark_response(*args, **kwargs):
+    """Compatibility alias for :func:`replace_retry_failed_response`."""
+    return replace_retry_failed_response(*args, **kwargs)
+
+
+def find_reusable_response(
+    suite_checksum=None, runner_version=None, config_hash=None,
+    paper_key=None, track=None, repeat_index=0, round_index=None,
+    paper_ref_id=None,
+):
+    """Find the newest completed response matching an exact reusable slot.
+
+    Response and candidate ids are intentionally not part of this lookup:
+    those ids are run-local.  The stable identity is the frozen suite
+    checksum, runner version, candidate config hash, paper key, track and
+    repeat/round slot.  A target ``paper_ref_id`` may be supplied instead of
+    ``paper_key``; its key is used to match snapshots from another run.
+    Infrastructure failures and non-terminal rows are never reusable.
+    """
+    if paper_key is None and paper_ref_id is None:
+        raise ValueError("复用查询必须提供 paper_key 或 paper_ref_id")
+    conditions = [
+        "s.suite_checksum = ?",
+        "r.runner_version = ?",
+        "c.config_hash = ?",
+        "br.track = ?",
+        "br.repeat_index = ?",
+        "br.round_index IS ?",
+        "br.status IN ({})".format(", ".join("?" for _ in REUSABLE_RESPONSE_STATUSES)),
+    ]
+    params = [
+        str(suite_checksum or ""), str(runner_version or ""),
+        str(config_hash or ""), str(track or ""), as_int(repeat_index),
+        round_index,
+        *sorted(REUSABLE_RESPONSE_STATUSES),
+    ]
+    if paper_key is None:
+        conditions.append(
+            "p.paper_key = (SELECT paper_key FROM benchmark_suite_papers WHERE id = ?)"
+        )
+        params.append(as_int(paper_ref_id))
+    else:
+        conditions.append("p.paper_key = ?")
+        params.append(str(paper_key))
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT br.*
+            FROM benchmark_responses AS br
+            JOIN benchmark_candidates AS c ON c.id = br.candidate_id
+            JOIN benchmark_runs AS r ON r.id = br.run_id
+            JOIN benchmark_suites AS s ON s.id = r.suite_id
+            JOIN benchmark_suite_papers AS p ON p.id = br.paper_ref_id
+            WHERE {conditions}
+            ORDER BY br.id DESC
+            LIMIT 1
+            """.format(conditions=" AND ".join(conditions)),
+            params,
+        ).fetchone()
+    return _decode_response(row) if row else None
+
+
+def get_reusable_response(*args, **kwargs):
+    """Compatibility alias for :func:`find_reusable_response`."""
+    return find_reusable_response(*args, **kwargs)
+
+
+def _response_slot_matches(conn, response_id, target_run_id, target_candidate_id,
+                           target_paper_ref_id):
+    row = conn.execute(
+        """
+        SELECT br.track, br.repeat_index, br.round_index,
+               src_p.paper_key AS source_paper_key,
+               target_p.paper_key AS target_paper_key,
+               c.run_id AS candidate_run_id,
+               r.suite_id AS source_suite_id,
+               target_run.suite_id AS target_suite_id
+        FROM benchmark_responses AS br
+        JOIN benchmark_suite_papers AS src_p ON src_p.id = br.paper_ref_id
+        JOIN benchmark_candidates AS c ON c.id = ?
+        JOIN benchmark_runs AS r ON r.id = br.run_id
+        JOIN benchmark_runs AS target_run ON target_run.id = ?
+        JOIN benchmark_suite_papers AS target_p ON target_p.id = ?
+        WHERE br.id = ? AND target_p.suite_id = target_run.suite_id
+        """,
+        (
+            as_int(target_candidate_id), as_int(target_run_id),
+            as_int(target_paper_ref_id), as_int(response_id),
+        ),
+    ).fetchone()
+    if not row:
+        raise ValueError("候选输出不存在")
+    if row["candidate_run_id"] != as_int(target_run_id):
+        raise ValueError("目标候选不属于目标运行")
+    if row["source_paper_key"] != row["target_paper_key"]:
+        raise ValueError("源输出与目标论文快照不匹配")
+    return row
+
+
+def clone_reusable_response(source_response_id, target_run_id, target_candidate_id,
+                            target_paper_ref_id):
+    """Clone a reusable response into a new run without charging its budget."""
+    with get_connection() as conn:
+        source = conn.execute(
+            "SELECT * FROM benchmark_responses WHERE id = ?",
+            (as_int(source_response_id),),
+        ).fetchone()
+        if not source:
+            raise ValueError("源候选输出不存在")
+        if source["status"] not in REUSABLE_RESPONSE_STATUSES:
+            raise ValueError("该候选输出不可复用")
+        slot = _response_slot_matches(
+            conn, source_response_id, target_run_id,
+            target_candidate_id, target_paper_ref_id,
+        )
+        existing = conn.execute(
+            """
+            SELECT id FROM benchmark_responses
+            WHERE candidate_id = ? AND paper_ref_id = ? AND track = ?
+              AND repeat_index = ? AND round_index IS ?
+            """,
+            (
+                as_int(target_candidate_id), as_int(target_paper_ref_id),
+                slot["track"], slot["repeat_index"], slot["round_index"],
+            ),
+        ).fetchone()
+        if existing:
+            return existing["id"]
+        cursor = conn.execute(
+            """
+            INSERT INTO benchmark_responses (
+                run_id, candidate_id, paper_ref_id, track, repeat_index, round_index,
+                prompt_snapshot, raw_output, parsed, status, finish_reason,
+                usage_json, latency_ms, continuation_count, retry_count, error_json,
+                reused_from_response_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                as_int(target_run_id), as_int(target_candidate_id),
+                as_int(target_paper_ref_id), source["track"], source["repeat_index"],
+                source["round_index"], source["prompt_snapshot"], source["raw_output"],
+                source["parsed"], source["status"], source["finish_reason"],
+                "{}", 0, 0, 0, "{}",
+                as_int(source_response_id),
+            ),
+        )
+        # Deliberately do not update benchmark_runs.candidate_calls_made here:
+        # this row represents a previously paid API attempt.
+        return cursor.lastrowid
+
+
+def clone_benchmark_response(*args, **kwargs):
+    """Compatibility alias for :func:`clone_reusable_response`."""
+    return clone_reusable_response(*args, **kwargs)
+
+
 def get_run_responses(run_id):
     """读取一次运行的全部候选输出。"""
     with get_connection() as conn:
@@ -615,16 +1033,27 @@ def get_run_responses(run_id):
 def count_run_calls(run_id):
     """统计一次运行已产生的模型调用次数（用于预算检查）。"""
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT candidate_calls_made FROM benchmark_runs WHERE id = ?", (as_int(run_id),)
-        ).fetchone()
+        try:
+            row = conn.execute(
+                "SELECT candidate_calls_made FROM benchmark_runs WHERE id = ?",
+                (as_int(run_id),),
+            ).fetchone()
+        except Exception:
+            row = None
+            legacy_counter = conn.execute(
+                "SELECT COALESCE(SUM(1 + COALESCE(continuation_count, 0)), 0) "
+                "FROM benchmark_responses WHERE run_id = ?",
+                (as_int(run_id),),
+            ).fetchone()[0]
+            return legacy_counter
         if row is not None:
             return int(row["candidate_calls_made"] or 0)
         # Keep this helper useful for an isolated legacy fixture that predates
         # benchmark_runs v6; normal application databases always take the
         # persisted counter path above.
         return conn.execute(
-            "SELECT COALESCE(SUM(1 + COALESCE(continuation_count, 0)), 0) "
+            "SELECT COALESCE(SUM(1 + COALESCE(continuation_count, 0) "
+            "+ COALESCE(retry_count, 0)), 0) "
             "FROM benchmark_responses WHERE run_id = ?",
             (as_int(run_id),),
         ).fetchone()[0]
@@ -636,7 +1065,8 @@ def count_run_calls(run_id):
 
 def save_benchmark_judgment(run_id, response_id, judge_role, judge_route_key,
                             scoring_revision, case_id, condition_scores, score,
-                            hallucination_critical, confidence, raw_json, notes=""):
+                            hallucination_critical, confidence, raw_json, notes="",
+                            actor_user_id=None, actor_username=""):
     """保存一条裁判/人工判定；同键重复时更新原记录。"""
     with get_connection() as conn:
         conn.execute(
@@ -644,15 +1074,18 @@ def save_benchmark_judgment(run_id, response_id, judge_role, judge_route_key,
             INSERT INTO benchmark_judgments (
                 run_id, response_id, judge_role, judge_route_key, scoring_revision,
                 case_id, condition_scores, score, hallucination_critical,
-                confidence, raw_json, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                confidence, raw_json, notes, actor_user_id, actor_username
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(response_id, judge_role, case_id, scoring_revision) DO UPDATE SET
+                judge_route_key = excluded.judge_route_key,
                 condition_scores = excluded.condition_scores,
                 score = excluded.score,
                 hallucination_critical = excluded.hallucination_critical,
                 confidence = excluded.confidence,
                 raw_json = excluded.raw_json,
-                notes = excluded.notes
+                notes = excluded.notes,
+                actor_user_id = excluded.actor_user_id,
+                actor_username = excluded.actor_username
             """,
             (
                 as_int(run_id), as_int(response_id), str(judge_role), str(judge_route_key),
@@ -664,6 +1097,8 @@ def save_benchmark_judgment(run_id, response_id, judge_role, judge_route_key,
                 as_float(confidence) if confidence is not None else None,
                 json.dumps(raw_json or {}, ensure_ascii=False),
                 str(notes or ""),
+                as_int(actor_user_id) if actor_user_id is not None else None,
+                str(actor_username or ""),
             ),
         )
 
@@ -691,6 +1126,265 @@ def get_response_judgment(response_id, judge_role, scoring_revision, case_id):
     if not row:
         return None
     return _decode_judgment(row)
+
+
+# ---------------------------------------------------------------------------
+# v7 scoring revisions and case audit history
+# ---------------------------------------------------------------------------
+
+def create_benchmark_scoring_revision(
+    run_id, revision_key, primary_route_key="", review_route_key="",
+    primary_route_snapshot=None, review_route_snapshot=None,
+    primary_prompt_snapshot=None, review_prompt_snapshot=None, status="pending",
+):
+    """Create an immutable scoring configuration snapshot for a run.
+
+    Repeating the same ``run_id``/``revision_key`` is idempotent and returns
+    the original row.  The revision is switched active separately, after the
+    judge worker has completed successfully.
+    """
+    revision_key = str(revision_key or "").strip()
+    status = str(status or "pending").strip()
+    if not revision_key:
+        raise ValueError("评分版本缺少 revision_key")
+    if status not in BENCHMARK_SCORING_REVISION_STATUSES:
+        raise ValueError(f"未知评分版本状态: {status}")
+    with get_connection() as conn:
+        if not conn.execute(
+            "SELECT 1 FROM benchmark_runs WHERE id = ?", (as_int(run_id),)
+        ).fetchone():
+            raise ValueError("运行不存在")
+        existing = conn.execute(
+            """
+            SELECT id FROM benchmark_scoring_revisions
+            WHERE run_id = ? AND revision_key = ?
+            """,
+            (as_int(run_id), revision_key),
+        ).fetchone()
+        if existing:
+            revision_id = existing["id"]
+        else:
+            cursor = conn.execute(
+                """
+                INSERT INTO benchmark_scoring_revisions (
+                    run_id, revision_key, status, primary_route_key, review_route_key,
+                    primary_route_snapshot, review_route_snapshot,
+                    primary_prompt_snapshot, review_prompt_snapshot
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    as_int(run_id), revision_key, status,
+                    str(primary_route_key or ""), str(review_route_key or ""),
+                    json.dumps(primary_route_snapshot or {}, ensure_ascii=False),
+                    json.dumps(review_route_snapshot or {}, ensure_ascii=False),
+                    json.dumps(primary_prompt_snapshot or {}, ensure_ascii=False),
+                    json.dumps(review_prompt_snapshot or {}, ensure_ascii=False),
+                ),
+            )
+            revision_id = cursor.lastrowid
+    return get_benchmark_scoring_revision(revision_id)
+
+
+def create_scoring_revision(*args, **kwargs):
+    """Compatibility alias for :func:`create_benchmark_scoring_revision`."""
+    return create_benchmark_scoring_revision(*args, **kwargs)
+
+
+def get_benchmark_scoring_revision(revision_id):
+    """Read one scoring revision with decoded JSON snapshots."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM benchmark_scoring_revisions WHERE id = ?",
+            (as_int(revision_id),),
+        ).fetchone()
+    return _decode_scoring_revision(row) if row else None
+
+
+def get_scoring_revision(run_id, revision_key):
+    """Read a scoring revision by its run-local stable key."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM benchmark_scoring_revisions
+            WHERE run_id = ? AND revision_key = ?
+            """,
+            (as_int(run_id), str(revision_key or "")),
+        ).fetchone()
+    return _decode_scoring_revision(row) if row else None
+
+
+def list_benchmark_scoring_revisions(run_id):
+    """List scoring revisions in creation order."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM benchmark_scoring_revisions
+            WHERE run_id = ? ORDER BY id
+            """,
+            (as_int(run_id),),
+        ).fetchall()
+    return [_decode_scoring_revision(row) for row in rows]
+
+
+def set_benchmark_scoring_revision_status(revision_id, status, error_json=None):
+    """Update a revision worker status and its terminal timestamps."""
+    status = str(status or "").strip()
+    if status not in BENCHMARK_SCORING_REVISION_STATUSES:
+        raise ValueError(f"未知评分版本状态: {status}")
+    started_at = _now() if status == "running" else None
+    finished_at = _now() if status in ("completed", "interrupted", "error") else None
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM benchmark_scoring_revisions WHERE id = ?",
+            (as_int(revision_id),),
+        ).fetchone()
+        if not row:
+            raise ValueError("评分版本不存在")
+        conn.execute(
+            """
+            UPDATE benchmark_scoring_revisions
+            SET status = ?,
+                started_at = CASE WHEN ? IS NULL THEN started_at ELSE COALESCE(started_at, ?) END,
+                finished_at = CASE WHEN ? IS NULL THEN NULL ELSE COALESCE(finished_at, ?) END,
+                error_json = ?
+            WHERE id = ?
+            """,
+            (
+                status, started_at, started_at, finished_at, finished_at,
+                json.dumps(error_json or {}, ensure_ascii=False), as_int(revision_id),
+            ),
+        )
+    return get_benchmark_scoring_revision(revision_id)
+
+
+def set_scoring_revision_status(*args, **kwargs):
+    """Compatibility alias for :func:`set_benchmark_scoring_revision_status`."""
+    return set_benchmark_scoring_revision_status(*args, **kwargs)
+
+
+def set_active_scoring_revision(run_id, revision_key):
+    """Atomically make a completed scoring revision the report source."""
+    revision_key = str(revision_key or "").strip()
+    with get_connection() as conn:
+        revision = conn.execute(
+            """
+            SELECT id, status FROM benchmark_scoring_revisions
+            WHERE run_id = ? AND revision_key = ?
+            """,
+            (as_int(run_id), revision_key),
+        ).fetchone()
+        if not revision:
+            raise ValueError("评分版本不存在")
+        if revision["status"] != "completed":
+            raise ValueError("只有已完成的评分版本可以设为 active")
+        cursor = conn.execute(
+            """
+            UPDATE benchmark_runs SET active_scoring_revision = ? WHERE id = ?
+            """,
+            (revision_key, as_int(run_id)),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("运行不存在")
+    return get_benchmark_run(run_id)
+
+
+def activate_scoring_revision(*args, **kwargs):
+    """Compatibility alias for :func:`set_active_scoring_revision`."""
+    return set_active_scoring_revision(*args, **kwargs)
+
+
+def _case_revision_snapshot(case):
+    """Return JSON-safe mutable case fields for audit records."""
+    if case is None:
+        return {}
+    fields = (
+        "id", "suite_id", "paper_ref_id", "track", "position", "kind",
+        "question", "reference_answer", "evidence", "rubric", "requires_reject",
+        "status", "review_note", "reviewed_at", "author_raw",
+    )
+    return {key: case.get(key) for key in fields if key in case}
+
+
+def _append_case_revision_conn(
+    conn, case_id, action, before, after, actor_user_id=None,
+    actor_username="", note="",
+):
+    case_id = as_int(case_id)
+    case = conn.execute(
+        "SELECT suite_id FROM benchmark_cases WHERE id = ?", (case_id,)
+    ).fetchone()
+    if not case:
+        raise ValueError("题目不存在")
+    revision = conn.execute(
+        """
+        SELECT COALESCE(MAX(revision), 0) + 1 AS next_revision
+        FROM benchmark_case_revisions WHERE case_id = ?
+        """,
+        (case_id,),
+    ).fetchone()["next_revision"]
+    cursor = conn.execute(
+        """
+        INSERT INTO benchmark_case_revisions (
+            case_id, suite_id, revision, action, actor_user_id, actor_username,
+            before_json, after_json, note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            case_id, case["suite_id"], as_int(revision), str(action or ""),
+            as_int(actor_user_id) if actor_user_id is not None else None,
+            str(actor_username or ""),
+            json.dumps(_case_revision_snapshot(before), ensure_ascii=False),
+            json.dumps(_case_revision_snapshot(after), ensure_ascii=False),
+            str(note or ""),
+        ),
+    )
+    return cursor.lastrowid
+
+
+def append_benchmark_case_revision(
+    case_id, action, before=None, after=None, actor_user_id=None,
+    actor_username="", note="",
+):
+    """Append one immutable case edit/review audit record."""
+    with get_connection() as conn:
+        revision_id = _append_case_revision_conn(
+            conn, case_id, action, before or {}, after or {},
+            actor_user_id=actor_user_id, actor_username=actor_username, note=note,
+        )
+    return get_benchmark_case_revision(revision_id)
+
+
+def append_case_revision(*args, **kwargs):
+    """Compatibility alias for :func:`append_benchmark_case_revision`."""
+    return append_benchmark_case_revision(*args, **kwargs)
+
+
+def get_benchmark_case_revision(revision_id):
+    """Read one case audit record with decoded snapshots."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM benchmark_case_revisions WHERE id = ?",
+            (as_int(revision_id),),
+        ).fetchone()
+    return _decode_case_revision(row) if row else None
+
+
+def list_benchmark_case_revisions(case_id):
+    """List audit records for one case in revision order."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM benchmark_case_revisions
+            WHERE case_id = ? ORDER BY revision, id
+            """,
+            (as_int(case_id),),
+        ).fetchall()
+    return [_decode_case_revision(row) for row in rows]
+
+
+def list_case_revisions(*args, **kwargs):
+    """Compatibility alias for :func:`list_benchmark_case_revisions`."""
+    return list_benchmark_case_revisions(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -739,14 +1433,37 @@ def _decode_candidate(row):
 
 def _decode_response(row):
     item = dict(row)
+    item.setdefault("reused_from_response_id", None)
+    item.setdefault("retry_count", 0)
+    item.setdefault("error_json", {})
     item["prompt_snapshot"] = _loads(item.get("prompt_snapshot"), [])
     item["parsed"] = _loads(item.get("parsed"), {})
     item["usage_json"] = _loads(item.get("usage_json"), {})
+    item["error_json"] = _loads(item.get("error_json"), {})
     return item
 
 
 def _decode_judgment(row):
     item = dict(row)
+    item.setdefault("actor_user_id", None)
+    item.setdefault("actor_username", "")
     item["condition_scores"] = _loads(item.get("condition_scores"), [])
     item["raw_json"] = _loads(item.get("raw_json"), {})
+    return item
+
+
+def _decode_scoring_revision(row):
+    item = dict(row)
+    for key in (
+        "primary_route_snapshot", "review_route_snapshot",
+        "primary_prompt_snapshot", "review_prompt_snapshot", "error_json",
+    ):
+        item[key] = _loads(item.get(key), {})
+    return item
+
+
+def _decode_case_revision(row):
+    item = dict(row)
+    item["before_json"] = _loads(item.get("before_json"), {})
+    item["after_json"] = _loads(item.get("after_json"), {})
     return item

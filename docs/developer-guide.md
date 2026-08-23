@@ -305,17 +305,20 @@ def api_new_endpoint():
 
 ---
 
-### Benchmark 表（v5）
+### Benchmark 表（v7）
 
-论文阅读 Benchmark（v1 pilot）使用 8 张表：`benchmark_routes`（自管理任务路由）、
-`benchmark_suites`（题库/冻结 Prompt 快照/校验和）、`benchmark_suite_papers`（论文
-全文快照）、`benchmark_cases`（题目/证据/rubric）、`benchmark_runs`、`benchmark_candidates`、
-`benchmark_responses`（原始输出，唯一键支持输出复用）、`benchmark_judgments`
-（primary/review/system/human 判定）。
+论文阅读 Benchmark 使用八张核心表和两张 v7 审计/评分表：`benchmark_routes`（自管理任务路由）、
+`benchmark_suites`（题库/冻结 Prompt 快照/校验和）、`benchmark_suite_papers`（论文全文快照）、
+`benchmark_cases`（题目/证据/rubric）、`benchmark_runs`、`benchmark_candidates`、
+`benchmark_responses`（原始输出、重试/错误和跨运行复用来源）、`benchmark_judgments`
+（primary/review/system/human 判定）、`benchmark_scoring_revisions`（裁判配置/Prompt 版本）和
+`benchmark_case_revisions`（题目编辑/审核审计）。运行额外保存 `active_scoring_revision`；状态支持
+`queued → running → completed/error/interrupted`。
 
-业务规则集中在 `source/benchmark/`（深模块），存储层不感知冻结/证据语义；
-题库冻结后不可修改，变更走克隆新版本。完整约定见 `AGENTS.md §7.10` 与规划文档
-`docs/plan/paper-reading-benchmark-2026-08-04.md`。
+业务规则集中在 `source/benchmark/`（深模块），存储层不感知冻结/证据语义；题库冻结后不可修改，
+冻结前编辑会重新校验证据/rubric 并追加审计记录。出题、运行、恢复和重判由单 worker 后台任务执行，
+Web API 立即返回 202；进程重启时 queued/running 运行标记为 interrupted，人工恢复不会丢失已保存响应。
+完整约定见 `AGENTS.md §7.10` 与规划文档 `docs/plan/paper-reading-benchmark-2026-08-04.md`。
 
 ## 数据库迁移模式
 

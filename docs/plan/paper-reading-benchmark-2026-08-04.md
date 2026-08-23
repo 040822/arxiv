@@ -1,7 +1,7 @@
 # 私有论文阅读 Benchmark 设计与实施计划
 
 **计划版本:** 2026.08.04-r1  
-**状态:** 实施中（pilot 已跑通：FLEX-π 单篇、双候选、双轨分榜；分支 feature/paper-benchmark）  
+**状态:** v7 已实现（pilot 已跑通：FLEX-π 单篇、双候选、双轨分榜；分支 feature/paper-benchmark）
 **用途:** 私人模型选型，不公开发布，不产生公共 leaderboard
 
 ## 1. 结论摘要
@@ -24,6 +24,10 @@
 ## 2. 公开 Benchmark 调研
 
 目前没有公开 benchmark 同时满足以下要求：从本项目数据库任意选论文、复用本项目供应商、冻结生产 Prompt、覆盖多轮论文交流、支持私人版本化。因此公开 benchmark 只作为设计参考。
+
+当前实现采用 schema v7：候选运行由单 worker 后台队列执行并可恢复；响应、重试、跨运行复用、
+裁判评分版本和题目编辑审计均持久化。新运行固定保存 `RUNNER_VERSION=pprb-runner-v7`；历史
+空版本保持为空，不在迁移时伪造回填。
 
 | Benchmark | 可借鉴内容 | 与本项目的差异 |
 |---|---|---|
@@ -215,6 +219,12 @@ PDF 全文提取失败、正文为空或关键证据只存在于未提取的图�
 - 8 篇正式题库：每个候选约 32 次被测调用；
 - 裁判按“每篇论文、每条轨道”批量评分，避免每个叶子条件都单独调用。
 
+这里的数量是未复用槽位的名义调用量，不是可以绕过硬预算的“估算值”。运行创建前按
+实际候选配置和槽位计算最低需求；`benchmark_runs.candidate_calls_made` 在每次候选 API
+尝试前持久化、原子递增，进程中断或恢复都不清零。深度阅读续写以及候选网络/timeout、429、
+5xx 临时错误的额外尝试都各占一次候选调用预算；每个候选请求最多额外重试两次。裁判和复核
+裁判调用不占该预算。
+
 运行前必须展示：
 
 - 正常调用数和最坏调用数；
@@ -223,6 +233,12 @@ PDF 全文提取失败、正文为空或关键证据只存在于未提取的图�
 - 可选的价格快照和估算费用。
 
 用户可设置最大调用数或最大估算费用，超过上限时禁止启动。
+
+`max_calls` 若已设置，启动时必须能容纳所有未复用槽位；运行中耗尽预算会暂停/中断，恢复时
+只能严格提高上限，不能用原上限静默继续。相同 suite checksum、`RUNNER_VERSION`、候选
+`config_hash` 和（论文、轨道、重复、轮次）槽位的已完成响应可以精确复用，复用输出不增加
+目标运行的调用计数；`retry_failed` 或未完成响应永不复用。只更换裁判时使用独立
+`scoring_revision` 只重判已保存输出，保留旧判定并在成功后切换 active revision。
 
 默认重复 1 次，允许配置 1–5 次。相同题库、Prompt、候选配置和重复槽位可以复用已有输出；只更换裁判时只重判，不重跑候选。
 
@@ -260,15 +276,24 @@ v1 只评估冻结的文本输入。PDF 解析器是题库冻结前的质量门�
 
 新增 source/benchmark/，对 Web/CLI 调用方只暴露少量 interface：
 
-    create_draft(paper_keys, subset_name, prompt_source="production")
-    generate_cases(suite_id, author_route)
-    review_case(case_id, decision, edits)
+    create_draft(subset_name, paper_keys)
+    generate_cases(suite_id, background=False)
+    submit_generate_cases(suite_id)  # 后台任务，返回 task_id
+    review_case(case_id, decision, note="")
+    edit_case(case_id, fields, decision=None, note="")
     freeze_suite(suite_id)
-    start_run(suite_id, candidates, repeats=1, budget=None)
-    resume_run(run_id)
+    start_run(suite_id, candidates, repeats=1, max_calls=None)
+    submit_start_run(suite_id, candidates, repeats=1, max_calls=None)
+    resume_run(run_id, max_calls=None)
+    submit_resume_run(run_id, max_calls=None)
+    rejudge_run(run_id)
+    submit_rejudge_run(run_id)
     get_report(run_id)
 
-PDF 快照、证据匹配、调用重试、模型配置解析、评分聚合和报告生成都隐藏在该模块内部。外部调用方不应直接操作 benchmark SQL 或拼接裁判 Prompt。
+同步函数保留给 CLI/兼容脚本；Web 入口使用 `submit_*`，由单 worker 后台任务执行并返回
+任务/运行标识。PDF 快照、证据匹配、调用重试、模型配置解析、评分聚合和报告生成都隐藏在
+该模块内部。外部调用方不应直接操作 benchmark SQL 或拼接裁判 Prompt；只读列表、运行中断
+标记和题目/评分 revision 也通过 `source.benchmark` 公共接口完成。
 
 ### 10.2 运行时配置
 
@@ -282,32 +307,41 @@ PDF 快照、证据匹配、调用重试、模型配置解析、评分聚合和�
 
 ### 10.3 数据库对象
 
-下一版连续迁移增加以下逻辑对象：
+当前连续迁移已落地 schema v7，包含以下逻辑对象：
 
 - benchmark_suites：版本、状态、Prompt 快照、校验和；
 - benchmark_suite_papers：论文快照、全文、哈希和提取信息；
 - benchmark_cases：题目、轨道、参考答案、证据和 rubric；
-- benchmark_runs：运行状态、重复次数、裁判版本和预算；
+- benchmark_runs：`queued`/`running`/`interrupted` 等运行状态、重复次数、裁判版本、
+  `active_scoring_revision` 和候选调用预算/计数；
 - benchmark_candidates：候选配置快照；
-- benchmark_responses：原始输出、解析结果、usage、延迟和错误；
-- benchmark_judgments：主裁判、复核裁判和人工覆盖结果。
+- benchmark_responses：原始输出、解析结果、usage、延迟、`retry_count`、`error_json` 和
+  `reused_from_response_id`；失败或未完成响应不能作为复用源；
+- benchmark_judgments：主裁判、复核裁判和人工覆盖结果，含 actor 快照；
+- benchmark_scoring_revisions：评分规则/路由版本及 active 切换；
+- benchmark_case_revisions：题目编辑与审核审计。
 
-冻结数据必须不可变；运行和裁判结果必须可追溯到 suite checksum、candidate config hash、scoring revision 和 runner version。
+冻结数据必须不可变；运行和裁判结果必须可追溯到 suite checksum、candidate config hash、
+scoring revision 和 `runner_version`。新运行固定保存 `pprb-runner-v7`，历史空版本保持原样。
 
 ### 10.4 Web 管理流程
 
 新增管理员保护的 /benchmark 页面和对应 API，流程为：
 
-    选论文 → 预检全文 → 生成题目 → 逐题审核 → 冻结版本
-    → 选择候选/思考强度 → 预算确认 → 异步运行
+    选论文 → 预检全文 → 生成题目（202/task_id）→ 逐题审核/编辑 → 冻结版本
+    → 选择候选/思考强度 → 预算确认 → 排队运行（202/task_id/run_id）
     → 裁判/复核 → 查看分榜与逐题报告
 
-运行应持久化并可恢复。启动时将遗留的 running benchmark run 标记为 interrupted，不得丢弃已经完成的候选输出。
+生成、运行、恢复和重判均由单进程内单 worker 顺序执行。运行应持久化并可恢复；启动时将
+遗留的 `queued`/`running` benchmark run 标记为 `interrupted`，由人工提交恢复，且不得丢弃
+已经完成的候选输出。重判只消费已有响应，不增加候选调用量；主/复核条件冲突的题目在人工
+覆盖前不计入榜单聚合。
 
 ## 11. 实施阶段与验收
 
 ### 阶段 A：pilot
 
+- **状态：已完成。**
 - 支持 1 篇论文；
 - 支持两条轨道、默认重复 1 次；
 - 支持逐题审核和冻结；
@@ -316,10 +350,10 @@ PDF 快照、证据匹配、调用重试、模型配置解析、评分聚合和�
 
 ### 阶段 B：正式私人题库
 
+- **状态：v7 核心闭环已实现。**
 - 支持用户任意设置论文数量，默认建议 8 篇；
-- 增加预算预估、运行恢复、输出复用和裁判复核；
-- 增加按论文聚合和 bootstrap 区间；
-- 增加 token/延迟/续写/失败切片。
+- 已增加预算预估、持久候选调用预算、运行恢复、精确输出复用和裁判复核；
+- 已支持按论文聚合、token/延迟/续写/失败切片；按论文聚类 bootstrap 区间仍属于后续统计增强。
 
 ### 阶段 C：可选增强
 
@@ -329,4 +363,3 @@ PDF 快照、证据匹配、调用重试、模型配置解析、评分聚合和�
 - 可选跨论文检索和文献综合轨道。
 
 验收至少包括：冻结不可编辑、证据精确匹配、缺题计分、严重幻觉限制、思考参数去重、预算拦截、运行恢复、只重判不重跑、管理员鉴权和密钥脱敏。
-

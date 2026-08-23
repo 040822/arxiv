@@ -220,6 +220,271 @@ class BenchmarkStorageTests(unittest.TestCase):
         self.assertEqual(suite["suite_checksum"], "c1")
         self.assertEqual(suite["scoring_revision"]["label"], "r1")
 
+    def test_storage_case_writes_do_not_enforce_frozen_business_rule(self):
+        suite_id = bench.create_benchmark_suite(
+            "pilot", "pprb-pilot-2026.08.13-r1", {"system": "s"}, {"system": "s2"},
+        )
+        paper_ref = bench.add_benchmark_suite_paper(
+            suite_id, {"paper_key": "paper-1", "full_text": "text"},
+        )
+        case_id = bench.add_benchmark_case(_freeze_case_fields(
+            suite_id=suite_id, paper_ref_id=paper_ref,
+        ))
+        bench.update_benchmark_suite(suite_id, status="frozen")
+
+        updated = bench.update_benchmark_case(
+            case_id, {"question": "编辑后的问题"}, note="storage test",
+        )
+        self.assertEqual(updated["question"], "编辑后的问题")
+        self.assertEqual(updated["status"], "pending")
+        reviewed = bench.set_case_review(case_id, "accepted", note="storage test")
+        self.assertEqual(reviewed["status"], "accepted")
+
+        bench.set_cases_review(suite_id, "rejected", note="storage test")
+        self.assertEqual(bench.get_benchmark_case(case_id)["status"], "rejected")
+
+    def test_replace_retry_failed_response_requires_same_run_and_status(self):
+        suite_id = bench.create_benchmark_suite(
+            "pilot", "pprb-pilot-2026.08.13-r1", {"system": "s"}, {"system": "s2"},
+        )
+        paper_ref = bench.add_benchmark_suite_paper(
+            suite_id, {"paper_key": "paper-1", "full_text": "text"},
+        )
+        run_id = bench.create_benchmark_run(suite_id)
+        other_run_id = bench.create_benchmark_run(suite_id)
+        candidate_id = bench.add_benchmark_candidate(
+            run_id, 1, "candidate", {"provider_key": "p", "model": "m"}, "hash", {},
+        )
+        response_id = bench.save_benchmark_response(
+            run_id, candidate_id, paper_ref, "deep_reading", 0, None,
+            [{"role": "user", "content": "retry"}], "partial", {}, "retry_failed", "error",
+            {"retry_count": 2}, 30.0, continuation_count=0, retry_count=2,
+            error_json={"timeout": True},
+        )
+        replacement = {
+            "prompt_snapshot": [{"role": "user", "content": "retry"}],
+            "raw_output": "complete",
+            "parsed": {"q1": "answer"},
+            "status": "ok",
+            "finish_reason": "stop",
+            "usage_json": {"total_tokens": 42},
+            "latency_ms": 12.5,
+            "continuation_count": 1,
+            "retry_count": 0,
+            "error_json": {},
+        }
+
+        with self.assertRaises(ValueError):
+            bench.replace_retry_failed_response(response_id, other_run_id, replacement)
+        self.assertEqual(
+            bench.replace_retry_failed_response(response_id, run_id, replacement), response_id,
+        )
+        updated = bench.get_response(response_id)
+        self.assertEqual(updated["status"], "ok")
+        self.assertEqual(updated["raw_output"], "complete")
+        self.assertEqual(updated["usage_json"], {"total_tokens": 42})
+        self.assertEqual(updated["continuation_count"], 1)
+        self.assertEqual(updated["retry_count"], 0)
+        self.assertEqual(updated["error_json"], {})
+        with self.assertRaises(ValueError):
+            bench.replace_retry_failed_response(response_id, run_id, replacement)
+
+    def test_clone_reusable_response_resets_target_cost_metadata(self):
+        suite_id = bench.create_benchmark_suite(
+            "pilot", "pprb-pilot-2026.08.13-r1", {"system": "s"}, {"system": "s2"},
+            checksum="suite-hash",
+        )
+        source_paper = bench.add_benchmark_suite_paper(
+            suite_id, {"paper_key": "paper-1", "full_text": "text"},
+        )
+        source_run = bench.create_benchmark_run(suite_id, runner_version="runner-1")
+        source_candidate = bench.add_benchmark_candidate(
+            source_run, 1, "source", {"provider_key": "p", "model": "m"},
+            "candidate-hash", {"model": "m"},
+        )
+        source_response = bench.save_benchmark_response(
+            source_run, source_candidate, source_paper, "deep_reading", 0, None,
+            [{"role": "user", "content": "paper"}], "answer", {"q1": "answer"}, "ok", "stop",
+            {"total_tokens": 999}, 123.5, continuation_count=2, retry_count=1,
+            error_json={"source": "none"},
+        )
+        self.assertEqual(bench.count_run_calls(source_run), 4)
+
+        target_run = bench.create_benchmark_run(suite_id, runner_version="runner-1")
+        target_candidate = bench.add_benchmark_candidate(
+            target_run, 1, "target", {"provider_key": "p", "model": "m"},
+            "candidate-hash", {"model": "m"},
+        )
+        cloned = bench.clone_reusable_response(
+            source_response, target_run, target_candidate, source_paper,
+        )
+        cloned_data = bench.get_response(cloned)
+        self.assertEqual(cloned_data["prompt_snapshot"], [{"role": "user", "content": "paper"}])
+        self.assertEqual(cloned_data["raw_output"], "answer")
+        self.assertEqual(cloned_data["parsed"], {"q1": "answer"})
+        self.assertEqual(cloned_data["status"], "ok")
+        self.assertEqual(cloned_data["reused_from_response_id"], source_response)
+        self.assertEqual(cloned_data["usage_json"], {})
+        self.assertEqual(cloned_data["latency_ms"], 0)
+        self.assertEqual(cloned_data["continuation_count"], 0)
+        self.assertEqual(cloned_data["retry_count"], 0)
+        self.assertEqual(cloned_data["error_json"], {})
+        self.assertEqual(bench.count_run_calls(target_run), 0)
+
+    def test_v7_run_queue_claim_and_terminal_transitions_are_idempotent(self):
+        suite_id = bench.create_benchmark_suite("pilot", "pprb-pilot-2026.08.13-r1",
+                                                {"system": "s"}, {"system": "s2"})
+        run_id = bench.create_benchmark_run(suite_id, status="queued")
+        self.assertEqual(bench.get_benchmark_run(run_id)["status"], "queued")
+        self.assertTrue(bench.claim_benchmark_run(run_id))
+        self.assertFalse(bench.claim_benchmark_run(run_id))
+        self.assertEqual(bench.get_benchmark_run(run_id)["status"], "running")
+
+        bench.set_run_status(run_id, "completed")
+        bench.set_run_status(run_id, "completed")
+        completed = bench.get_benchmark_run(run_id)
+        self.assertEqual(completed["status"], "completed")
+        self.assertIsNotNone(completed["finished_at"])
+        self.assertFalse(bench.claim_benchmark_run(run_id))
+
+    def test_v7_interrupt_marks_queued_and_running_only(self):
+        suite_id = bench.create_benchmark_suite("pilot", "pprb-pilot-2026.08.13-r1",
+                                                {"system": "s"}, {"system": "s2"})
+        queued_id = bench.create_benchmark_run(suite_id, status="queued")
+        running_id = bench.create_benchmark_run(suite_id, status="running")
+        completed_id = bench.create_benchmark_run(suite_id, status="completed")
+
+        self.assertEqual(bench.mark_interrupted_runs(), 2)
+        runs = {run["id"]: run for run in bench.list_benchmark_runs()}
+        self.assertEqual(runs[queued_id]["status"], "interrupted")
+        self.assertEqual(runs[running_id]["status"], "interrupted")
+        self.assertEqual(runs[completed_id]["status"], "completed")
+        self.assertTrue(runs[queued_id]["finished_at"])
+        self.assertTrue(runs[running_id]["finished_at"])
+
+    def test_v7_response_reuse_matches_exact_slot_and_clone_does_not_charge(self):
+        suite_one = bench.create_benchmark_suite(
+            "pilot", "pprb-pilot-2026.08.13-r1", {"system": "s"}, {"system": "s2"},
+            checksum="suite-hash",
+        )
+        source_paper = bench.add_benchmark_suite_paper(
+            suite_one, {"paper_key": "paper-1", "full_text": "text"},
+        )
+        source_run = bench.create_benchmark_run(suite_one, runner_version="runner-1")
+        source_candidate = bench.add_benchmark_candidate(
+            source_run, 1, "source", {"provider_key": "p", "model": "m"},
+            "candidate-hash", {"model": "m"},
+        )
+        source_response = bench.save_benchmark_response(
+            source_run, source_candidate, source_paper, "deep_reading", 0, None,
+            [], "answer", {"q1": "answer"}, "ok", "stop", {}, 1,
+            retry_count=1, error_json={"transient": False},
+        )
+        self.assertEqual(bench.count_run_calls(source_run), 2)
+
+        suite_two = bench.create_benchmark_suite(
+            "pilot", "pprb-pilot-2026.08.13-r2", {"system": "s"}, {"system": "s2"},
+            checksum="suite-hash",
+        )
+        target_paper = bench.add_benchmark_suite_paper(
+            suite_two, {"paper_key": "paper-1", "full_text": "text"},
+        )
+        target_run = bench.create_benchmark_run(suite_two, runner_version="runner-1")
+        target_candidate = bench.add_benchmark_candidate(
+            target_run, 1, "target", {"provider_key": "p", "model": "m"},
+            "candidate-hash", {"model": "m"},
+        )
+
+        reusable = bench.find_reusable_response(
+            "suite-hash", "runner-1", "candidate-hash", paper_key="paper-1",
+            track="deep_reading", repeat_index=0, round_index=None,
+        )
+        self.assertEqual(reusable["id"], source_response)
+        cloned = bench.clone_reusable_response(
+            source_response, target_run, target_candidate, target_paper,
+        )
+        self.assertEqual(bench.count_run_calls(target_run), 0)
+        cloned_data = bench.get_response(cloned)
+        self.assertEqual(cloned_data["reused_from_response_id"], source_response)
+        self.assertEqual(cloned_data["raw_output"], "answer")
+        self.assertEqual(cloned_data["usage_json"], {})
+        self.assertEqual(cloned_data["latency_ms"], 0)
+        self.assertEqual(cloned_data["continuation_count"], 0)
+        self.assertEqual(cloned_data["retry_count"], 0)
+        self.assertEqual(cloned_data["error_json"], {})
+
+        failed_run = bench.create_benchmark_run(suite_one, runner_version="runner-1")
+        failed_candidate = bench.add_benchmark_candidate(
+            failed_run, 1, "failed", {"provider_key": "p", "model": "m"},
+            "candidate-hash", {"model": "m"},
+        )
+        bench.save_benchmark_response(
+            failed_run, failed_candidate, source_paper, "deep_reading", 0, None,
+            [], "failed", {}, "retry_failed", "", {}, 0,
+            retry_count=2, error_json={"timeout": True},
+        )
+        reusable_after_failure = bench.find_reusable_response(
+            "suite-hash", "runner-1", "candidate-hash", paper_key="paper-1",
+            track="deep_reading", repeat_index=0, round_index=None,
+        )
+        self.assertIn(reusable_after_failure["id"], {source_response, cloned})
+        self.assertNotEqual(reusable_after_failure["status"], "retry_failed")
+
+    def test_v7_scoring_revision_activation_case_audit_and_judgment_actor(self):
+        suite_id = bench.create_benchmark_suite("pilot", "pprb-pilot-2026.08.13-r1",
+                                                {"system": "s"}, {"system": "s2"})
+        paper_ref = bench.add_benchmark_suite_paper(
+            suite_id, {"paper_key": "paper-1", "full_text": "text"},
+        )
+        run_id = bench.create_benchmark_run(suite_id)
+        revision = bench.create_benchmark_scoring_revision(
+            run_id, "judge-hash", primary_route_key="benchmark_judge",
+            primary_route_snapshot={"model": "judge"},
+            primary_prompt_snapshot={"instruction": "score"},
+        )
+        self.assertEqual(revision["primary_route_snapshot"]["model"], "judge")
+        self.assertEqual(
+            bench.create_scoring_revision(run_id, "judge-hash")["id"], revision["id"],
+        )
+        bench.set_benchmark_scoring_revision_status(revision["id"], "running")
+        completed = bench.set_scoring_revision_status(revision["id"], "completed")
+        self.assertIsNotNone(completed["finished_at"])
+        run = bench.set_active_scoring_revision(run_id, "judge-hash")
+        self.assertEqual(run["active_scoring_revision"], "judge-hash")
+
+        case_id = bench.add_benchmark_case(_freeze_case_fields(
+            suite_id=suite_id, paper_ref_id=paper_ref,
+        ))
+        first_revision = bench.append_benchmark_case_revision(
+            case_id, "edit", {"question": "old"}, {"question": "new"},
+            actor_user_id=7, actor_username="reviewer", note="修订",
+        )
+        self.assertEqual(first_revision["actor_username"], "reviewer")
+        reviewed = bench.set_case_review(
+            case_id, "accepted", note="通过", actor_user_id=7, actor_username="reviewer",
+        )
+        self.assertEqual(reviewed["status"], "accepted")
+        revisions = bench.list_case_revisions(case_id)
+        self.assertEqual([item["revision"] for item in revisions], [1, 2])
+        self.assertEqual(revisions[1]["after_json"]["status"], "accepted")
+
+        candidate_id = bench.add_benchmark_candidate(
+            run_id, 1, "candidate", {"provider_key": "p", "model": "m"},
+            "hash", {"model": "m"},
+        )
+        response_id = bench.save_benchmark_response(
+            run_id, candidate_id, paper_ref, "deep_reading", 0, None,
+            [], "answer", {"q1": "answer"}, "ok", "stop", {}, 0,
+        )
+        bench.save_benchmark_judgment(
+            run_id, response_id, "human", "human", "judge-hash", case_id,
+            [{"condition": "c", "met": 1}], 100, False, 1,
+            {"source": "ui"}, actor_user_id=7, actor_username="reviewer",
+        )
+        judgment = bench.get_run_judgments(run_id)[0]
+        self.assertEqual(judgment["actor_user_id"], 7)
+        self.assertEqual(judgment["actor_username"], "reviewer")
+
 
 if __name__ == "__main__":
     unittest.main()

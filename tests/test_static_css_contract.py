@@ -135,6 +135,14 @@ print(json.dumps({url: [client.get(url).status_code, client.get(url).content_typ
             r"@media[\s\S]*?\.benchmark-candidate-row\s*\{[\s\S]*?flex-direction\s*:\s*column",
         )
 
+    def test_benchmark_dynamic_state_and_controls_are_css_owned(self):
+        content = (CSS_ROOT / "pages" / "benchmark.css").read_text(encoding="utf-8")
+        self.assertRegex(content, r"\.is-hidden\s*\{")
+        self.assertRegex(content, r"\.route-effort-control\s*")
+        self.assertRegex(content, r"\.route-max-tokens-control\s*")
+        self.assertRegex(content, r"\.candidate-max-tokens\s*")
+        self.assertRegex(content, r"\.progress-bar-fill\s*")
+
 
 if __name__ == "__main__":
     unittest.main()

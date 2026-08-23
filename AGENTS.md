@@ -182,7 +182,7 @@ CREATE TABLE paper_quiz_attempts (
 
 删除论文时，以上学习记录会随 papers 外键级联删除；删除用户时，其私有学习记录随 users 外键级联删除。
 
-### 论文阅读 Benchmark 表（v6）
+### 论文阅读 Benchmark 表（v7）
 
 ```sql
 -- 自管理任务路由（不进入共享 ai_tasks 设置）
@@ -238,13 +238,14 @@ CREATE TABLE benchmark_cases (
     FOREIGN KEY (paper_ref_id) REFERENCES benchmark_suite_papers(id) ON DELETE CASCADE
 );
 
--- 运行：异步、持久化、可恢复；启动时遗留 running 标记为 interrupted
+-- 运行：queued → running，持久化、可恢复；启动时遗留 queued/running 标记为 interrupted
 CREATE TABLE benchmark_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     suite_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'running',
     repeats INTEGER DEFAULT 1, max_calls INTEGER,            -- 候选调用硬预算，NULL 不限
     candidate_calls_made INTEGER NOT NULL DEFAULT 0,         -- 已预留的候选 API 尝试（含续写，不含裁判）
     runner_version TEXT NOT NULL DEFAULT '',
+    active_scoring_revision TEXT NOT NULL DEFAULT '',         -- 当前报告采用的评分版本
     created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT,
     FOREIGN KEY (suite_id) REFERENCES benchmark_suites(id) ON DELETE CASCADE
 );
@@ -271,10 +272,13 @@ CREATE TABLE benchmark_responses (
     parsed TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'ok',
     finish_reason TEXT NOT NULL DEFAULT '', usage_json TEXT NOT NULL DEFAULT '{}',
     latency_ms REAL DEFAULT 0, continuation_count INTEGER DEFAULT 0,
+    reused_from_response_id INTEGER, retry_count INTEGER NOT NULL DEFAULT 0,
+    error_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (run_id) REFERENCES benchmark_runs(id) ON DELETE CASCADE,
     FOREIGN KEY (candidate_id) REFERENCES benchmark_candidates(id) ON DELETE CASCADE,
     FOREIGN KEY (paper_ref_id) REFERENCES benchmark_suite_papers(id) ON DELETE CASCADE,
+    FOREIGN KEY (reused_from_response_id) REFERENCES benchmark_responses(id) ON DELETE SET NULL,
     UNIQUE(candidate_id, paper_ref_id, track, repeat_index, round_index)
 );
 
@@ -287,11 +291,38 @@ CREATE TABLE benchmark_judgments (
     case_id INTEGER NOT NULL, condition_scores TEXT NOT NULL DEFAULT '[]',
     score REAL NOT NULL DEFAULT 0,       -- 0-100；严重幻觉时该题封顶 60
     hallucination_critical INTEGER DEFAULT 0, confidence REAL, raw_json TEXT NOT NULL DEFAULT '{}',
-    notes TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    notes TEXT NOT NULL DEFAULT '', actor_user_id INTEGER, actor_username TEXT NOT NULL DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (run_id) REFERENCES benchmark_runs(id) ON DELETE CASCADE,
     FOREIGN KEY (response_id) REFERENCES benchmark_responses(id) ON DELETE CASCADE,
     FOREIGN KEY (case_id) REFERENCES benchmark_cases(id) ON DELETE CASCADE,
     UNIQUE(response_id, judge_role, case_id, scoring_revision)
+);
+
+-- 裁判配置/Prompt 的独立版本；只重判时创建新版本，不覆盖旧判定
+CREATE TABLE benchmark_scoring_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL, revision_key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    primary_route_key TEXT NOT NULL DEFAULT '', review_route_key TEXT NOT NULL DEFAULT '',
+    primary_route_snapshot TEXT NOT NULL DEFAULT '{}', review_route_snapshot TEXT NOT NULL DEFAULT '{}',
+    primary_prompt_snapshot TEXT NOT NULL DEFAULT '{}', review_prompt_snapshot TEXT NOT NULL DEFAULT '{}',
+    error_json TEXT NOT NULL DEFAULT '{}', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    started_at TEXT, finished_at TEXT,
+    FOREIGN KEY (run_id) REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+    UNIQUE(run_id, revision_key)
+);
+
+-- 题目编辑/审核的追加式审计历史
+CREATE TABLE benchmark_case_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id INTEGER NOT NULL, suite_id INTEGER NOT NULL, revision INTEGER NOT NULL,
+    action TEXT NOT NULL, actor_user_id INTEGER, actor_username TEXT NOT NULL DEFAULT '',
+    before_json TEXT NOT NULL DEFAULT '{}', after_json TEXT NOT NULL DEFAULT '{}',
+    note TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (case_id) REFERENCES benchmark_cases(id) ON DELETE CASCADE,
+    FOREIGN KEY (suite_id) REFERENCES benchmark_suites(id) ON DELETE CASCADE,
+    UNIQUE(case_id, revision)
 );
 ```
 
@@ -378,30 +409,35 @@ POST /api/paper/<arxiv_id>/socratic/sessions/<session_id>/reply
   → paper_quiz 任务模型根据历史连续追问
 ```
 
-### 4.5 论文阅读 Benchmark 流程（v6，pilot 规则兼容）
+### 4.5 论文阅读 Benchmark 流程（v7）
 ```
 GET /benchmark（admin）→ 选论文 → POST /api/benchmark/drafts 创建草稿
   → create_draft()：get_paper_by_key + _extract_full_text（失败阻止冻结，不回退摘要）
       + get_prompt_profiles() 复制 deep_reading/paper_chat Prompt 为不可变快照
-  → POST .../generate：每篇论文 1 次出题调用（benchmark_author 路由）
+  → POST .../generate：返回 HTTP 202/task_id，单 worker 异步执行每篇论文 1 次出题调用
+      （benchmark_author 路由）
       → 生成 6 个深度阅读参考答案/rubric/证据 + 3 轮交流脚本
       → 证据须能精确匹配冻结全文（normalize_text：NFKC/断行连字/括号空白归一）
       → 全部失败自动驳回；部分匹配标记警告（pending 人工复核）；通过后 pending 待审
   → 逐题 review_case / 批量 review_all_cases（accept/reject）
+      → 冻结前可编辑题目，编辑重新校验证据/rubric，并追加 case revision 审计记录
   → freeze_suite()：校验全文、证据、rubric、题量覆盖后置为 frozen 并写入校验和
-  → start_run(suite, candidates, repeats, max_calls)：每候选每论文 1 次深度阅读 + 3 轮交流
-      → v6 在创建运行前拒绝放不下完整候选工作的预算；每次候选 API 尝试（含深读续写）原子递增
-        `candidate_calls_made`，裁判调用不占用该预算；预算耗尽后 resume 只能严格上调 `max_calls`
-      → 交流轨每轮用候选自身历史（可复用已保存响应，恢复运行只补缺）
-      → 深度阅读输出按文本级 `### Qn:` 解析（兼容转义/原始换行、重复 JSON 包络）
+  → POST .../runs：返回 HTTP 202/task_id/run_id，先持久化 queued，再由单 worker 原子 claim 为 running
+      → 创建运行前拒绝放不下未复用候选工作的预算；每次候选 API 尝试（含深读续写与临时重试）
+        原子递增 `candidate_calls_made`，裁判调用不占用该预算；耗尽后 resume 只能严格上调 `max_calls`
+      → 网络/timeout/429/5xx 最多额外重试 2 次；仍失败保存 retry_failed，作为基础设施失败等待恢复，不计为候选 0 分
+      → 按 suite checksum、runner version、candidate config hash 和响应槽精确复用已保存响应，失败响应不复用
+      → 交流轨每轮用候选自身历史；深度阅读输出按文本级 `### Qn:` 解析
   → judge_run()：主裁判按（候选, 论文, 轨道）批量评分，缺题计零（system 判定）
-      → 复核裁判抽样（每候选每轨道 ≥10% 下限 1 组，覆盖低置信度/幻觉）
+      → 复核裁判抽样（每候选每轨道 ≥10% 下限 1 组，并完整覆盖异常组与同供应商候选）
       → 裁判 kind 重命名时按位置对齐兜底
+  → POST .../rejudge：只对已保存候选输出建立新的 scoring revision，不增加候选调用数；成功后切换 active 版本
+      → 人工覆盖必须提交完整 `condition_scores`，按冻结 rubric 权重计算并保留 actor 快照
   → get_report()：双轨分榜、逐题明细（精确 `response_id`/`case_id`、主裁判/复核分）、
       幻觉/缺题计数、token/延迟/续写、pilot 未校准警告、同家族偏置提示、人工校准统计
       → 主/复核条件级冲突标记 `needs_human_review=true`，该题分数为 null 且不进入轨道/榜单聚合
-        （若该轨道所有题均冲突，轨道分数为 null），直到人工覆盖；历史 `runner_version=''`
-        原样保留并在报告 warning 中提示
+        （若该轨道所有题均冲突，轨道分数为 null），直到人工覆盖；新运行固定保存
+        `RUNNER_VERSION=pprb-runner-v7`，历史 `runner_version=''` 原样保留并在报告 warning 中提示
 ```
 
 ### 4.6 配置说明（benchmark 自管理路由）
@@ -411,8 +447,8 @@ GET /benchmark（admin）→ 选论文 → POST /api/benchmark/drafts 创建草�
 - 路由默认值在 `source/benchmark/config.py` 的 `DEFAULT_BENCHMARK_ROUTES`；出题/裁判
   Prompt 为代码常量（`source/benchmark/prompts.py`），v1 修改 Prompt 需改代码
 - 候选模型配置与路由同构（provider_key/model/思考开关/强度/输出上限），运行前
-  `build_chat_completion_kwargs` 校验可构建并快照 actual_params；`config_hash` 供
-  未来输出复用去重
+  `build_chat_completion_kwargs` 校验可构建并快照 actual_params；`config_hash` 与 suite checksum、
+  runner version 一起用于跨运行响应复用去重，快照不保存 API Key 或 messages
 
 ### 4.4 定时任务流程
 ```
@@ -648,16 +684,17 @@ APScheduler cron(day_of_week, hour, minute)
 | `/api/benchmark/papers?q=` | GET | 可选论文列表 |
 | `/api/benchmark/drafts` | POST | 创建题库草稿 {subset_name, paper_keys} |
 | `/api/benchmark/suites/<id>` | GET | 题库详情（论文/题目/运行记录） |
-| `/api/benchmark/suites/<id>/generate` | POST | 自动出题（SSE 进度） |
-| `/api/benchmark/cases/<id>/review` | POST | 人工审核 {decision, note} |
+| `/api/benchmark/suites/<id>/generate` | POST | 排队自动出题，返回 202/task_id（SSE 进度） |
+| `/api/benchmark/cases/<id>/review` | POST | 人工审核/编辑 `{edits, decision, note}`，追加审计历史 |
 | `/api/benchmark/suites/<id>/review-all` | POST | 批量审核 |
 | `/api/benchmark/suites/<id>/freeze` | POST | 冻结题库 |
 | `/api/benchmark/suites/<id>/estimate` | GET | 调用量估算 ?candidates=&repeats= |
-| `/api/benchmark/suites/<id>/runs` | POST | 启动评测运行（SSE 进度） |
+| `/api/benchmark/suites/<id>/runs` | POST | 排队评测运行，返回 202/task_id/run_id（SSE 进度） |
 | `/api/benchmark/runs/<id>` | GET | 运行详情 |
-| `/api/benchmark/runs/<id>/resume` | POST | 恢复中断/失败运行（输出复用） |
+| `/api/benchmark/runs/<id>/resume` | POST | 排队恢复中断/失败运行，可选 `{max_calls}` 且只能严格上调 |
 | `/api/benchmark/runs/<id>/report` | GET | 双轨分榜报告 |
-| `/api/benchmark/judgments` | POST | 人工覆盖裁判判定 |
+| `/api/benchmark/runs/<id>/rejudge` | POST | 排队只重判，返回 202；不增加候选调用量 |
+| `/api/benchmark/judgments` | POST | 人工覆盖，必须提交完整 `condition_scores` |
 | `/api/benchmark/routes` | GET | 自管理任务路由（无凭据） |
 | `/api/benchmark/routes/<task_key>` | POST | 保存任务路由 |
 | `/api/benchmark/progress/<task_id>` | GET | SSE 进度 |
@@ -744,11 +781,11 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 - `completed` / `error` 终态保留 600 秒供 SSE 消费和短暂重连，后续读写时懒清理；`running` 等非终态不使用该 TTL，避免误删长任务
 - SSE 读取必须从当前 principal 注入 `user_id`，不得接受客户端 user id；`update_progress()` / `get_progress()` 的接口和事件 JSON 不暴露内部复合键
 
-### 7.10 Benchmark 深模块约定（v6）
+### 7.10 Benchmark 深模块约定（v7）
 - 外部只允许通过 `source/benchmark` 公共接口操作（create_draft/generate_cases/review_case/
-  freeze_suite/start_run/resume_run/get_report/set_human_judgment/路由配置）；读取题库论文与运行状态
+  freeze_suite/start_run/resume_run/rejudge_run/edit_case/get_report/set_human_judgment/路由配置）；读取题库论文与运行状态
   使用 `list_suite_papers(suite_id)`、`list_runs(suite_id=None)`，启动时遗留运行由
-  `mark_interrupted_runs()` 统一处理；Web 层不得
+  `mark_interrupted_runs()` 统一处理（queued/running 均会标记为 interrupted）；Web 层不得
   直接拼接裁判 Prompt 或操作 benchmark SQL
 - 题库冻结后不可原地修改（review/generate 抛 BenchmarkError）；变更必须克隆新版本
   （create_draft 自动递增 `pprb-<subset>-YYYY.MM.DD-rN`）
@@ -759,12 +796,18 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
   `### Qn:` 标题），不依赖 JSON 完整性；模型输出可用 `json_support._clean_json_content`
   与 `_extract_first_json_object` 兜底修复
 - 运行按（候选, 论文, 轨道, 重复槽, 轮次）唯一键保存响应，`get_existing_response` 跳过
-  已保存项实现恢复/重跑输出复用；v6 `max_calls` 仅限制候选 API 尝试（含续写），启动前校验完整
-  候选工作量，且每次尝试通过持久化原子预留计数；耗尽后恢复只允许严格提高上限
+  已保存项；跨运行复用必须同时匹配 suite checksum、runner version、candidate config hash 和槽位，
+  retry_failed/未完成响应不复用，克隆复用不增加候选调用计数
+- v7 `max_calls` 仅限制候选 API 尝试（含续写与额外重试），启动前校验未复用的完整候选工作量，
+  每次尝试通过持久化原子预留计数；耗尽后恢复只允许严格提高上限；裁判重试不计入该预算
+- 出题、运行、恢复和重判的 Web 入口均为后台单 worker 任务，API 返回 202；进程重启时 queued/running
+  运行标记为 interrupted，必须人工恢复，已保存响应和调用计数不丢失
 - 裁判判定优先序：human > review > system（缺题计零）> primary；严重幻觉该题封顶 60 分；
   主/复核条件级分歧等待人工且不计入榜单；报告逐题保留 `response_id`、`case_id`、
   `primary_score`、`review_score`、`needs_human_review`；同家族偏置与非等预算比较必须出现在报告 warnings
-- 新建运行固定保存非空 `source.benchmark.RUNNER_VERSION`；历史空版本不回填，只在报告中提示 provenance warning
+- 裁判使用独立 scoring revision；更换裁判只重判已有响应，旧 judgment 保留，完成后才切换 active 版本。
+  人工 `condition_scores` 必须覆盖冻结 rubric 的每个条件，服务端按权重计算分数并保存 actor 快照。
+- 新建运行固定保存非空 `source.benchmark.RUNNER_VERSION=pprb-runner-v7`；历史空版本不回填，只在报告中提示 provenance warning
 
 ---
 

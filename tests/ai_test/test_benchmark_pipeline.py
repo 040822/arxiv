@@ -231,6 +231,21 @@ class BenchmarkPipelineTests(unittest.TestCase):
 
         estimate = bm.estimate_calls(suite["id"], 1, 1)
         self.assertEqual(estimate["measured_calls"], 4)
+        self.assertEqual(estimate["normal_candidate_calls"], 4)
+        self.assertEqual(estimate["candidate_worst_calls"], 15)
+        self.assertEqual(estimate["worst_candidate_attempts"], 15)
+        self.assertEqual(estimate["judge_calls"], 2)
+        self.assertEqual(estimate["normal_judge_calls"], 2)
+        self.assertEqual(estimate["judge_worst_calls"], 6)
+        self.assertEqual(estimate["worst_judge_attempts"], 6)
+        self.assertEqual(estimate["review_calls"], 2)
+        self.assertEqual(estimate["normal_review_calls"], 2)
+        self.assertEqual(estimate["review_worst_calls"], 6)
+        self.assertEqual(estimate["worst_review_attempts"], 6)
+        self.assertEqual(estimate["normal_total_calls"], 8)
+        self.assertEqual(estimate["worst_total_calls"], 27)
+        self.assertEqual(estimate["normal"]["total_calls"], 8)
+        self.assertEqual(estimate["worst"]["total_calls"], 27)
 
         self._run_queues()
         run_id = bm.start_run(suite["id"], [self._candidate()])
@@ -563,12 +578,15 @@ class BenchmarkPipelineTests(unittest.TestCase):
         self.assertIsNone(q1["score"])
         self.assertIsNone(deep["score"])
 
-        bm.set_human_judgment(run_id, q1["response_id"], q1["case_id"], 80, notes="人工裁决")
+        bm.set_human_judgment(
+            run_id, q1["response_id"], q1["case_id"],
+            [{"condition": "判定条件", "met": 0.5}], notes="人工裁决",
+        )
         resolved = bm.get_report(run_id)["tracks"]["deep_reading"][0]
         resolved_q1 = next(item for item in resolved["per_case"] if item["kind"] == "q1")
-        self.assertEqual(resolved_q1["score"], 80.0)
+        self.assertEqual(resolved_q1["score"], 50.0)
         self.assertFalse(resolved_q1["needs_human_review"])
-        self.assertEqual(resolved["score"], 80.0)
+        self.assertEqual(resolved["score"], 50.0)
 
     def test_actual_request_snapshot_preserves_non_message_parameters_and_protocol_mapping(self):
         from source.benchmark.config import build_actual_request_params
@@ -621,6 +639,140 @@ class BenchmarkPipelineTests(unittest.TestCase):
         self.assertEqual(deepseek_legacy["max_tokens"], 123)
         self.assertNotIn("messages", json.dumps(actual))
         self.assertNotIn("sk-secret", json.dumps(actual))
+
+    def test_cross_run_reuse_skips_candidate_budget_and_keeps_provenance(self):
+        import source.benchmark as bm
+        suite = self._create_frozen_suite()
+        self._run_queues()
+        first_run = bm.start_run(suite["id"], [self._candidate()])
+        first_responses = bm.get_run(first_run)["responses"]
+        self.assertEqual(len(first_responses), 4)
+
+        # Candidate slots are all reusable, so max_calls=1 is enough for the
+        # new run.  The four calls below are judge/review calls only.
+        QueueOpenAI.push(
+            completion(judge_response(["q1", "q2", "q3", "q4", "q5", "q6"])),
+            completion(judge_response(["chat_round1", "chat_round2", "chat_round3"])),
+            completion(judge_response(["q1", "q2", "q3", "q4", "q5", "q6"], confidence=0.85)),
+            completion(judge_response(["chat_round1", "chat_round2", "chat_round3"], confidence=0.85)),
+        )
+        second_run = bm.start_run(suite["id"], [self._candidate()], max_calls=1)
+        second = bm.get_run(second_run)
+        self.assertEqual(second["candidate_calls_made"], 0)
+        self.assertTrue(all(item["reused_from_response_id"] for item in second["responses"]))
+        reused_report = bm.get_report(second_run)
+        self.assertEqual(reused_report["candidate_calls_made"], 0)
+        self.assertEqual(reused_report["usage"]["total_tokens"], 0)
+        self.assertEqual(reused_report["usage"]["latency_ms"], 0.0)
+        self.assertEqual(reused_report["usage"]["retry_count"], 0)
+        self.assertEqual(reused_report["usage"]["calls"], 0)
+
+    def test_new_runner_version_does_not_reuse_v6_outputs(self):
+        import source.benchmark as bm
+        suite = self._create_frozen_suite()
+        self._run_queues()
+        first_run = bm.start_run(suite["id"], [self._candidate()])
+        from source.storage.connection import get_connection
+        with get_connection() as conn:
+            conn.execute(
+                "UPDATE benchmark_runs SET runner_version = 'pprb-runner-v6' WHERE id = ?",
+                (first_run,),
+            )
+        QueueOpenAI.push(
+            completion(deep_reading_response()),
+            completion("第一轮回答"), completion("第二轮回答"), completion("第三轮回答"),
+            completion(judge_response(["q1", "q2", "q3", "q4", "q5", "q6"])),
+            completion(judge_response(["chat_round1", "chat_round2", "chat_round3"])),
+            completion(judge_response(["q1", "q2", "q3", "q4", "q5", "q6"], confidence=0.85)),
+            completion(judge_response(["chat_round1", "chat_round2", "chat_round3"], confidence=0.85)),
+        )
+        second_run = bm.start_run(suite["id"], [self._candidate()], max_calls=4)
+        self.assertEqual(bm.get_run(second_run)["runner_version"], "pprb-runner-v7")
+        self.assertEqual(bm.get_run(second_run)["candidate_calls_made"], 4)
+
+    def test_case_edit_revalidates_and_records_actor_audit(self):
+        import source.benchmark as bm
+        self._add_paper()
+        with patch.object(bm, "_extract_full_text", return_value=FULL_TEXT):
+            suite, _ = bm.create_draft("edit", ["2608.00001"])
+        QueueOpenAI.push(completion(json.dumps(author_response(), ensure_ascii=False)))
+        bm.generate_cases(suite["id"])
+        case = bm.list_cases(suite["id"])[0]
+        edited = bm.edit_case(
+            case["id"], {"reference_answer": "人工修订答案", "evidence": case["evidence"], "rubric": case["rubric"]},
+            actor_user_id=7, actor_username="reviewer", note="人工修订", decision="accept",
+        )
+        self.assertEqual(edited["status"], "accepted")
+        self.assertEqual(bm.list_case_revisions(case["id"])[-1]["actor_username"], "reviewer")
+
+    def test_rejudge_activates_new_revision_without_candidate_calls(self):
+        import source.benchmark as bm
+        suite = self._create_frozen_suite()
+        self._run_queues()
+        run_id = bm.start_run(suite["id"], [self._candidate()])
+        before = bm.get_run(run_id)
+        old_revision = before["active_scoring_revision"]
+        bm.save_route_config("benchmark_judge", {
+            "provider_key": "test", "model": "m1", "is_thinking": False,
+            "thinking_effort": "medium", "temperature_enabled": True,
+            "temperature": 0.9, "max_tokens_enabled": True, "max_tokens": 3000,
+        })
+        QueueOpenAI.push(
+            completion(judge_response(["q1", "q2", "q3", "q4", "q5", "q6"])),
+            completion(judge_response(["chat_round1", "chat_round2", "chat_round3"])),
+            completion(judge_response(["q1", "q2", "q3", "q4", "q5", "q6"], confidence=0.85)),
+            completion(judge_response(["chat_round1", "chat_round2", "chat_round3"], confidence=0.85)),
+        )
+        bm.rejudge_run(run_id)
+        after = bm.get_run(run_id)
+        self.assertEqual(after["candidate_calls_made"], before["candidate_calls_made"])
+        self.assertNotEqual(after["active_scoring_revision"], old_revision)
+
+        # Switching the judge route back must reuse and reactivate the old
+        # completed revision instead of leaving the newer one active.
+        bm.save_route_config("benchmark_judge", {
+            "provider_key": "test", "model": "m1", "is_thinking": False,
+            "thinking_effort": "medium", "temperature_enabled": True,
+            "temperature": 0.1, "max_tokens_enabled": True, "max_tokens": 3000,
+        })
+        bm.rejudge_run(run_id)
+        self.assertEqual(bm.get_run(run_id)["active_scoring_revision"], old_revision)
+
+    def test_human_condition_override_requires_exact_rubric_and_computes_score(self):
+        import source.benchmark as bm
+        suite = self._create_frozen_suite()
+        self._run_queues()
+        run_id = bm.start_run(suite["id"], [self._candidate()])
+        run = bm.get_run(run_id)
+        q1 = next(case for case in run["cases"] if case["kind"] == "q1")
+        response = next(item for item in run["responses"] if item["track"] == "deep_reading")
+        bm.set_human_judgment(
+            run_id, response["id"], q1["id"],
+            [{"condition": "判定条件", "met": 0.5}], notes="人工校准",
+        )
+        judgment = next(item for item in bm.get_run(run_id)["responses"] if item["id"] == response["id"])
+        self.assertEqual(judgment["id"], response["id"])
+        report_case = next(
+            item for item in bm.get_report(run_id)["tracks"]["deep_reading"][0]["per_case"]
+            if item["case_id"] == q1["id"]
+        )
+        self.assertEqual(report_case["score"], 50.0)
+        with self.assertRaises(ValueError):
+            bm.set_human_judgment(run_id, response["id"], q1["id"], [])
+
+        with self.assertRaises(ValueError):
+            bm.set_human_judgment(run_id, response["id"], q1["id"], 80)
+
+        bm.set_human_judgment(
+            run_id, response["id"], q1["id"],
+            [{"condition": "判定条件", "met": 1}],
+            hallucination_critical=True,
+        )
+        capped_case = next(
+            item for item in bm.get_report(run_id)["tracks"]["deep_reading"][0]["per_case"]
+            if item["case_id"] == q1["id"]
+        )
+        self.assertEqual(capped_case["score"], 60.0)
 
 
 if __name__ == "__main__":

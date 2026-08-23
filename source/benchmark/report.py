@@ -56,6 +56,12 @@ def _collect(run):
     from source.storage.benchmark import get_run_judgments
 
     judgments = get_run_judgments(run["id"])
+    active_revision = str(run.get("active_scoring_revision") or "").strip()
+    if active_revision:
+        judgments = [
+            item for item in judgments
+            if item.get("scoring_revision") == active_revision
+        ]
     by_case = {}
     for judgment in judgments:
         by_case.setdefault(
@@ -125,7 +131,8 @@ def _track_entry(candidate, track, run, case_by_id, paper_by_id, response_by_id,
     per_case = []
     usage = {"total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0,
              "cached_tokens": 0, "latency_ms": 0.0, "calls": 0,
-             "continuation_count": 0, "retry_failed": 0, "empty": 0}
+             "continuation_count": 0, "retry_count": 0,
+             "retry_failed": 0, "empty": 0}
     hallucination_critical = 0
     missing_qs = 0
 
@@ -140,6 +147,8 @@ def _track_entry(candidate, track, run, case_by_id, paper_by_id, response_by_id,
                 "hallucination_critical": 0, "missing_qs": 0}
 
     for response in responses:
+        if response.get("reused_from_response_id") is not None:
+            continue
         response_usage = response.get("usage_json") or {}
         usage["total_tokens"] += int(response_usage.get("total_tokens", 0))
         usage["prompt_tokens"] += int(response_usage.get("prompt_tokens", 0))
@@ -147,8 +156,10 @@ def _track_entry(candidate, track, run, case_by_id, paper_by_id, response_by_id,
         usage["cached_tokens"] += int(response_usage.get("cached_tokens", 0))
         usage["latency_ms"] += float(response.get("latency_ms") or 0)
         continuation_count = int(response.get("continuation_count") or 0)
-        usage["calls"] += 1 + continuation_count
+        retry_count = int(response.get("retry_count") or 0)
+        usage["calls"] += 1 + continuation_count + retry_count
         usage["continuation_count"] += continuation_count
+        usage["retry_count"] += retry_count
         if response.get("status") == "retry_failed":
             usage["retry_failed"] += 1
         if response.get("status") == "empty":
@@ -244,15 +255,24 @@ def _track_entry(candidate, track, run, case_by_id, paper_by_id, response_by_id,
 
 def _usage_totals(run, responses):
     totals = {"total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0,
-              "cached_tokens": 0, "latency_ms": 0.0,
-              "calls": sum(1 + int(r.get("continuation_count") or 0) for r in responses)}
+              "cached_tokens": 0, "latency_ms": 0.0, "retry_count": 0,
+              "calls": sum(
+                  0 if r.get("reused_from_response_id") is not None else (
+                      1 + int(r.get("continuation_count") or 0)
+                      + int(r.get("retry_count") or 0)
+                  )
+                  for r in responses
+              )}
     for response in responses:
+        if response.get("reused_from_response_id") is not None:
+            continue
         usage = response.get("usage_json") or {}
         totals["total_tokens"] += int(usage.get("total_tokens", 0))
         totals["prompt_tokens"] += int(usage.get("prompt_tokens", 0))
         totals["completion_tokens"] += int(usage.get("completion_tokens", 0))
         totals["cached_tokens"] += int(usage.get("cached_tokens", 0))
         totals["latency_ms"] += float(response.get("latency_ms") or 0)
+        totals["retry_count"] += int(response.get("retry_count") or 0)
     totals["latency_ms"] = round(totals["latency_ms"], 1)
     return totals
 

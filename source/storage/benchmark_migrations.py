@@ -219,3 +219,105 @@ def migrate_benchmark_candidate_call_budget(conn):
         )
         """
     )
+
+
+def _table_columns(conn, table_name):
+    return {
+        row[1]
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+
+
+def _add_column_if_missing(conn, table_name, column_name, definition):
+    if column_name not in _table_columns(conn, table_name):
+        conn.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"
+        )
+
+
+def migrate_benchmark_v7(conn):
+    """Add durable run/reuse/rejudge/audit state to the v6 benchmark schema.
+
+    Existing rows deliberately receive only schema defaults.  In particular,
+    no historical actor, response provenance, scoring revision, or retry
+    information is fabricated during the migration.
+    """
+    _add_column_if_missing(
+        conn, "benchmark_runs", "active_scoring_revision",
+        "TEXT NOT NULL DEFAULT ''",
+    )
+    _add_column_if_missing(
+        conn, "benchmark_responses", "reused_from_response_id",
+        "INTEGER REFERENCES benchmark_responses(id) ON DELETE SET NULL",
+    )
+    _add_column_if_missing(
+        conn, "benchmark_responses", "retry_count",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    _add_column_if_missing(
+        conn, "benchmark_responses", "error_json",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )
+    _add_column_if_missing(
+        conn, "benchmark_judgments", "actor_user_id",
+        "INTEGER",
+    )
+    _add_column_if_missing(
+        conn, "benchmark_judgments", "actor_username",
+        "TEXT NOT NULL DEFAULT ''",
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS benchmark_scoring_revisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            revision_key TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            primary_route_key TEXT NOT NULL DEFAULT '',
+            review_route_key TEXT NOT NULL DEFAULT '',
+            primary_route_snapshot TEXT NOT NULL DEFAULT '{}',
+            review_route_snapshot TEXT NOT NULL DEFAULT '{}',
+            primary_prompt_snapshot TEXT NOT NULL DEFAULT '{}',
+            review_prompt_snapshot TEXT NOT NULL DEFAULT '{}',
+            error_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            started_at TEXT,
+            finished_at TEXT,
+            FOREIGN KEY (run_id) REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+            UNIQUE(run_id, revision_key)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS benchmark_case_revisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            suite_id INTEGER NOT NULL,
+            revision INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            actor_user_id INTEGER,
+            actor_username TEXT NOT NULL DEFAULT '',
+            before_json TEXT NOT NULL DEFAULT '{}',
+            after_json TEXT NOT NULL DEFAULT '{}',
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (case_id) REFERENCES benchmark_cases(id) ON DELETE CASCADE,
+            FOREIGN KEY (suite_id) REFERENCES benchmark_suites(id) ON DELETE CASCADE,
+            UNIQUE(case_id, revision)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_benchmark_scoring_revisions_run "
+        "ON benchmark_scoring_revisions(run_id, id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_benchmark_case_revisions_case "
+        "ON benchmark_case_revisions(case_id, revision)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_benchmark_case_revisions_suite "
+        "ON benchmark_case_revisions(suite_id, id)"
+    )

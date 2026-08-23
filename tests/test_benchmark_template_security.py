@@ -32,7 +32,15 @@ class BenchmarkTemplateSecurityTests(unittest.TestCase):
         template = TEMPLATE.read_text(encoding="utf-8")
         self.assertIn("item.response_id", template)
         self.assertIn("item.case_id", template)
+        self.assertIn("condition_scores", template)
         self.assertNotIn("run.run.responses", template)
+
+    def test_template_has_no_inline_style_or_promise_sinks(self):
+        template = TEMPLATE.read_text(encoding="utf-8")
+        self.assertNotRegex(template, r"\sstyle\s*=")
+        self.assertNotRegex(template, r"\.then\s*\(")
+        self.assertNotRegex(template, r"\.catch\s*\(")
+        self.assertNotIn("innerHTML", template)
 
 
 if __name__ == "__main__":

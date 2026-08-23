@@ -114,6 +114,12 @@
     ]
   },
   {
+    "rule": "/api/benchmark/runs/<int:run_id>/rejudge",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "rule": "/api/benchmark/runs/<int:run_id>/report",
     "methods": [
       "GET"

@@ -4,7 +4,7 @@ import json
 import logging
 import re
 
-from ._ai import call_model
+from ._ai import ContextWindowError, RetryFailed, call_model_with_retries
 from .config import resolve_model_config
 from .evidence import parse_deep_reading_questions, split_qa_sections
 
@@ -73,10 +73,36 @@ def _call(cfg, messages, task_key, paper_ref, charge_callback=None):
     # Charge immediately before *each* API attempt.  In particular, a deep
     # reading continuation is a second candidate call and must survive a
     # process restart even if the response cannot be persisted afterwards.
-    if charge_callback is not None:
-        charge_callback()
-    content, usage = call_model(cfg, messages, task_key, paper_ref=paper_ref)
+    content, usage = call_model_with_retries(
+        cfg, messages, task_key, paper_ref=paper_ref,
+        before_attempt=charge_callback,
+    )
     return content, usage
+
+
+def _retry_failure(exc):
+    cause = getattr(exc, "cause", None) or exc
+    return {
+        "type": type(cause).__name__,
+        "message": str(cause),
+        "retry_count": int(getattr(exc, "retry_count", 0) or 0),
+    }
+
+
+def _context_failure(exc, messages, *, raw_output="", continuation_count=0,
+                     usage_json=None, retry_count=0):
+    return {
+        "prompt_snapshot": messages,
+        "raw_output": raw_output,
+        "parsed": {},
+        "status": "context_error",
+        "finish_reason": "error",
+        "usage_json": usage_json or {},
+        "latency_ms": (usage_json or {}).get("latency_ms", 0),
+        "continuation_count": continuation_count,
+        "retry_count": retry_count,
+        "error_json": dict(getattr(exc, "error_json", {}) or {}),
+    }
 
 
 def _qa_sections_from_content(content):
@@ -100,12 +126,29 @@ def run_deep_reading(suite, paper, cfg, paper_ref, charge_callback=None):
             (_frozen_snapshot(suite, "deep_reading") or {}).get("instruction", "")
         )
     }
-    content, usage = _call(
-        cfg, messages, "benchmark_runner_deep_reading", paper_ref,
-        charge_callback=charge_callback,
-    )
+    try:
+        content, usage = _call(
+            cfg, messages, "benchmark_runner_deep_reading", paper_ref,
+            charge_callback=charge_callback,
+        )
+    except ContextWindowError as exc:
+        return _context_failure(exc, messages), 1
+    except RetryFailed as exc:
+        return {
+            "prompt_snapshot": messages,
+            "raw_output": "",
+            "parsed": {},
+            "status": "retry_failed",
+            "finish_reason": "error",
+            "usage_json": {"retry_count": exc.retry_count},
+            "latency_ms": 0,
+            "continuation_count": 0,
+            "retry_count": exc.retry_count,
+            "error_json": _retry_failure(exc),
+        }, 1 + exc.retry_count
     continuation_count = 0
     finish_reason = usage.get("finish_reason", "")
+    retry_count_total = int(usage.get("retry_count", 0) or 0)
 
     def _parse_qa(content):
         sections = _qa_sections_from_content(content)
@@ -135,6 +178,7 @@ def run_deep_reading(suite, paper, cfg, paper_ref, charge_callback=None):
             )
             content = (content + "\n\n" + continuation).strip()
             finish_reason = continuation_usage.get("finish_reason", finish_reason)
+            retry_count_total += int(continuation_usage.get("retry_count", 0) or 0)
             usage["completion_tokens"] = int(usage.get("completion_tokens", 0) or 0) + int(
                 continuation_usage.get("completion_tokens", 0) or 0
             )
@@ -144,6 +188,25 @@ def run_deep_reading(suite, paper, cfg, paper_ref, charge_callback=None):
             parsed, status = _parse_qa(content)
         except BudgetExceeded:
             raise
+        except ContextWindowError as exc:
+            return _context_failure(
+                exc, messages, raw_output=content,
+                continuation_count=continuation_count, usage_json=usage,
+                retry_count=retry_count_total,
+            ), 1 + continuation_count
+        except RetryFailed as exc:
+            return {
+                "prompt_snapshot": messages,
+                "raw_output": content,
+                "parsed": parsed,
+                "status": "retry_failed",
+                "finish_reason": finish_reason or "error",
+                "usage_json": usage,
+                "latency_ms": usage.get("latency_ms", 0),
+                "continuation_count": continuation_count,
+                "retry_count": retry_count_total + exc.retry_count,
+                "error_json": _retry_failure(exc),
+            }, 1 + continuation_count + exc.retry_count
         except Exception as exc:
             logger.warning(f"benchmark deep reading continuation failed: {exc}")
 
@@ -162,16 +225,34 @@ def run_deep_reading(suite, paper, cfg, paper_ref, charge_callback=None):
         "usage_json": usage,
         "latency_ms": usage.get("latency_ms", 0),
         "continuation_count": continuation_count,
+        "retry_count": retry_count_total,
+        "error_json": {},
     }, 1 + continuation_count
 
 
 def run_chat_round(suite, paper, cfg, paper_ref, questions, history, charge_callback=None):
     """交流轨单轮：用候选自身历史（可来自已保存响应）构造消息并调用一次。"""
     messages = _chat_messages(suite, paper, questions, history)
-    content, usage = _call(
-        cfg, messages, "benchmark_runner_chat", paper_ref,
-        charge_callback=charge_callback,
-    )
+    try:
+        content, usage = _call(
+            cfg, messages, "benchmark_runner_chat", paper_ref,
+            charge_callback=charge_callback,
+        )
+    except ContextWindowError as exc:
+        return _context_failure(exc, messages), 1
+    except RetryFailed as exc:
+        return {
+            "prompt_snapshot": messages,
+            "raw_output": "",
+            "parsed": {},
+            "status": "retry_failed",
+            "finish_reason": "error",
+            "usage_json": {"retry_count": exc.retry_count},
+            "latency_ms": 0,
+            "continuation_count": 0,
+            "retry_count": exc.retry_count,
+            "error_json": _retry_failure(exc),
+        }, 1 + exc.retry_count
     return {
         "prompt_snapshot": messages,
         "raw_output": content,
@@ -181,4 +262,6 @@ def run_chat_round(suite, paper, cfg, paper_ref, questions, history, charge_call
         "usage_json": usage,
         "latency_ms": usage.get("latency_ms", 0),
         "continuation_count": 0,
-    }, 1
+        "retry_count": int(usage.get("retry_count", 0) or 0),
+        "error_json": {},
+    }, 1 + int(usage.get("retry_count", 0) or 0)

@@ -199,22 +199,28 @@ APScheduler（星期 + 时分）→ daily_pipeline()
 
 定时日报仅查询 `ingest_mode='feed'`；`manual` 论文只响应用户显式触发。
 
-### 9. 论文阅读 Benchmark 流（v1，pilot）
+### 9. 论文阅读 Benchmark 流（v7，pilot 规则兼容）
 
 ```
 GET /benchmark（admin）→ 选论文 → 创建草稿
   → source/benchmark.create_draft()
     → 快照业务论文全文（失败阻止冻结，不回退摘要）+ 复制生产 deep_reading/paper_chat Prompt
-  → generate_cases()：每篇论文 1 次出题调用（benchmark_author 自管理路由）
+  → generate_cases()：Web 入口返回 202/task_id，单 worker 异步执行每篇论文 1 次出题调用
+      （benchmark_author 自管理路由）
     → 6 个深度阅读参考答案/rubric + 3 轮交流脚本，证据须精确匹配冻结全文
-  → 逐题/批量人工审核 → freeze_suite() 校验后冻结（不可变 + 校验和）
-  → start_run()：每候选每论文 1 次深度阅读 + 3 轮交流（候选自身历史）
+  → 逐题/批量人工审核或编辑（追加 case revision 审计）→ freeze_suite() 校验后冻结（不可变 + 校验和）
+  → submit_start_run()：返回 202/task_id/run_id，queued → running；每候选每论文 1 次深度阅读 + 3 轮交流
+      → 每次候选尝试（含续写及网络/timeout/429/5xx 额外重试）原子计入 max_calls
+      → 按 suite checksum + runner version + candidate config hash + 槽位复用响应，retry_failed 不复用
   → judge_run()：主裁判全量 + 复核裁判抽样（10% 下限 1 组）+ 人工覆盖优先
+  → submit_rejudge_run()：只重判保存的候选输出，建立独立 scoring revision，不增加候选调用量
   → get_report()：深度阅读/论文交流双轨分榜 + 逐题明细 + token/延迟 + 未校准警告
 ```
 
-关键约束：冻结题库不可变；恢复运行只补缺失响应（输出复用）；缺题计零、
-严重幻觉该题封顶 60 分；`max_calls` 硬预算。完整设计与边界见
+关键约束：冻结题库不可变；恢复运行只补缺失响应（输出复用）；进程重启将 queued/running 标记为
+interrupted，人工恢复且不丢失已保存响应；缺题计零、严重幻觉该题封顶 60 分；`max_calls` 是候选
+调用硬预算，裁判调用不计入，耗尽后恢复只能严格提高上限。新运行固定保存
+`RUNNER_VERSION=pprb-runner-v7`，历史空版本不伪造。完整设计与边界见
 `docs/plan/paper-reading-benchmark-2026-08-04.md`。
 
 ## 组件依赖关系

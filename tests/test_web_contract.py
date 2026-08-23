@@ -41,7 +41,7 @@ print(json.dumps(rows, ensure_ascii=False))
         with open("tests/fixtures/web_routes.json", "r", encoding="utf-8") as handle:
             expected = json.load(handle)
 
-        self.assertEqual(len(actual), 111)
+        self.assertEqual(len(actual), 112)
         self.assertEqual(actual, expected)
 
 

@@ -85,20 +85,29 @@ source.analysis.analyze_paper_full(paper_data)
   → 保存 chat messages / quiz sessions / questions / attempts
 ```
 
-### 6. 论文阅读 Benchmark 流程（v1）
+### 6. 论文阅读 Benchmark 流程（v7）
 
 ```
 GET /benchmark（admin）→ 选论文 → 创建草稿（快照全文 + 复制生产 Prompt）
-  → 自动出题（benchmark_author 路由，1 次调用/篇）
+  → POST .../generate 返回 202/task_id，由单 worker 异步出题（benchmark_author 路由，1 次调用/篇）
   → 证据须精确匹配冻结全文；全部失败自动驳回，部分匹配提示人工复核
-  → 逐题/批量人工确认 → 冻结（不可变 + 校验和）
-  → 选候选 → start_run：深度阅读 1 次 + 三轮交流（候选自身历史）
+  → 逐题/批量人工确认或编辑（记录 case revision）→ 冻结（不可变 + 校验和）
+  → 选候选 → POST .../runs 返回 202/task_id/run_id，queued → running
+      → 深度阅读 1 次 + 三轮交流（候选自身历史）
+      → 网络/timeout/429/5xx 最多额外重试 2 次，每次候选尝试计入 max_calls
+      → 精确匹配 suite checksum + runner version + config hash + 槽位时复用响应
   → 主裁判全量 + 复核抽样（≥10% 下限 1 组）+ 人工覆盖优先
   → 双轨分榜报告（未校准/同家族偏置警告）
+  → /rejudge 仅重判已保存输出，保留历史评分版本
 ```
 
 自管理路由（benchmark_author/judge/judge_review）存 benchmark_routes 表，
-供应商凭据仍从 settings providers 解析；候选配置与路由同构。
+供应商凭据仍从 settings providers 解析；候选配置与路由同构。新运行固定保存
+`source.benchmark.RUNNER_VERSION=pprb-runner-v7`；历史空版本不回填。
+
+`max_calls` 是候选模型调用硬预算，包含深度阅读续写和额外重试，不包含裁判调用。
+预算在启动前按未复用槽位校验；耗尽后恢复只能严格提高上限。进程重启会将 queued/running
+运行标记为 interrupted，需人工恢复，已保存响应与调用计数保留。
 
 ### 5. 定时任务流程
 

@@ -7,6 +7,19 @@
     font-size: 0.9em;
 }
 
+.is-hidden {
+    display: none !important;
+}
+
+.route-effort-control {
+    width: auto;
+}
+
+.route-max-tokens-control,
+.candidate-max-tokens {
+    width: 90px;
+}
+
 .benchmark-table th,
 .benchmark-table td {
     border: 1px solid #e1e4e8;
@@ -128,6 +141,7 @@
 
 .status-draft,
 .status-pending,
+.status-queued,
 .status-running {
     background: #e8f0fe;
     color: #174ea6;
@@ -149,6 +163,53 @@
     background: #e8eaed;
     color: #5f6368;
 }
+
+.benchmark-case-editor,
+.benchmark-human-form {
+    display: grid;
+    gap: 8px;
+    margin: 10px 0;
+    padding: 12px;
+    border: 1px solid #d9e2ec;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.benchmark-case-editor textarea,
+.benchmark-human-form textarea,
+.benchmark-case-editor input,
+.benchmark-human-form input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.benchmark-condition-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 100px;
+    gap: 8px;
+    align-items: center;
+}
+
+.benchmark-condition-label {
+    word-break: break-word;
+}
+
+.progress-bar-fill {
+    min-width: 0;
+    transition: width 0.2s ease;
+}
+
+.progress-0 { width: 0%; }
+.progress-10 { width: 10%; }
+.progress-20 { width: 20%; }
+.progress-30 { width: 30%; }
+.progress-40 { width: 40%; }
+.progress-50 { width: 50%; }
+.progress-60 { width: 60%; }
+.progress-70 { width: 70%; }
+.progress-80 { width: 80%; }
+.progress-90 { width: 90%; }
+.progress-100 { width: 100%; }
 
 @media (max-width: 768px) {
     .benchmark-table {
@@ -179,5 +240,14 @@
 
     .inline-label {
         margin-left: 0;
+    }
+
+    .route-max-tokens-control,
+    .candidate-max-tokens {
+        width: 100%;
+    }
+
+    .benchmark-condition-row {
+        grid-template-columns: 1fr;
     }
 }

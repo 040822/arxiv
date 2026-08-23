@@ -332,6 +332,7 @@ class AuthApiTests(unittest.TestCase):
         self.assertEqual(web_auth.route_policy("api_paper_chat_send", "POST"), "member")
         self.assertEqual(web_auth.route_policy("api_update_paper_analysis", "PUT"), "member")
         self.assertEqual(web_auth.route_policy("api_attach_paper_pdf", "POST"), "admin")
+        self.assertEqual(web_auth.route_policy("api_benchmark_rejudge_run", "POST"), "admin")
         self.assertEqual(web_auth.route_policy("future_unclassified_write", "POST"), "admin")
 
     def test_every_current_non_static_route_has_an_explicit_policy(self):

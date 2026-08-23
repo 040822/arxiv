@@ -4,9 +4,13 @@
 隐藏在模块内部。
 """
 
+import json
 import logging
 import math
 import re
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from source.documents import (
@@ -33,11 +37,15 @@ from .evidence import (
 
 logger = logging.getLogger(__name__)
 
+_WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="benchmark-worker")
+_TASKS = {}
+_TASKS_LOCK = threading.Lock()
+
 EXTRACTOR_VERSION = "pymupdf-benchmark-v1"
 # Persisted on every run created through this public module.  Keep this value
 # stable for the lifetime of the benchmark runner; an empty value is reserved
 # for historical runs created before runner-version snapshots existed.
-RUNNER_VERSION = "pprb-runner-v6"
+RUNNER_VERSION = "pprb-runner-v7"
 CHAT_ROUNDS = _author.CHAT_ROUNDS
 MAX_SELECT_PAPERS = 500
 
@@ -127,7 +135,7 @@ def get_suite(suite_id):
 def list_selectable_papers(limit=MAX_SELECT_PAPERS):
     """列出可选的业务论文（id/paper_key/title/published_date）。"""
     from source.storage.papers import browse_papers
-    rows = browse_papers(limit=min(limit, MAX_SELECT_PAPERS))
+    rows, _total = browse_papers(limit=min(limit, MAX_SELECT_PAPERS))
     return [
         {
             "id": row.get("id"),
@@ -137,6 +145,46 @@ def list_selectable_papers(limit=MAX_SELECT_PAPERS):
         }
         for row in rows
     ]
+
+
+def _new_task(kind, run_id=None):
+    task_id = f"benchmark-{kind}-{uuid.uuid4().hex}"
+    with _TASKS_LOCK:
+        _TASKS[task_id] = {
+            "task_id": task_id, "kind": kind, "run_id": run_id,
+            "status": "queued", "error": "",
+        }
+    return task_id
+
+
+def get_task(task_id):
+    """Return a lightweight in-process task status snapshot."""
+    with _TASKS_LOCK:
+        item = _TASKS.get(str(task_id or ""))
+        return dict(item) if item else None
+
+
+def _set_task(task_id, **fields):
+    with _TASKS_LOCK:
+        if task_id in _TASKS:
+            _TASKS[task_id].update(fields)
+
+
+def _submit_task(kind, fn, *args, run_id=None, **kwargs):
+    task_id = _new_task(kind, run_id=run_id)
+
+    def worker():
+        _set_task(task_id, status="running")
+        try:
+            result = fn(*args, **kwargs)
+            _set_task(task_id, status="completed", result=result)
+            return result
+        except Exception as exc:
+            _set_task(task_id, status="error", error=str(exc))
+            raise
+
+    _WORKER.submit(worker)
+    return task_id
 
 
 def create_draft(subset_name, paper_keys):
@@ -194,8 +242,10 @@ def create_draft(subset_name, paper_keys):
     return get_suite(suite_id), failures
 
 
-def generate_cases(suite_id, progress_callback=None):
+def generate_cases(suite_id, progress_callback=None, background=False):
     """对题库全部论文执行出题调用；返回逐论文结果摘要。"""
+    if background:
+        return submit_generate_cases(suite_id, progress_callback=progress_callback)
     suite = _require_not_frozen(suite_id)
     from source.storage.benchmark import list_suite_papers
     papers = list_suite_papers(suite_id)
@@ -209,7 +259,22 @@ def generate_cases(suite_id, progress_callback=None):
         summaries.append(_author.generate_cases_for_paper(suite_id, paper, suite))
     if progress_callback:
         progress_callback({"status": "completed", "message": "出题完成"})
+    from source.storage.benchmark import update_benchmark_suite
+    update_benchmark_suite(suite_id, status="review")
     return summaries
+
+
+def submit_generate_cases(suite_id, progress_callback=None):
+    """Queue authoring and return a task identifier immediately."""
+    _require_not_frozen(suite_id)
+    task_id = _submit_task(
+        "generate", generate_cases, suite_id,
+        progress_callback=progress_callback,
+    )
+    return {"task_id": task_id, "status": "queued"}
+
+
+generate_cases_background = submit_generate_cases
 
 
 def list_cases(suite_id, track=None, status=None):
@@ -217,7 +282,7 @@ def list_cases(suite_id, track=None, status=None):
     return list_suite_cases(suite_id, track=track, status=status)
 
 
-def review_case(case_id, decision, note=""):
+def review_case(case_id, decision, note="", actor_user_id=None, actor_username=""):
     """人工审核单个题目：accept/reject/pending。"""
     from source.storage.benchmark import get_benchmark_case, set_case_review
     case = get_benchmark_case(case_id)
@@ -228,17 +293,23 @@ def review_case(case_id, decision, note=""):
     if decision not in ("accept", "reject", "pending"):
         raise BenchmarkError("decision 必须是 accept/reject/pending")
     status = {"accept": "accepted", "reject": "rejected", "pending": "pending"}[decision]
-    return set_case_review(case_id, status, note=note)
+    return set_case_review(
+        case_id, status, note=note,
+        actor_user_id=actor_user_id, actor_username=actor_username,
+    )
 
 
-def review_all_cases(suite_id, decision, note=""):
+def review_all_cases(suite_id, decision, note="", actor_user_id=None, actor_username=""):
     """批量审核全部题目（accept/reject）。"""
     suite = _require_not_frozen(suite_id)
     from source.storage.benchmark import set_cases_review
     status = {"accept": "accepted", "reject": "rejected"}.get(decision)
     if not status:
         raise BenchmarkError("decision 必须是 accept/reject")
-    set_cases_review(suite_id, status, note=note)
+    set_cases_review(
+        suite_id, status, note=note,
+        actor_user_id=actor_user_id, actor_username=actor_username,
+    )
     return get_suite(suite_id)
 
 
@@ -310,22 +381,71 @@ def freeze_suite(suite_id):
 # ---------------------------------------------------------------------------
 
 def estimate_calls(suite_id, candidate_count, repeats=1):
-    """估算一次运行的模型调用数与裁判调用数（不落库）。"""
+    """估算正常逻辑调用与最坏重试调用（不落库）。
+
+    Candidate work has four logical calls per paper/repeat (one deep-reading
+    response plus three chat rounds).  A deep response may consume an initial
+    call and a continuation, and every logical call may use two retries, so
+    the candidate worst case is 15 attempts per paper/repeat.  Judge/review
+    calls use the same three-attempt retry ceiling but never consume the
+    candidate budget.
+    """
     suite = _require_suite(suite_id)
-    paper_count = suite.get("paper_count", 0)
+    paper_count = int(suite.get("paper_count", 0) or 0)
     repeats = max(1, min(5, int(repeats or 1)))
     candidate_count = max(0, int(candidate_count or 0))
-    per_candidate = paper_count * (1 + CHAT_ROUNDS) * repeats
-    judge_per_candidate = paper_count * 2 * repeats  # 每论文每轨道 1 次
-    review_per_candidate = 2 * max(1, math.ceil(paper_count * repeats * 0.1))  # 每轨道至少 10%（下限 1 组）
+    candidate_calls = candidate_count * paper_count * repeats * (1 + CHAT_ROUNDS)
+    candidate_worst_calls = candidate_count * paper_count * repeats * (
+        3 + 3 + CHAT_ROUNDS * 3
+    )
+    judge_calls = candidate_count * paper_count * 2 * repeats
+    judge_worst_calls = judge_calls * 3
+    normal_review_groups_per_candidate = 2 * max(
+        1, math.ceil(paper_count * repeats * 0.1)
+    )
+    worst_review_groups_per_candidate = 2 * paper_count * repeats
+    review_calls = candidate_count * normal_review_groups_per_candidate
+    review_worst_calls = candidate_count * worst_review_groups_per_candidate * 3
+    normal_total_calls = candidate_calls + judge_calls + review_calls
+    worst_total_calls = candidate_worst_calls + judge_worst_calls + review_worst_calls
     return {
         "paper_count": paper_count,
         "candidates": candidate_count,
         "repeats": repeats,
-        "measured_calls": candidate_count * per_candidate,
-        "judge_calls": candidate_count * judge_per_candidate,
-        "review_calls": candidate_count * review_per_candidate,
-        "worst_total_calls": candidate_count * (per_candidate + judge_per_candidate + review_per_candidate),
+        # Compatibility fields retained for the existing estimate UI.
+        "measured_calls": candidate_calls,
+        "judge_calls": judge_calls,
+        "review_calls": review_calls,
+        "worst_total_calls": worst_total_calls,
+        # Explicit normal/worst breakdown for budget and operator display.
+        "candidate_calls": candidate_calls,
+        "normal_candidate_calls": candidate_calls,
+        "candidate_worst_calls": candidate_worst_calls,
+        "worst_candidate_attempts": candidate_worst_calls,
+        "judge_worst_calls": judge_worst_calls,
+        "normal_judge_calls": judge_calls,
+        "worst_judge_attempts": judge_worst_calls,
+        "review_worst_calls": review_worst_calls,
+        "normal_review_calls": review_calls,
+        "worst_review_attempts": review_worst_calls,
+        "normal_review_groups": candidate_count * normal_review_groups_per_candidate,
+        "worst_review_groups": candidate_count * worst_review_groups_per_candidate,
+        "normal_total_calls": normal_total_calls,
+        "worst_candidate_calls": candidate_worst_calls,
+        "worst_judge_calls": judge_worst_calls,
+        "worst_review_calls": review_worst_calls,
+        "normal": {
+            "candidate_calls": candidate_calls,
+            "judge_calls": judge_calls,
+            "review_calls": review_calls,
+            "total_calls": normal_total_calls,
+        },
+        "worst": {
+            "candidate_calls": candidate_worst_calls,
+            "judge_calls": judge_worst_calls,
+            "review_calls": review_worst_calls,
+            "total_calls": worst_total_calls,
+        },
     }
 
 
@@ -348,11 +468,8 @@ def _load_run(run_id):
     return run
 
 
-def start_run(suite_id, candidates, repeats=1, max_calls=None, progress_callback=None):
-    """启动一次评测运行：执行被测调用、裁判与复核；返回 run_id。
-
-    candidates: [{"label": ..., "config": {...provider_key/model/参数...}}]
-    """
+def _prepare_run(suite_id, candidates, repeats=1, max_calls=None):
+    """Validate and persist a queued run before any worker/API call."""
     suite = _require_suite(suite_id)
     if suite.get("status") != "frozen":
         raise BenchmarkError("题库未冻结，无法运行")
@@ -386,27 +503,37 @@ def start_run(suite_id, candidates, repeats=1, max_calls=None, progress_callback
         seen_hashes[candidate_hash] = position
         candidate_snapshots.append((candidate, cfg, actual_params, candidate_hash))
 
-    required_candidate_calls = (
-        int(suite.get("paper_count") or 0)
-        * len(candidate_snapshots)
-        * repeats
-        * (1 + CHAT_ROUNDS)
-    )
+    from source.storage.benchmark import find_reusable_response, list_suite_papers
+    suite_papers = list_suite_papers(suite_id)
+    required_candidate_calls = 0
+    for _candidate, _cfg, _actual_params, candidate_hash in candidate_snapshots:
+        for paper in suite_papers:
+            for repeat_index in range(repeats):
+                slots = [("deep_reading", None)] + [
+                    ("chat", round_index) for round_index in range(1, CHAT_ROUNDS + 1)
+                ]
+                for track, round_index in slots:
+                    reusable = find_reusable_response(
+                        suite_checksum=suite.get("suite_checksum"),
+                        runner_version=RUNNER_VERSION,
+                        config_hash=candidate_hash,
+                        paper_key=paper.get("paper_key"), track=track,
+                        repeat_index=repeat_index, round_index=round_index,
+                    )
+                    if reusable is None or reusable.get("status") == "retry_failed":
+                        required_candidate_calls += 1
     if max_calls is not None and max_calls < required_candidate_calls:
         raise BenchmarkError(
             f"候选调用预算不足：至少需要 {required_candidate_calls} 次，当前仅 {max_calls} 次"
         )
 
-    from source.storage.benchmark import (
-        add_benchmark_candidate,
-        create_benchmark_run,
-        set_run_status,
-    )
+    from source.storage.benchmark import add_benchmark_candidate, create_benchmark_run
     run_id = create_benchmark_run(
         suite_id,
         repeats=repeats,
         max_calls=max_calls,
         runner_version=RUNNER_VERSION,
+        status="queued",
     )
     for position, (candidate, cfg, actual_params, candidate_hash) in enumerate(
         candidate_snapshots, start=1
@@ -416,19 +543,66 @@ def start_run(suite_id, candidates, repeats=1, max_calls=None, progress_callback
             str(candidate.get("label") or cfg.get("model", "")),
             cfg, candidate_hash, actual_params,
         )
+    return run_id
+
+
+def _run_claimed(run_id, progress_callback=None, propagate_errors=False):
+    from source.storage.benchmark import claim_benchmark_run, set_run_status
+
+    if not claim_benchmark_run(run_id):
+        return run_id
     try:
         _execute_run(run_id, progress_callback=progress_callback)
         set_run_status(run_id, "completed")
     except _runner.BudgetExceeded:
         set_run_status(run_id, "interrupted")
+        if propagate_errors:
+            raise
     except Exception as exc:
         logger.error(f"benchmark run {run_id} failed: {exc}")
         set_run_status(run_id, "error")
+        if propagate_errors:
+            raise
     return run_id
 
 
-def resume_run(run_id, max_calls=None, progress_callback=None):
+def start_run(suite_id, candidates, repeats=1, max_calls=None, progress_callback=None,
+              background=False):
+    """Run synchronously for CLI/backward compatibility and return run id.
+
+    Web/background callers should use :func:`submit_start_run`; keeping this
+    small synchronous facade preserves the established source API for scripts
+    and tests while sharing exactly the same queued/claimed worker path.
+    """
+    if background:
+        return submit_start_run(
+            suite_id, candidates, repeats=repeats, max_calls=max_calls,
+            progress_callback=progress_callback,
+        )
+    run_id = _prepare_run(suite_id, candidates, repeats=repeats, max_calls=max_calls)
+    return _run_claimed(run_id, progress_callback=progress_callback)
+
+
+def submit_start_run(suite_id, candidates, repeats=1, max_calls=None,
+                     progress_callback=None):
+    """Queue a run and return ``{task_id, run_id, status}`` immediately."""
+    run_id = _prepare_run(suite_id, candidates, repeats=repeats, max_calls=max_calls)
+    task_id = _submit_task(
+        "run", _run_claimed, run_id,
+        progress_callback=progress_callback, propagate_errors=True, run_id=run_id,
+    )
+    return {"task_id": task_id, "run_id": run_id, "status": "queued"}
+
+
+start_run_background = submit_start_run
+
+
+def resume_run(run_id, max_calls=None, progress_callback=None, background=False):
     """恢复一次中断/失败的运行：跳过已保存的响应，继续未完成部分。"""
+    if background:
+        return submit_resume_run(
+            run_id, max_calls=max_calls, progress_callback=progress_callback,
+        )
     run = _load_run(run_id)
     if run.get("status") not in ("interrupted", "error", "running"):
         raise BenchmarkError(f"运行状态为 {run.get('status')}，不可恢复")
@@ -447,16 +621,39 @@ def resume_run(run_id, max_calls=None, progress_callback=None):
         update_run_max_calls(run_id, requested_max_calls)
     elif current_max_calls is not None and calls_made >= int(current_max_calls):
         raise BenchmarkError("候选调用预算已耗尽；恢复前必须严格上调 max_calls")
-    set_run_status(run_id, "running")
-    try:
-        _execute_run(run_id, progress_callback=progress_callback)
-        set_run_status(run_id, "completed")
-    except _runner.BudgetExceeded:
-        set_run_status(run_id, "interrupted")
-    except Exception as exc:
-        logger.error(f"benchmark run {run_id} resume failed: {exc}")
-        set_run_status(run_id, "error")
-    return run_id
+    set_run_status(run_id, "queued")
+    return _run_claimed(run_id, progress_callback=progress_callback)
+
+
+def submit_resume_run(run_id, max_calls=None, progress_callback=None):
+    """Queue a recoverable run and return its task/run identifiers."""
+    run = _load_run(run_id)
+    if run.get("status") not in ("interrupted", "error", "running"):
+        raise BenchmarkError(f"运行状态为 {run.get('status')}，不可恢复")
+    current_max_calls = run.get("max_calls")
+    calls_made = int(run.get("candidate_calls_made") or 0)
+    from source.storage.benchmark import set_run_status, update_run_max_calls
+    if max_calls is not None:
+        try:
+            requested_max_calls = int(max_calls)
+        except (TypeError, ValueError) as exc:
+            raise BenchmarkError("max_calls 必须是正整数") from exc
+        if requested_max_calls <= 0:
+            raise BenchmarkError("max_calls 必须是正整数")
+        if current_max_calls is None or requested_max_calls <= int(current_max_calls):
+            raise BenchmarkError("恢复时 max_calls 只能严格上调")
+        update_run_max_calls(run_id, requested_max_calls)
+    elif current_max_calls is not None and calls_made >= int(current_max_calls):
+        raise BenchmarkError("候选调用预算已耗尽；恢复前必须严格上调 max_calls")
+    set_run_status(run_id, "queued")
+    task_id = _submit_task(
+        "resume", _run_claimed, run_id,
+        progress_callback=progress_callback, propagate_errors=True, run_id=run_id,
+    )
+    return {"task_id": task_id, "run_id": run_id, "status": "queued"}
+
+
+resume_run_background = submit_resume_run
 
 
 def _execute_run(run_id, progress_callback=None):
@@ -464,6 +661,9 @@ def _execute_run(run_id, progress_callback=None):
     from source.storage.benchmark import (
         consume_candidate_call,
         get_existing_response,
+        get_response,
+        find_reusable_response,
+        clone_reusable_response,
         list_run_candidates,
         list_suite_cases,
         list_suite_papers,
@@ -493,14 +693,45 @@ def _execute_run(run_id, progress_callback=None):
             candidate_id, paper_id, track, repeat_index, round_index
         )
         if existing is not None:
-            return existing
+            saved = get_response(existing)
+            if saved and saved.get("status") != "retry_failed":
+                return existing
+
+        # Cross-run reuse is keyed only by frozen content, runner version and
+        # the exact candidate request hash.  It deliberately happens before
+        # budget reservation and therefore cannot consume the target budget.
+        candidate = next((item for item in candidates if item["id"] == candidate_id), None)
+        paper = next((item for item in papers if item["id"] == paper_id), None)
+        if candidate and paper:
+            reusable = find_reusable_response(
+                suite_checksum=suite.get("suite_checksum"),
+                runner_version=run.get("runner_version") or RUNNER_VERSION,
+                config_hash=candidate.get("config_hash"),
+                paper_key=paper.get("paper_key"), track=track,
+                repeat_index=repeat_index, round_index=round_index,
+            )
+            if reusable and reusable.get("status") != "retry_failed":
+                return clone_reusable_response(
+                    reusable["id"], run_id, candidate_id, paper_id,
+                )
         response, calls = runner_fn()
-        response_id = save_benchmark_response(
-            run_id, candidate_id, paper_id, track, repeat_index, round_index,
-            response["prompt_snapshot"], response["raw_output"], response["parsed"],
-            response["status"], response["finish_reason"], response["usage_json"],
-            response["latency_ms"], response["continuation_count"],
-        )
+        if existing is not None:
+            # The v7 storage API intentionally keeps response slots unique.
+            # A resumed retry_failed slot is the one exceptional case where
+            # the slot must be replaced after a successful retry; preserve its
+            # original id so judgments/provenance remain stable.
+            from source.storage.benchmark import replace_retry_failed_response
+            replace_retry_failed_response(existing, run_id, response)
+            response_id = existing
+        else:
+            response_id = save_benchmark_response(
+                run_id, candidate_id, paper_id, track, repeat_index, round_index,
+                response["prompt_snapshot"], response["raw_output"], response["parsed"],
+                response["status"], response["finish_reason"], response["usage_json"],
+                response["latency_ms"], response.get("continuation_count", 0),
+                retry_count=response.get("retry_count", 0),
+                error_json=response.get("error_json") or {},
+            )
         from source.storage.benchmark import get_benchmark_run
         calls_made = int((get_benchmark_run(run_id) or {}).get("candidate_calls_made") or 0)
         _progress(track, f"已保存 {track} 响应", calls_made)
@@ -514,7 +745,7 @@ def _execute_run(run_id, progress_callback=None):
             prior = get_existing_response(candidate_id, paper["id"], "chat", repeat_index, previous)
             if prior is not None:
                 prior_response = get_response(prior)
-                if prior_response:
+                if prior_response and prior_response.get("status") != "retry_failed":
                     history.append((prior_response.get("parsed") or {}).get("answer", ""))
         return _runner.run_chat_round(
             suite, paper, cfg, paper_ref, chat_cases, history,
@@ -555,6 +786,14 @@ def _execute_run(run_id, progress_callback=None):
                             candidate["id"], repeat_index,
                         ),
                     )
+    failed_responses = [
+        response for response in _load_run(run_id)["responses"]
+        if response.get("status") == "retry_failed"
+    ]
+    if failed_responses:
+        raise RuntimeError(
+            f"{len(failed_responses)} 个候选逻辑调用临时失败，等待提高预算或恢复后重试"
+        )
     if progress_callback:
         progress_callback({
             "current": total_expected, "total": total_expected, "phase": "judge",
@@ -583,8 +822,97 @@ def get_report(run_id):
     return report
 
 
-def set_human_judgment(run_id, response_id, case_id, score, notes=""):
-    _judge.set_human_judgment(run_id, response_id, case_id, score, notes=notes)
+def rejudge_run(run_id, progress_callback=None, background=False):
+    """Judge saved candidate outputs under a new route/prompt revision only."""
+    if background:
+        return submit_rejudge_run(run_id, progress_callback=progress_callback)
+    run = _load_run(run_id)
+    if run.get("status") not in ("completed", "interrupted", "error"):
+        raise BenchmarkError(f"运行状态为 {run.get('status')}，当前不可重判")
+    if not run.get("responses"):
+        raise BenchmarkError("运行没有可重判的候选输出")
+    if progress_callback:
+        progress_callback({"phase": "judge", "status": "running", "message": "开始重新裁判"})
+    result = _judge.judge_run(run)
+    if progress_callback:
+        progress_callback({"phase": "judge", "status": "completed", "message": "重新裁判完成"})
+    return {"run_id": run_id, **(result or {})}
+
+
+def submit_rejudge_run(run_id, progress_callback=None):
+    """Queue a judge-only task; candidate responses and budget are untouched."""
+    run = _load_run(run_id)
+    if run.get("status") not in ("completed", "interrupted", "error"):
+        raise BenchmarkError(f"运行状态为 {run.get('status')}，当前不可重判")
+    task_id = _submit_task(
+        "rejudge", rejudge_run, run_id,
+        progress_callback=progress_callback, run_id=run_id,
+    )
+    return {"task_id": task_id, "run_id": run_id, "status": "queued"}
+
+
+rejudge_run_background = submit_rejudge_run
+
+
+def edit_case(case_id, fields, actor_user_id=None, actor_username="", note="",
+              decision=None):
+    """Edit and revalidate a pre-freeze case, optionally accepting atomically."""
+    from source.storage.benchmark import get_benchmark_case, get_suite_paper, update_benchmark_case
+
+    case = get_benchmark_case(case_id)
+    if not case:
+        raise BenchmarkError("题目不存在")
+    suite = _require_not_frozen(case["suite_id"])
+    allowed = {"question", "reference_answer", "evidence", "rubric", "requires_reject"}
+    unknown = set(fields or {}) - allowed
+    if unknown:
+        raise BenchmarkError("题目编辑包含不允许的字段")
+    paper = get_suite_paper(case["paper_ref_id"])
+    if not paper:
+        raise BenchmarkError("题目论文快照不存在")
+    candidate = {**case, **dict(fields or {})}
+    evidence = candidate.get("evidence") or []
+    if not isinstance(evidence, list) or not evidence:
+        raise BenchmarkError("证据不能为空")
+    from .author import _validate_rubric
+    from .evidence import check_evidence
+    if not all(check_evidence([fragment], paper.get("full_text", "")).get(fragment) for fragment in evidence):
+        raise BenchmarkError("证据必须精确匹配冻结全文")
+    if not _validate_rubric(candidate.get("rubric")):
+        raise BenchmarkError("rubric 缺少可判定条件或权重不合法")
+    updated = update_benchmark_case(
+        case_id, fields=fields, actor_user_id=actor_user_id,
+        actor_username=actor_username, note=note,
+    )
+    if decision is not None:
+        decision = str(decision).strip()
+        if decision not in {"accept", "reject", "pending"}:
+            raise BenchmarkError("decision 必须是 accept/reject/pending")
+        updated = review_case(
+            case_id, decision, note=note,
+            actor_user_id=actor_user_id, actor_username=actor_username,
+        )
+    return updated
+
+
+def list_case_revisions(case_id):
+    from source.storage.benchmark import list_benchmark_case_revisions
+    return list_benchmark_case_revisions(case_id)
+
+
+def list_scoring_revisions(run_id):
+    from source.storage.benchmark import list_benchmark_scoring_revisions
+    return list_benchmark_scoring_revisions(run_id)
+
+
+def set_human_judgment(run_id, response_id, case_id, condition_scores, notes="",
+                       actor_user_id=None, actor_username="",
+                       hallucination_critical=False):
+    _judge.set_human_judgment(
+        run_id, response_id, case_id, condition_scores, notes=notes,
+        hallucination_critical=hallucination_critical,
+        actor_user_id=actor_user_id, actor_username=actor_username,
+    )
 
 
 __all__ = [
@@ -592,6 +920,7 @@ __all__ = [
     "CHAT_ROUNDS",
     "create_draft",
     "generate_cases",
+    "submit_generate_cases",
     "list_cases",
     "review_case",
     "review_all_cases",
@@ -604,7 +933,18 @@ __all__ = [
     "list_selectable_papers",
     "estimate_calls",
     "start_run",
+    "submit_start_run",
+    "start_run_background",
     "resume_run",
+    "submit_resume_run",
+    "resume_run_background",
+    "rejudge_run",
+    "submit_rejudge_run",
+    "rejudge_run_background",
+    "edit_case",
+    "list_case_revisions",
+    "list_scoring_revisions",
+    "get_task",
     "get_run",
     "get_report",
     "set_human_judgment",

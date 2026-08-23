@@ -803,17 +803,23 @@ POST /api/tasks/clear
 
 ## 论文阅读 Benchmark API
 
-以下端点均为 admin 专属（未登录 401/未授权 403）；耗时操作支持 `?task_id=` 参数并配合
-`GET /api/benchmark/progress/<task_id>` SSE 订阅进度。
+以下端点均为 admin 专属（未登录 401/未授权 403）。出题、运行、恢复和重判均提交到
+Benchmark 单 worker 后台队列并立即返回 HTTP 202，响应包含 Web `task_id`（以及内部
+`job_task_id`）；客户端使用 `GET /api/benchmark/progress/<task_id>` 订阅 SSE 进度。
 
-Benchmark v6 的 `max_calls` 只限制候选模型 API 尝试，包含深度阅读续写，不包含主裁判、复核裁判或
-其他裁判调用。启动前会拒绝不足以完成全部候选工作的预算；运行耗尽后恢复时，`max_calls` 必须严格
-高于原上限。实际请求参数完全相同的候选会在创建运行前拒绝，避免产生残留运行记录。
+Benchmark v7 的 `max_calls` 只限制候选模型 API 尝试，包含深度阅读续写和网络/timeout/429/5xx
+额外重试，不包含主裁判、复核裁判或其他裁判调用。启动前按未复用槽位拒绝不足预算；运行耗尽后
+恢复时，`max_calls` 必须严格高于原上限。实际请求参数完全相同的候选会在创建运行前拒绝，避免
+产生残留运行记录。
+
+候选响应可按 suite checksum、runner version、candidate config hash 和（候选/论文/轨道/重复/轮次）
+槽位精确跨运行复用；`retry_failed` 或未完成响应不得复用，复用不消耗目标运行的候选预算。裁判
+使用独立 scoring revision；`/rejudge` 只重判已保存候选输出，旧判定保留并在成功后切换 active 版本。
 
 报告逐题明细固定携带 `response_id`、`case_id`、`primary_score`、`review_score` 和
 `needs_human_review`。主裁判与复核裁判发生条件级分歧时，`needs_human_review` 为 `true`，该题分数为
 `null` 且不进入轨道/榜单聚合（若该轨道所有题均冲突，轨道分数为 `null`），直到人工覆盖。新运行报告的 `runner_version` 为固定的
-`source.benchmark.RUNNER_VERSION`；历史空版本保持为空，并在 `warnings` 中提示。
+`source.benchmark.RUNNER_VERSION`（当前 `pprb-runner-v7`）；历史空版本保持为空，并在 `warnings` 中提示。
 
 供 Web/CLI 使用的 Python 公共只读/启动接口为：
 
@@ -823,6 +829,10 @@ from source.benchmark import list_suite_papers, list_runs, mark_interrupted_runs
 list_suite_papers(suite_id)
 list_runs(suite_id=None)
 mark_interrupted_runs()
+submit_start_run(suite_id, candidates, repeats=1, max_calls=None)
+submit_resume_run(run_id, max_calls=None)
+submit_rejudge_run(run_id)
+edit_case(case_id, fields, decision=None)
 ```
 
 这些接口封装 benchmark 存储访问；调用方不应直接操作 `source.storage.benchmark`。
@@ -835,8 +845,8 @@ mark_interrupted_runs()
 | `/api/benchmark/papers?q=` | GET | 可选业务论文（标题/paper_key 过滤，上限 50） |
 | `/api/benchmark/drafts` | POST | 创建草稿：`{subset_name, paper_keys: []}`；返回 suite 与逐论文失败原因 |
 | `/api/benchmark/suites/<id>` | GET | 详情：论文快照、题目（含证据/rubric/审核状态）、运行记录 |
-| `/api/benchmark/suites/<id>/generate` | POST | 自动出题（每篇论文 1 次调用）；返回通过/驳回/警告统计 |
-| `/api/benchmark/cases/<id>/review` | POST | 人工审核：`{decision: accept/reject/pending, note}` |
+| `/api/benchmark/suites/<id>/generate` | POST | 排队自动出题（每篇论文 1 次调用）；返回 202/task_id |
+| `/api/benchmark/cases/<id>/review` | POST | 人工审核/编辑：`{edits, decision: accept/reject/pending, note}`；冻结前追加审计 |
 | `/api/benchmark/suites/<id>/review-all` | POST | 批量审核：`{decision: accept/reject, note}` |
 | `/api/benchmark/suites/<id>/freeze` | POST | 冻结题库；不满足条件返回 400 及原因清单 |
 
@@ -845,12 +855,13 @@ mark_interrupted_runs()
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/api/benchmark/suites/<id>/estimate?candidates=&repeats=` | GET | 运行前调用量估算（被测/裁判/复核/最坏合计） |
-| `/api/benchmark/suites/<id>/runs` | POST | 启动运行：`{candidates: [{label, config}], repeats, max_calls}` |
+| `/api/benchmark/suites/<id>/runs` | POST | 排队运行：`{candidates: [{label, config}], repeats, max_calls}`；返回 202/task_id/run_id |
 | `/api/benchmark/runs/<id>` | GET | 运行详情（候选、响应、判定数） |
-| `/api/benchmark/runs/<id>/resume` | POST | 恢复中断/失败运行（已保存响应不重跑） |
+| `/api/benchmark/runs/<id>/resume` | POST | 排队恢复中断/失败运行：可选 `{max_calls}`，只能严格上调 |
 | `/api/benchmark/runs/<id>/report` | GET | 报告：双轨分榜、逐题明细、幻觉/缺题、token/延迟、裁判校准与警告 |
-| `/api/benchmark/judgments` | POST | 人工覆盖：`{run_id, response_id, case_id, score, notes}`，优先级最高 |
-| `/api/benchmark/progress/<task_id>` | GET | SSE 进度（generate/run/resume 使用） |
+| `/api/benchmark/runs/<id>/rejudge` | POST | 排队只重判；不增加候选调用量，返回 202/task_id |
+| `/api/benchmark/judgments` | POST | 人工覆盖：`{run_id, response_id, case_id, condition_scores, notes}`，必须覆盖全部 rubric 条件 |
+| `/api/benchmark/progress/<task_id>` | GET | SSE 进度（generate/run/resume/rejudge 使用） |
 
 ### 自管理任务路由
 

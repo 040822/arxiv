@@ -40,7 +40,9 @@ class BenchmarkWebApiTests(unittest.TestCase):
     def test_suite_list_endpoint_returns_suites(self):
         with patch.object(self.web, "list_suites", return_value=[{"id": 1}]):
             result = self.web.api_benchmark_suites()
-        self.assertEqual(result, {"status": "ok", "suites": [{"id": 1}]})
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["suites"], [{"id": 1}])
+        self.assertIn("message", result)
 
     def test_create_draft_validates_input(self):
         self.web.request = FakeRequest({"subset_name": "pilot", "paper_keys": ["a", "b"]})
@@ -59,21 +61,40 @@ class BenchmarkWebApiTests(unittest.TestCase):
 
     def test_generate_cases_reports_counts_and_errors(self):
         self.web.request = FakeRequest({})
-        with patch.object(self.web, "generate_cases", return_value=[
-            {"paper_key": "p1", "deep_reading": [{"ok": True}], "chat": [{"ok": False}]},
-        ]):
+        with patch.object(self.web, "current_user", return_value={"id": 9, "username": "admin"}), \
+             patch.object(self.web, "submit_generate_cases", return_value={
+                 "task_id": "core-author-1", "status": "queued",
+             }):
             result = self.web.api_benchmark_generate_cases(3)
-        self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["ok_cases"], 1)
-        self.assertEqual(result["rejected_cases"], 1)
+        payload, status = result
+        self.assertEqual(status, 202)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["task_status"], "queued")
+        self.assertTrue(payload["task_id"].startswith("benchmark-generate-3-"))
+        self.assertEqual(payload["job_task_id"], "core-author-1")
+        self.assertIn("message", payload)
 
     def test_generate_cases_failure_is_propagated(self):
         self.web.request = FakeRequest({})
         from source.benchmark import BenchmarkError
-        with patch.object(self.web, "generate_cases", side_effect=BenchmarkError("题库已冻结")):
+        with patch.object(self.web, "current_user", return_value={"id": 9, "username": "admin"}), \
+             patch.object(self.web, "submit_generate_cases", side_effect=BenchmarkError("题库已冻结")):
             result, status = self.web.api_benchmark_generate_cases(3)
         self.assertEqual(status, 400)
         self.assertIn("冻结", result["message"])
+
+    def test_queued_response_uses_ok_envelope_and_task_status(self):
+        with patch.object(self.web, "get_task", return_value=None), \
+             patch.object(self.web, "update_progress") as update_progress:
+            result = self.web._queue_response(
+                {"task_id": "core-1", "status": "queued"},
+                "web-1", 9, "任务已排队",
+            )
+        payload, status = result
+        self.assertEqual(status, 202)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["task_status"], "queued")
+        self.assertEqual(update_progress.call_args.args[1]["status"], "queued")
 
     def test_start_run_requires_candidates(self):
         self.web.request = FakeRequest({"candidates": []})
@@ -88,12 +109,18 @@ class BenchmarkWebApiTests(unittest.TestCase):
             "max_calls": 50,
         }
         self.web.request = FakeRequest(payload)
-        with patch.object(self.web, "start_run", return_value=7) as start_run, \
-             patch.object(self.web, "get_run", return_value={"id": 7}):
+        with patch.object(self.web, "current_user", return_value={"id": 9, "username": "admin"}), \
+             patch.object(self.web, "submit_start_run", return_value={
+                 "task_id": "core-run-1", "run_id": 7, "status": "queued",
+             }) as submit_start_run:
             result = self.web.api_benchmark_start_run(1)
-        self.assertEqual(result["run_id"], 7)
-        start_run.assert_called_once()
-        args = start_run.call_args
+        payload, status = result
+        self.assertEqual(status, 202)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["task_status"], "queued")
+        self.assertEqual(payload["run_id"], 7)
+        submit_start_run.assert_called_once()
+        args = submit_start_run.call_args
         self.assertEqual(args.args[0], 1)
         self.assertEqual(args.kwargs["repeats"], 2)
         self.assertEqual(args.kwargs["max_calls"], 50)
@@ -107,34 +134,174 @@ class BenchmarkWebApiTests(unittest.TestCase):
         }
         self.web.request = FakeRequest(payload)
         from source.benchmark import BenchmarkError
-        with patch.object(self.web, "start_run", side_effect=BenchmarkError("候选调用预算不足：至少需要 4 次，当前仅 1 次")):
+        with patch.object(self.web, "current_user", return_value={"id": 9, "username": "admin"}), \
+             patch.object(self.web, "submit_start_run", side_effect=BenchmarkError("候选调用预算不足：至少需要 4 次，当前仅 1 次")):
             result, status = self.web.api_benchmark_start_run(1)
         self.assertEqual(status, 400)
         self.assertIn("候选调用预算不足", result["message"])
 
     def test_resume_run_passes_higher_max_calls(self):
         self.web.request = FakeRequest({"max_calls": 120})
-        with patch.object(self.web, "resume_run", return_value=7) as resume_run, \
-             patch.object(self.web, "get_run", return_value={"id": 7}):
+        with patch.object(self.web, "current_user", return_value={"id": 9, "username": "admin"}), \
+             patch.object(self.web, "submit_resume_run", return_value={
+                 "task_id": "core-resume-1", "run_id": 7, "status": "queued",
+             }) as submit_resume_run:
             result = self.web.api_benchmark_resume_run(7)
-        self.assertEqual(result["status"], "ok")
-        resume_run.assert_called_once()
-        self.assertEqual(resume_run.call_args.args[0], 7)
-        self.assertEqual(resume_run.call_args.kwargs["max_calls"], 120)
+        payload, status = result
+        self.assertEqual(status, 202)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["task_status"], "queued")
+        submit_resume_run.assert_called_once()
+        self.assertEqual(submit_resume_run.call_args.args[0], 7)
+        self.assertEqual(submit_resume_run.call_args.kwargs["max_calls"], 120)
 
     def test_resume_run_returns_clear_benchmark_error(self):
         self.web.request = FakeRequest({"max_calls": 80})
         from source.benchmark import BenchmarkError
-        with patch.object(self.web, "resume_run", side_effect=BenchmarkError("候选调用预算已耗尽；恢复前必须严格上调 max_calls")):
+        with patch.object(self.web, "current_user", return_value={"id": 9, "username": "admin"}), \
+             patch.object(self.web, "submit_resume_run", side_effect=BenchmarkError("候选调用预算已耗尽；恢复前必须严格上调 max_calls")):
             result, status = self.web.api_benchmark_resume_run(7)
         self.assertEqual(status, 400)
         self.assertIn("严格上调 max_calls", result["message"])
 
-    def test_human_judgment_requires_numeric_score(self):
-        self.web.request = FakeRequest({"run_id": 1, "response_id": 2, "case_id": 3, "score": "abc"})
-        with patch.object(self.web, "set_human_judgment", side_effect=ValueError("人工评分必须是 0-100 的数字")):
+    def test_human_judgment_requires_complete_condition_scores(self):
+        self.web.request = FakeRequest({"run_id": 1, "response_id": 2, "case_id": 3, "notes": "abc"})
+        with patch.object(self.web, "current_user", return_value={"id": 9, "username": "admin"}), \
+             patch.object(self.web, "set_human_judgment"):
             result, status = self.web.api_benchmark_human_judgment()
         self.assertEqual(status, 400)
+
+    def test_human_judgment_uses_authenticated_actor_and_condition_scores(self):
+        payload = {
+            "run_id": 1, "response_id": 2, "case_id": 3,
+            "condition_scores": [
+                {"condition": "c1", "met": 1},
+                {"condition": "c2", "met": 0.5},
+            ], "notes": "reviewed",
+            "actor_user_id": 999, "actor_username": "attacker",
+        }
+        self.web.request = FakeRequest(payload)
+        with patch.object(self.web, "current_user", return_value={"id": 9, "username": "admin"}), \
+             patch.object(self.web, "set_human_judgment") as set_judgment:
+            result = self.web.api_benchmark_human_judgment()
+        self.assertEqual(result["status"], "ok")
+        kwargs = set_judgment.call_args.kwargs
+        self.assertEqual(kwargs["actor_user_id"], 9)
+        self.assertEqual(kwargs["actor_username"], "admin")
+        self.assertEqual(set_judgment.call_args.args[3], payload["condition_scores"])
+
+    def test_case_review_accepts_edits_and_authenticated_actor(self):
+        self.web.request = FakeRequest({
+            "decision": "accept", "note": "fixed",
+            "edits": {"question": "new question", "evidence": ["exact text"]},
+        })
+        with patch.object(self.web, "current_user", return_value={"id": 9, "username": "admin"}), \
+             patch.object(self.web, "edit_case", return_value={"id": 3, "status": "accepted"}) as edit_case:
+            result = self.web.api_benchmark_review_case(3)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(edit_case.call_args.args[0], 3)
+        self.assertEqual(edit_case.call_args.args[1]["question"], "new question")
+        self.assertEqual(edit_case.call_args.kwargs["actor_user_id"], 9)
+        self.assertEqual(edit_case.call_args.kwargs["actor_username"], "admin")
+
+    def test_rejudge_returns_accepted_with_task_identifiers(self):
+        self.web.request = FakeRequest({})
+        with patch.object(self.web, "current_user", return_value={"id": 9, "username": "admin"}), \
+             patch.object(self.web, "submit_rejudge_run", return_value={
+                 "task_id": "core-rejudge-1", "run_id": 7, "status": "queued",
+             }) as submit_rejudge:
+            result = self.web.api_benchmark_rejudge_run(7)
+        payload, status = result
+        self.assertEqual(status, 202)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["task_status"], "queued")
+        self.assertTrue(payload["task_id"].startswith("benchmark-rejudge-7-"))
+        self.assertEqual(payload["job_task_id"], "core-rejudge-1")
+        submit_rejudge.assert_called_once()
+
+    def test_papers_storage_failure_is_safe_json(self):
+        self.web.request = FakeRequest({}, method="GET")
+        with patch.object(self.web, "list_selectable_papers", side_effect=RuntimeError("secret sqlite path")):
+            result, status = self.web.api_benchmark_papers()
+        self.assertEqual(status, 500)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("论文列表", result["message"])
+        self.assertNotIn("secret sqlite path", result["message"])
+
+    def test_progress_terminates_when_core_task_fails(self):
+        self.web.request = FakeRequest({}, method="GET")
+        with patch.object(self.web, "current_user", return_value={"id": 9, "username": "admin"}), \
+             patch.object(self.web, "get_progress", return_value={
+                 "status": "running", "job_task_id": "core-1", "message": "running",
+             }), \
+             patch.object(self.web, "get_task", return_value={
+                 "status": "error", "error": "provider down",
+             }):
+            response = self.web.api_benchmark_progress("web-1")
+            chunks = list(response.response)
+        self.assertEqual(len(chunks), 1)
+        self.assertIn('"status": "error"', chunks[0])
+        self.assertIn("后台任务失败", chunks[0])
+        self.assertNotIn("provider down", chunks[0])
+
+    def _assert_unexpected_exception_is_safe_json(self, result):
+        self.assertIsInstance(result, tuple)
+        payload, status = result
+        self.assertEqual(status, 500)
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("message", payload)
+        self.assertNotIn("secret provider error", payload["message"])
+
+    def test_unexpected_exceptions_from_json_endpoints_are_safe(self):
+        self.web.request = FakeRequest({})
+        cases = [
+            ("api_benchmark_create_draft", ()),
+            ("api_benchmark_suite", (1,)),
+            ("api_benchmark_review_case", (1,)),
+            ("api_benchmark_review_all", (1,)),
+            ("api_benchmark_freeze", (1,)),
+            ("api_benchmark_estimate", (1,)),
+            ("api_benchmark_run", (1,)),
+            ("api_benchmark_report", (1,)),
+            ("api_benchmark_save_route", ("benchmark_author",)),
+        ]
+        patches = [
+            patch.object(self.web, "create_draft", side_effect=RuntimeError("secret provider error")),
+            patch.object(self.web, "get_suite", side_effect=RuntimeError("secret provider error")),
+            patch.object(self.web, "review_case", side_effect=RuntimeError("secret provider error")),
+            patch.object(self.web, "review_all_cases", side_effect=RuntimeError("secret provider error")),
+            patch.object(self.web, "freeze_suite", side_effect=RuntimeError("secret provider error")),
+            patch.object(self.web, "estimate_calls", side_effect=RuntimeError("secret provider error")),
+            patch.object(self.web, "get_run", side_effect=RuntimeError("secret provider error")),
+            patch.object(self.web, "get_report", side_effect=RuntimeError("secret provider error")),
+            patch.object(self.web, "save_route_config", side_effect=RuntimeError("secret provider error")),
+        ]
+        entered = []
+        try:
+            for service_patch in patches:
+                entered.append(service_patch.__enter__())
+            for endpoint_name, args in cases:
+                with self.subTest(endpoint=endpoint_name):
+                    self._assert_unexpected_exception_is_safe_json(
+                        getattr(self.web, endpoint_name)(*args)
+                    )
+        finally:
+            for service_patch in reversed(patches):
+                service_patch.__exit__(None, None, None)
+
+    def test_routes_unexpected_exception_is_safe_json(self):
+        with patch.object(self.web, "get_all_providers", side_effect=RuntimeError("secret provider error")):
+            self._assert_unexpected_exception_is_safe_json(self.web.api_benchmark_routes())
+
+    def test_human_judgment_unexpected_exception_is_safe_json(self):
+        self.web.request = FakeRequest({
+            "run_id": 1,
+            "response_id": 2,
+            "case_id": 3,
+            "condition_scores": [{"condition": "c1", "met": 1}],
+        })
+        with patch.object(self.web, "set_human_judgment", side_effect=RuntimeError("secret provider error")):
+            self._assert_unexpected_exception_is_safe_json(self.web.api_benchmark_human_judgment())
 
     def test_routes_endpoint_masks_secrets(self):
         with patch.object(self.web, "get_all_providers", return_value={
