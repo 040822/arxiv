@@ -1,0 +1,19 @@
+[Unit]
+Description=AI arXiv Paper Database
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wenxin
+Group=wenxin
+WorkingDirectory=/home/wenxin/office/arxiv
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/wenxin/office/arxiv/.venv/bin/python /home/wenxin/office/arxiv/app.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
