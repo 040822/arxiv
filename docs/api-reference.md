@@ -806,6 +806,27 @@ POST /api/tasks/clear
 以下端点均为 admin 专属（未登录 401/未授权 403）；耗时操作支持 `?task_id=` 参数并配合
 `GET /api/benchmark/progress/<task_id>` SSE 订阅进度。
 
+Benchmark v6 的 `max_calls` 只限制候选模型 API 尝试，包含深度阅读续写，不包含主裁判、复核裁判或
+其他裁判调用。启动前会拒绝不足以完成全部候选工作的预算；运行耗尽后恢复时，`max_calls` 必须严格
+高于原上限。实际请求参数完全相同的候选会在创建运行前拒绝，避免产生残留运行记录。
+
+报告逐题明细固定携带 `response_id`、`case_id`、`primary_score`、`review_score` 和
+`needs_human_review`。主裁判与复核裁判发生条件级分歧时，`needs_human_review` 为 `true`，该题分数为
+`null` 且不进入轨道/榜单聚合（若该轨道所有题均冲突，轨道分数为 `null`），直到人工覆盖。新运行报告的 `runner_version` 为固定的
+`source.benchmark.RUNNER_VERSION`；历史空版本保持为空，并在 `warnings` 中提示。
+
+供 Web/CLI 使用的 Python 公共只读/启动接口为：
+
+```python
+from source.benchmark import list_suite_papers, list_runs, mark_interrupted_runs
+
+list_suite_papers(suite_id)
+list_runs(suite_id=None)
+mark_interrupted_runs()
+```
+
+这些接口封装 benchmark 存储访问；调用方不应直接操作 `source.storage.benchmark`。
+
 ### 题库管理
 
 | 端点 | 方法 | 说明 |

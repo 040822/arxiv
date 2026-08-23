@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from flask import Flask
 
+from source.benchmark import mark_interrupted_runs
 from source.pipeline import configure_daily_job, scheduler
 from source.settings import get_session_secret
 from source.settings.guardrail import warn_on_settings_rebuild
@@ -65,7 +66,6 @@ def create_app():
     interrupted = interrupt_running_task_logs()
     if interrupted:
         logger.warning(f"Marked {interrupted} orphaned task logs as interrupted.")
-    from source.storage.benchmark import mark_interrupted_runs
     interrupted_benchmark_runs = mark_interrupted_runs()
     if interrupted_benchmark_runs:
         logger.warning(f"Marked {interrupted_benchmark_runs} orphaned benchmark runs as interrupted.")

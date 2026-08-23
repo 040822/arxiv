@@ -25,6 +25,9 @@
         <nav class="nav-bar">
             <a href="/" class="nav-link">首页</a>
             <a href="/reports" class="nav-link">📊 报告汇总</a>
+            {% if is_admin %}
+            <a href="/benchmark" class="nav-link">📏 Benchmark</a>
+            {% endif %}
             <a href="/reports/{{ report.report_date }}" class="nav-link active">📅 {{ report.report_date }}</a>
         </nav>
 

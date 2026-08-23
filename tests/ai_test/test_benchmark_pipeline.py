@@ -241,6 +241,8 @@ class BenchmarkPipelineTests(unittest.TestCase):
 
         report = bm.get_report(run_id)
         self.assertEqual(report["paper_count"], 1)
+        self.assertTrue(report["runner_version"])
+        self.assertEqual(report["runner_version"], bm.RUNNER_VERSION)
         self.assertTrue(report["is_pilot"])
         for track in ("deep_reading", "chat"):
             entries = report["tracks"][track]
@@ -256,6 +258,28 @@ class BenchmarkPipelineTests(unittest.TestCase):
         candidate = run["candidates"][0]
         self.assertNotIn("api_key", candidate)
         self.assertTrue(candidate["config_hash"])
+        self.assertEqual(candidate["actual_params"]["model"], "m1")
+        self.assertEqual(candidate["actual_params"]["max_tokens"], 2000)
+        self.assertNotIn("messages", candidate["actual_params"])
+
+    def test_public_run_wrappers_and_historical_runner_warning(self):
+        import source.benchmark as bm
+        from source.storage import benchmark as bench
+
+        suite = self._create_frozen_suite()
+        self.assertEqual(bm.list_suite_papers(suite["id"]), bench.list_suite_papers(suite["id"]))
+
+        # Seed a pre-v6-style run through storage: its empty version must be
+        # preserved, while the public report makes the missing provenance
+        # explicit instead of fabricating a current runner version.
+        legacy_run_id = bench.create_benchmark_run(suite["id"])
+        self.assertEqual(bm.get_run(legacy_run_id)["runner_version"], "")
+        self.assertTrue(any(run["id"] == legacy_run_id for run in bm.list_runs(suite["id"])))
+
+        self.assertGreaterEqual(bm.mark_interrupted_runs(), 1)
+        self.assertEqual(bm.get_run(legacy_run_id)["status"], "interrupted")
+        report = bm.get_report(legacy_run_id)
+        self.assertTrue(any("历史运行缺少 runner_version" in warning for warning in report["warnings"]))
 
     def test_missing_q_scores_zero_and_is_reported(self):
         import source.benchmark as bm
@@ -266,6 +290,7 @@ class BenchmarkPipelineTests(unittest.TestCase):
         missing_q6 = "\n\n".join(block for block in blocks if not block.startswith("### Q6"))
         QueueOpenAI.push(
             completion(json.dumps({"qa_analysis": missing_q6}, ensure_ascii=False)),
+            completion("续写仍缺少 Q6"),
             completion("第一轮回答"),
             completion("第二轮回答"),
             completion("第三轮回答"),
@@ -307,18 +332,20 @@ class BenchmarkPipelineTests(unittest.TestCase):
         import source.benchmark as bm
         suite = self._create_frozen_suite()
 
-        # 预算 3 次被测调用：deep + chat r1 + chat r2 后中断
+        # 预算 4 次被测调用：deep + deep continuation + chat r1 + chat r2；
+        # chat r3 在启动前扣费时发现预算耗尽而中断。
         QueueOpenAI.push(
+            completion(deep_reading_response(), finish_reason="length"),
             completion(deep_reading_response()),
             completion("第一轮回答"), completion("第二轮回答"),
         )
-        run_id = bm.start_run(suite["id"], [self._candidate()], max_calls=3)
+        run_id = bm.start_run(suite["id"], [self._candidate()], max_calls=4)
         run = bm.get_run(run_id)
         self.assertEqual(run["status"], "interrupted")
         self.assertEqual(len(run["responses"]), 3)
         self.assertEqual(QueueOpenAI.queue, [])
 
-        # 恢复：只补 chat r3，然后裁判与复核
+        # 恢复：严格上调预算后只补 chat r3，然后裁判与复核
         QueueOpenAI.push(
             completion("第三轮回答"),
             completion(judge_response(["q1", "q2", "q3", "q4", "q5", "q6"])),
@@ -326,7 +353,7 @@ class BenchmarkPipelineTests(unittest.TestCase):
             completion(judge_response(["q1", "q2", "q3", "q4", "q5", "q6"], confidence=0.85)),
             completion(judge_response(["chat_round1", "chat_round2", "chat_round3"], confidence=0.85)),
         )
-        bm.resume_run(run_id)
+        bm.resume_run(run_id, max_calls=5)
         run = bm.get_run(run_id)
         self.assertEqual(run["status"], "completed")
         self.assertEqual(len(run["responses"]), 4)
@@ -448,6 +475,152 @@ class BenchmarkPipelineTests(unittest.TestCase):
             bm.start_run(suite["id"], [])
         with self.assertRaises(ValueError):
             bm.resolve_model_config({"provider_key": "missing", "model": "m1"})
+
+    def test_start_run_rejects_duplicate_effective_request_parameters(self):
+        import source.benchmark as bm
+        from source.storage import benchmark as bench
+        suite = self._create_frozen_suite()
+        first = self._candidate("first")
+        second = self._candidate("second")
+        # Disabled optional fields are absent from the actual request, so these
+        # two configurations must be rejected as the same candidate.
+        first["config"].update({"temperature_enabled": False, "temperature": 0.1})
+        second["config"].update({"temperature_enabled": False, "temperature": 1.9})
+        before = bench.list_benchmark_runs(suite["id"])
+        with self.assertRaisesRegex(bm.BenchmarkError, "重复|相同"):
+            bm.start_run(suite["id"], [first, second], max_calls=8)
+        self.assertEqual(bench.list_benchmark_runs(suite["id"]), before)
+
+    def test_failed_candidate_api_attempt_is_persistently_charged(self):
+        import source.benchmark as bm
+        suite = self._create_frozen_suite()
+        # The preflight budget is sufficient for the logical run; the queued
+        # model is intentionally empty, so the first API attempt raises after
+        # its atomic reservation.
+        run_id = bm.start_run(suite["id"], [self._candidate()], max_calls=4)
+        run = bm.get_run(run_id)
+        self.assertEqual(run["status"], "error")
+        self.assertEqual(run["candidate_calls_made"], 1)
+
+    def test_budget_is_rejected_before_start_when_full_candidate_work_does_not_fit(self):
+        import source.benchmark as bm
+        suite = self._create_frozen_suite()
+        with self.assertRaisesRegex(bm.BenchmarkError, "预算"):
+            bm.start_run(suite["id"], [self._candidate()], max_calls=3)
+
+    def test_resume_budget_must_strictly_increase_and_counts_continuations(self):
+        import source.benchmark as bm
+        suite = self._create_frozen_suite()
+        QueueOpenAI.push(
+            completion(deep_reading_response(), finish_reason="length"),
+            completion(deep_reading_response()),
+            completion("第一轮回答"), completion("第二轮回答"),
+        )
+        # Deep reading continuation consumes the second candidate call.  The
+        # fourth call leaves the run exhausted before chat round three.
+        run_id = bm.start_run(suite["id"], [self._candidate()], max_calls=4)
+        run = bm.get_run(run_id)
+        self.assertEqual(run["candidate_calls_made"], 4)
+        with self.assertRaisesRegex(bm.BenchmarkError, "上调|增加"):
+            bm.resume_run(run_id, max_calls=4)
+
+    def test_weighted_rubric_and_unmet_conditions_are_exact(self):
+        from source.benchmark.judge import _score_for_case
+        result = _score_for_case(
+            {"rubric": {"conditions": [
+                {"text": "核心", "weight": 3},
+                {"text": "次要", "weight": 1},
+            ]}},
+            {"conditions": [
+                {"condition": "核心", "met": "met"},
+                # The judge omitted the second rubric item: it is unmet, not
+                # silently removed from the denominator.
+            ]},
+        )
+        self.assertEqual(result["score"], 75.0)
+        self.assertEqual(result["condition_scores"][-1]["met"], 0.0)
+
+    def test_primary_review_condition_conflict_waits_for_human_and_report_marks_it(self):
+        import source.benchmark as bm
+        suite = self._create_frozen_suite()
+        QueueOpenAI.push(
+            completion(deep_reading_response()),
+            completion("第一轮回答"), completion("第二轮回答"), completion("第三轮回答"),
+            completion(judge_response(["q1", "q2", "q3", "q4", "q5", "q6"], met=1)),
+            completion(judge_response(["chat_round1", "chat_round2", "chat_round3"], met=1)),
+            completion(judge_response(["q1", "q2", "q3", "q4", "q5", "q6"], met=0, confidence=0.85)),
+            completion(judge_response(["chat_round1", "chat_round2", "chat_round3"], met=1, confidence=0.85)),
+        )
+        run_id = bm.start_run(suite["id"], [self._candidate()])
+        report = bm.get_report(run_id)
+        deep = report["tracks"]["deep_reading"][0]
+        q1 = next(item for item in deep["per_case"] if item["kind"] == "q1")
+        self.assertIsNotNone(q1["response_id"])
+        self.assertIsNotNone(q1["case_id"])
+        self.assertEqual(q1["primary_score"], 100.0)
+        self.assertEqual(q1["review_score"], 0.0)
+        self.assertTrue(q1["needs_human_review"])
+        self.assertIsNone(q1["score"])
+        self.assertIsNone(deep["score"])
+
+        bm.set_human_judgment(run_id, q1["response_id"], q1["case_id"], 80, notes="人工裁决")
+        resolved = bm.get_report(run_id)["tracks"]["deep_reading"][0]
+        resolved_q1 = next(item for item in resolved["per_case"] if item["kind"] == "q1")
+        self.assertEqual(resolved_q1["score"], 80.0)
+        self.assertFalse(resolved_q1["needs_human_review"])
+        self.assertEqual(resolved["score"], 80.0)
+
+    def test_actual_request_snapshot_preserves_non_message_parameters_and_protocol_mapping(self):
+        from source.benchmark.config import build_actual_request_params
+
+        with patch(
+            "source.benchmark.config.build_chat_completion_kwargs",
+            return_value={
+                "model": "mock-model",
+                "messages": [{"role": "user", "content": "secret prompt"}],
+                "extra_body": {"vendor_flag": True},
+                "reasoning_effort": "high",
+                "max_completion_tokens": 321,
+                "api_key": "sk-secret",
+            },
+        ):
+            actual = build_actual_request_params({"model": "mock-model"})
+        self.assertEqual(actual, {
+            "model": "mock-model",
+            "extra_body": {"vendor_flag": True},
+            "reasoning_effort": "high",
+            "max_completion_tokens": 321,
+        })
+
+        openai = build_actual_request_params({
+            "base_url": "https://api.openai.com/v1", "model": "o3-mini",
+            "is_thinking": True, "thinking_effort": "high",
+            "max_tokens_enabled": True, "max_tokens": 123,
+        })
+        self.assertEqual(openai["reasoning_effort"], "high")
+        self.assertEqual(openai["max_completion_tokens"], 123)
+        qwen = build_actual_request_params({
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen-max", "is_thinking": True,
+            "thinking_effort": "high", "max_tokens_enabled": True, "max_tokens": 123,
+        })
+        self.assertEqual(qwen["extra_body"]["enable_thinking"], True)
+        self.assertIn("thinking_budget", qwen["extra_body"])
+        deepseek_v4 = build_actual_request_params({
+            "base_url": "https://api.deepseek.com", "model": "deepseek-v4",
+            "is_thinking": True, "thinking_effort": "high",
+            "max_tokens_enabled": True, "max_tokens": 123,
+        })
+        self.assertEqual(deepseek_v4["reasoning_effort"], "high")
+        self.assertEqual(deepseek_v4["extra_body"]["thinking"], {"type": "enabled"})
+        deepseek_legacy = build_actual_request_params({
+            "base_url": "https://api.deepseek.com", "model": "deepseek-reasoner",
+            "is_thinking": True, "thinking_effort": "high",
+            "max_tokens_enabled": True, "max_tokens": 123,
+        })
+        self.assertEqual(deepseek_legacy["max_tokens"], 123)
+        self.assertNotIn("messages", json.dumps(actual))
+        self.assertNotIn("sk-secret", json.dumps(actual))
 
 
 if __name__ == "__main__":

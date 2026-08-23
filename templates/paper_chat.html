@@ -27,6 +27,9 @@
         <nav class="nav-bar">
             <a href="/paper/{{ paper.paper_key }}" class="nav-link">← 返回论文详情</a>
             <a href="/" class="nav-link">📅 每日论文</a>
+            {% if is_admin %}
+            <a href="/benchmark" class="nav-link">📏 Benchmark</a>
+            {% endif %}
             <a href="/reading-list" class="nav-link">📌 阅读清单</a>
         </nav>
 

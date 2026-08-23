@@ -5,6 +5,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from source.storage import connection as db_connection
 from source.storage import init_db
@@ -147,6 +148,53 @@ class BenchmarkStorageTests(unittest.TestCase):
         judgments = bench.get_run_judgments(run_id)
         self.assertEqual(len(judgments), 1)
         self.assertEqual(judgments[0]["score"], 50.0)
+
+    def test_candidate_call_reservation_is_atomic_and_never_exceeds_budget(self):
+        suite_id = bench.create_benchmark_suite("pilot", "pprb-pilot-2026.08.13-r1",
+                                                {"system": "s"}, {"system": "s2"})
+        run_id = bench.create_benchmark_run(suite_id, max_calls=7)
+
+        def reserve(_):
+            return bench.consume_candidate_call(run_id)
+
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            results = list(executor.map(reserve, range(32)))
+        self.assertEqual(sum(results), 7)
+        self.assertEqual(bench.get_benchmark_run(run_id)["candidate_calls_made"], 7)
+        self.assertFalse(bench.consume_candidate_call(run_id))
+        self.assertEqual(bench.get_benchmark_run(run_id)["candidate_calls_made"], 7)
+
+    def test_actual_params_are_structured_and_credentials_are_not_persisted(self):
+        suite_id = bench.create_benchmark_suite("pilot", "pprb-pilot-2026.08.13-r1",
+                                                {"system": "s"}, {"system": "s2"})
+        run_id = bench.create_benchmark_run(suite_id)
+        bench.add_benchmark_candidate(
+            run_id, 1, "cand",
+            {"provider_key": "p1", "provider_name": "P", "model": "m1", "api_key": "sk-secret"},
+            "hash123",
+            {"model": "m1", "extra_body": {"thinking_budget": 8192},
+             "reasoning_effort": "high", "max_completion_tokens": 321,
+             "messages": [{"role": "user", "content": "secret"}], "api_key": "sk-secret"},
+        )
+        candidate = bench.list_run_candidates(run_id)[0]
+        self.assertIsInstance(candidate["actual_params"], dict)
+        self.assertEqual(candidate["actual_params"]["max_completion_tokens"], 321)
+        self.assertNotIn("api_key", candidate["actual_params"])
+        self.assertNotIn("messages", candidate["actual_params"])
+
+    def test_response_derived_counter_includes_continuation_attempts(self):
+        suite_id = bench.create_benchmark_suite("pilot", "pprb-pilot-2026.08.13-r1",
+                                                {"system": "s"}, {"system": "s2"})
+        paper_ref = bench.add_benchmark_suite_paper(suite_id, {"paper_key": "p", "full_text": "text"})
+        run_id = bench.create_benchmark_run(suite_id)
+        candidate_id = bench.add_benchmark_candidate(
+            run_id, 1, "cand", {"provider_key": "p1", "model": "m1"}, "h", {},
+        )
+        bench.save_benchmark_response(
+            run_id, candidate_id, paper_ref, "deep_reading", 0, None,
+            [], "raw", {"q1": "a"}, "ok", "stop", {}, 0, continuation_count=2,
+        )
+        self.assertEqual(bench.count_run_calls(run_id), 3)
 
     def test_run_status_transitions_and_interrupt_marking(self):
         suite_id = bench.create_benchmark_suite("pilot", "pprb-pilot-2026.08.13-r1",

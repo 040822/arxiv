@@ -151,6 +151,12 @@
                     <span id="estimate-result" class="section-desc"></span>
                 </div>
             </div>
+            <div class="form-row">
+                <div class="form-group form-grow">
+                    <label>恢复运行的新硬预算（必须高于原预算；无预算运行可留空）</label>
+                    <input type="number" id="run-resume-max-calls" min="1" placeholder="如 200">
+                </div>
+            </div>
             <div class="settings-actions">
                 <button class="btn btn-primary" onclick="startRun()">▶️ 开始评测运行</button>
             </div>
@@ -181,12 +187,77 @@
     const TRACK_LABELS = { deep_reading: '深度阅读', chat: '论文交流' };
     const ROUTE_KEYS = ['benchmark_author', 'benchmark_judge', 'benchmark_judge_review'];
     const ROUTE_SHORT = { benchmark_author: 'author', benchmark_judge: 'judge', benchmark_judge_review: 'judge_review' };
+    const STATUS_CLASSES = {
+        accepted: 'accepted',
+        rejected: 'rejected',
+        pending: 'pending',
+        draft: 'draft',
+        frozen: 'frozen',
+        running: 'running',
+        completed: 'completed',
+        interrupted: 'interrupted',
+        error: 'error',
+    };
+
+    function asText(value, fallback = '') {
+        return value === null || value === undefined ? fallback : String(value);
+    }
+
+    function createElement(tag, className, value) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (value !== undefined) node.textContent = asText(value);
+        return node;
+    }
+
+    function appendCell(row, value, className) {
+        const cell = createElement('td', className, value);
+        row.appendChild(cell);
+        return cell;
+    }
+
+    function appendButton(parent, label, handler, disabled = false) {
+        const button = createElement('button', 'btn', label);
+        button.type = 'button';
+        button.disabled = disabled;
+        if (!disabled) button.addEventListener('click', handler);
+        parent.appendChild(button);
+        return button;
+    }
+
+    function clearNode(node) {
+        node.replaceChildren();
+    }
+
+    function statusClass(status) {
+        return STATUS_CLASSES[asText(status)] || 'unknown';
+    }
+
+    function idValue(value) {
+        const number = Number(value);
+        return Number.isInteger(number) && number > 0 ? number : null;
+    }
+
+    function scoreText(value) {
+        if (value === null || value === undefined || value === '') return '—';
+        const number = Number(value);
+        return Number.isFinite(number) ? number.toFixed(1) : '—';
+    }
+
+    function appendTableHeader(table, labels) {
+        const thead = createElement('thead');
+        const row = createElement('tr');
+        for (const label of labels) row.appendChild(createElement('th', '', label));
+        thead.appendChild(row);
+        table.appendChild(thead);
+        return table;
+    }
 
     async function api(path, options = {}) {
         const resp = await fetch(path, options);
         const data = await resp.json();
         if (!resp.ok || data.status === 'error') {
-            throw new Error(data.message || `HTTP ${resp.status}`);
+            throw new Error(data.message || ('HTTP ' + resp.status));
         }
         return data;
     }
@@ -230,7 +301,7 @@
         const providerKey = routeProviderKey(short);
         const models = (routeData.providers[providerKey] || {}).available_models || [];
         const select = document.getElementById('route-' + short + '-model');
-        select.innerHTML = '';
+        clearNode(select);
         for (const model of models) {
             const option = document.createElement('option');
             option.value = model;
@@ -281,9 +352,9 @@
             paperOptions = [];
         }
         const list = document.getElementById('paper-list');
-        list.innerHTML = '';
+        clearNode(list);
         if (!paperOptions.length) {
-            list.innerHTML = '<p class="section-desc">没有可选论文（请先抓取论文）。</p>';
+            list.appendChild(createElement('p', 'section-desc', '没有可选论文（请先抓取论文）。'));
             return;
         }
         for (const paper of paperOptions) {
@@ -328,27 +399,36 @@
     async function loadSuites() {
         const data = await api('/api/benchmark/suites');
         const tbody = document.getElementById('suite-rows');
-        tbody.innerHTML = '';
+        clearNode(tbody);
         for (const suite of data.suites) {
             const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${suite.version_label}</td>
-                <td><span class="status-pill status-${suite.status}">${suite.status}</span></td>
-                <td>${suite.paper_count}</td>
-                <td>${suite.accepted_case_counts.deep_reading || 0} / ${suite.accepted_case_counts.chat || 0}</td>
-                <td class="mono">${(suite.suite_checksum || '').slice(0, 12)}</td>
-                <td><button class="btn" onclick="openSuite(${suite.id})">查看/运行</button></td>`;
+            appendCell(row, suite.version_label);
+            const statusCell = appendCell(row, '');
+            const status = createElement('span', 'status-pill status-' + statusClass(suite.status), suite.status);
+            statusCell.appendChild(status);
+            appendCell(row, suite.paper_count);
+            const counts = suite.accepted_case_counts || {};
+            appendCell(row, asText(counts.deep_reading, '0') + ' / ' + asText(counts.chat, '0'));
+            appendCell(row, asText(suite.suite_checksum, '').slice(0, 12), 'mono');
+            const actions = appendCell(row, '');
+            const suiteId = idValue(suite.id);
+            appendButton(actions, '查看/运行', () => openSuite(suiteId), suiteId === null);
             tbody.appendChild(row);
         }
     }
 
     // ---------- 题库详情 ----------
     async function openSuite(suiteId) {
+        suiteId = idValue(suiteId);
+        if (suiteId === null) {
+            setStatus(document.getElementById('freeze-status'), '❌ 题库 ID 无效', 'error');
+            return;
+        }
         const detail = document.getElementById('suite-detail');
         detail.style.display = 'block';
         detail.dataset.suiteId = suiteId;
         currentSuite = null;
-        document.getElementById('report-area').innerHTML = '';
+        clearNode(document.getElementById('report-area'));
         try {
             const data = await api('/api/benchmark/suites/' + suiteId);
             currentSuite = data.suite;
@@ -364,40 +444,52 @@
 
     function renderSuitePapers(papers) {
         const tbody = document.getElementById('suite-paper-rows');
-        tbody.innerHTML = '';
+        clearNode(tbody);
         for (const paper of papers) {
             const row = document.createElement('tr');
-            row.innerHTML = `
-                <td class="mono">${paper.paper_key}</td>
-                <td>${paper.title}</td>
-                <td>${paper.text_chars}</td>
-                <td class="mono">${(paper.text_sha256 || '').slice(0, 12)}</td>`;
+            appendCell(row, paper.paper_key, 'mono');
+            appendCell(row, paper.title);
+            appendCell(row, paper.text_chars);
+            appendCell(row, asText(paper.text_sha256, '').slice(0, 12), 'mono');
             tbody.appendChild(row);
         }
     }
 
     function renderCases(cases) {
         const tbody = document.getElementById('case-rows');
-        tbody.innerHTML = '';
+        clearNode(tbody);
         for (const caseItem of cases) {
             const row = document.createElement('tr');
-            const evidence = (caseItem.evidence || []).join(' | ');
-            row.innerHTML = `
-                <td>${TRACK_LABELS[caseItem.track] || caseItem.track}</td>
-                <td>${caseItem.kind}</td>
-                <td>${caseItem.question}</td>
-                <td><span class="status-pill status-${caseItem.status}">${caseItem.status}</span></td>
-                <td class="benchmark-cell-small">${evidence || caseItem.review_note || ''}</td>
-                <td>
-                    ${caseItem.status !== 'accepted' ? `<button class="btn" onclick="reviewCase(${caseItem.id}, 'accept')">接受</button>` : ''}
-                    ${caseItem.status !== 'rejected' ? `<button class="btn" onclick="reviewCase(${caseItem.id}, 'reject')">驳回</button>` : ''}
-                    ${caseItem.status !== 'pending' ? `<button class="btn" onclick="reviewCase(${caseItem.id}, 'pending')">重审</button>` : ''}
-                </td>`;
+            const track = asText(caseItem.track);
+            appendCell(row, TRACK_LABELS[track] || track);
+            appendCell(row, caseItem.kind);
+            appendCell(row, caseItem.question);
+            const statusCell = appendCell(row, '');
+            statusCell.appendChild(createElement(
+                'span', 'status-pill status-' + statusClass(caseItem.status), caseItem.status,
+            ));
+            const evidence = Array.isArray(caseItem.evidence)
+                ? caseItem.evidence.map(asText).join(' | ')
+                : '';
+            appendCell(row, evidence || caseItem.review_note || '', 'benchmark-cell-small');
+            const actions = appendCell(row, '');
+            const caseId = idValue(caseItem.id);
+            if (caseItem.status !== 'accepted') {
+                appendButton(actions, '接受', () => reviewCase(caseId, 'accept'), caseId === null);
+            }
+            if (caseItem.status !== 'rejected') {
+                appendButton(actions, '驳回', () => reviewCase(caseId, 'reject'), caseId === null);
+            }
+            if (caseItem.status !== 'pending') {
+                appendButton(actions, '重审', () => reviewCase(caseId, 'pending'), caseId === null);
+            }
             tbody.appendChild(row);
         }
     }
 
     async function reviewCase(caseId, decision) {
+        caseId = idValue(caseId);
+        if (caseId === null) { alert('题目 ID 无效'); return; }
         try {
             await api('/api/benchmark/cases/' + caseId + '/review', {
                 method: 'POST',
@@ -411,7 +503,8 @@
     }
 
     async function reviewAll(decision) {
-        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
+        const suiteId = idValue(document.getElementById('suite-detail').dataset.suiteId);
+        if (suiteId === null) { alert('题库 ID 无效'); return; }
         try {
             await api('/api/benchmark/suites/' + suiteId + '/review-all', {
                 method: 'POST',
@@ -426,7 +519,8 @@
 
     // ---------- 出题与冻结 ----------
     function generateCases() {
-        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
+        const suiteId = idValue(document.getElementById('suite-detail').dataset.suiteId);
+        if (suiteId === null) { setStatus(document.getElementById('generate-status'), '❌ 题库 ID 无效', 'error'); return; }
         const statusEl = document.getElementById('generate-status');
         setStatus(statusEl, '正在出题...', 'info');
         watchProgress('benchmark-generate-' + suiteId, statusEl);
@@ -439,7 +533,8 @@
     }
 
     async function freezeSuite() {
-        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
+        const suiteId = idValue(document.getElementById('suite-detail').dataset.suiteId);
+        if (suiteId === null) { setStatus(document.getElementById('freeze-status'), '❌ 题库 ID 无效', 'error'); return; }
         const statusEl = document.getElementById('freeze-status');
         setStatus(statusEl, '冻结中...', 'info');
         try {
@@ -457,7 +552,7 @@
         const providers = routeData ? Object.keys(routeData.providers) : [];
         for (const select of document.querySelectorAll('.candidate-provider')) {
             const current = select.value;
-            select.innerHTML = '';
+            clearNode(select);
             for (const providerKey of providers) {
                 const option = document.createElement('option');
                 option.value = providerKey;
@@ -474,24 +569,69 @@
         const div = document.createElement('div');
         div.className = 'benchmark-candidate-row';
         div.id = 'candidate-' + candidateCount;
-        div.innerHTML = `
-            <label>标签 <input type="text" class="candidate-label" placeholder="如 deepseek-chat / 思考高" value="候选${candidateCount}"></label>
-            <label>供应商 <select class="candidate-provider" onchange="refreshCandidateModels(this)"></select></label>
-            <label>模型 <select class="candidate-model"></select></label>
-            <label><input type="checkbox" class="candidate-thinking"> 思考</label>
-            <label>强度 <select class="candidate-effort"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
-            <label>输出上限 <input type="number" class="candidate-max-tokens" min="1" max="200000" value="4000" style="width:90px"></label>
-            <button class="btn" onclick="this.parentElement.remove()">删除</button>`;
+        const labelInput = createElement('input');
+        labelInput.type = 'text';
+        labelInput.className = 'candidate-label';
+        labelInput.placeholder = '如 deepseek-chat / 思考高';
+        labelInput.value = '候选' + candidateCount;
+        const label = createElement('label');
+        label.appendChild(document.createTextNode('标签 '));
+        label.appendChild(labelInput);
+        div.appendChild(label);
+
+        const provider = createElement('select', 'candidate-provider');
+        provider.addEventListener('change', () => refreshCandidateModels(provider));
+        const providerLabel = createElement('label');
+        providerLabel.appendChild(document.createTextNode('供应商 '));
+        providerLabel.appendChild(provider);
+        div.appendChild(providerLabel);
+
+        const model = createElement('select', 'candidate-model');
+        const modelLabel = createElement('label');
+        modelLabel.appendChild(document.createTextNode('模型 '));
+        modelLabel.appendChild(model);
+        div.appendChild(modelLabel);
+
+        const thinking = createElement('input', 'candidate-thinking');
+        thinking.type = 'checkbox';
+        const thinkingLabel = createElement('label');
+        thinkingLabel.appendChild(thinking);
+        thinkingLabel.appendChild(document.createTextNode(' 思考'));
+        div.appendChild(thinkingLabel);
+
+        const effort = createElement('select', 'candidate-effort');
+        for (const value of ['low', 'medium', 'high']) {
+            const option = createElement('option', '', value);
+            option.value = value;
+            effort.appendChild(option);
+        }
+        const effortLabel = createElement('label');
+        effortLabel.appendChild(document.createTextNode('强度 '));
+        effortLabel.appendChild(effort);
+        div.appendChild(effortLabel);
+
+        const maxTokens = createElement('input', 'candidate-max-tokens');
+        maxTokens.type = 'number';
+        maxTokens.min = '1';
+        maxTokens.max = '200000';
+        maxTokens.value = '4000';
+        maxTokens.style.width = '90px';
+        const maxTokensLabel = createElement('label');
+        maxTokensLabel.appendChild(document.createTextNode('输出上限 '));
+        maxTokensLabel.appendChild(maxTokens);
+        div.appendChild(maxTokensLabel);
+
+        appendButton(div, '删除', () => div.remove());
         container.appendChild(div);
         renderCandidateProviderOptions();
-        refreshCandidateModels(div.querySelector('.candidate-provider'));
+        refreshCandidateModels(provider);
     }
 
     function refreshCandidateModels(select) {
         const providerKey = select.value;
         const models = (routeData.providers[providerKey] || {}).available_models || [];
         const modelSelect = select.parentElement.querySelector('.candidate-model');
-        modelSelect.innerHTML = '';
+        clearNode(modelSelect);
         for (const model of models) {
             const option = document.createElement('option');
             option.value = model;
@@ -501,15 +641,17 @@
     }
 
     async function refreshEstimate() {
-        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
+        const suiteId = idValue(document.getElementById('suite-detail').dataset.suiteId);
         const candidates = document.querySelectorAll('#candidate-rows .benchmark-candidate-row').length;
         const repeats = document.getElementById('run-repeats').value || 1;
         const span = document.getElementById('estimate-result');
+        if (suiteId === null) { span.textContent = '题库 ID 无效'; return; }
         if (!candidates) { span.textContent = '请先添加候选模型'; return; }
         try {
-            const data = await api(`/api/benchmark/suites/${suiteId}/estimate?candidates=${candidates}&repeats=${repeats}`);
+            const data = await api('/api/benchmark/suites/' + suiteId + '/estimate?candidates=' + candidates + '&repeats=' + repeats);
             const e = data.estimate;
-            span.textContent = `被测调用 ${e.measured_calls}，裁判 ${e.judge_calls}，复核 ${e.review_calls}，最坏合计 ${e.worst_total_calls} 次`;
+            span.textContent = '被测调用 ' + asText(e.measured_calls) + '，裁判 ' + asText(e.judge_calls)
+                + '，复核 ' + asText(e.review_calls) + '，最坏合计 ' + asText(e.worst_total_calls) + ' 次';
         } catch (err) {
             span.textContent = err.message;
         }
@@ -539,8 +681,9 @@
     }
 
     function startRun() {
-        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
+        const suiteId = idValue(document.getElementById('suite-detail').dataset.suiteId);
         const statusEl = document.getElementById('run-status');
+        if (suiteId === null) { setStatus(statusEl, '❌ 题库 ID 无效', 'error'); return; }
         const candidates = collectCandidates();
         if (!candidates.length) { setStatus(statusEl, '请先添加候选模型', 'error'); return; }
         const body = {
@@ -550,7 +693,7 @@
         };
         setStatus(statusEl, '评测运行开始（耗时任务，请保持页面打开，进度见下方）', 'info');
         watchProgress('benchmark-run-' + suiteId, statusEl);
-        api(`/api/benchmark/suites/${suiteId}/runs?task_id=benchmark-run-${suiteId}`, {
+        api('/api/benchmark/suites/' + suiteId + '/runs?task_id=benchmark-run-' + suiteId, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body),
@@ -582,33 +725,59 @@
 
     // ---------- 运行与报告 ----------
     async function loadRuns() {
-        const suiteId = document.getElementById('suite-detail').dataset.suiteId;
-        if (!suiteId) return;
+        const suiteId = idValue(document.getElementById('suite-detail').dataset.suiteId);
+        if (suiteId === null) return;
         const data = await api('/api/benchmark/suites/' + suiteId);
         const runs = data.suite.runs || [];
         const tbody = document.getElementById('run-rows');
-        tbody.innerHTML = '';
-        if (!runs.length) { tbody.innerHTML = '<tr><td colspan="4">暂无运行记录</td></tr>'; return; }
+        clearNode(tbody);
+        if (!runs.length) {
+            const row = document.createElement('tr');
+            const cell = appendCell(row, '暂无运行记录');
+            cell.colSpan = 5;
+            tbody.appendChild(row);
+            return;
+        }
         for (const run of runs) {
             const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>#${run.id}（${run.created_at}）</td>
-                <td><span class="status-pill status-${run.status}">${run.status}</span></td>
-                <td>${run.candidate_count || 0} 个候选 × ${run.repeats} 次</td>
-                <td>
-                    <button class="btn" onclick="loadReport(${run.id})">查看报告</button>
-                    ${(run.status === 'interrupted' || run.status === 'error') ? `<button class="btn" onclick="resumeRun(${run.id})">恢复运行</button>` : ''}
-                </td>`;
+            appendCell(row, '#' + asText(run.id) + '（' + asText(run.created_at) + '）');
+            const statusCell = appendCell(row, '');
+            statusCell.appendChild(createElement(
+                'span', 'status-pill status-' + statusClass(run.status), run.status,
+            ));
+            appendCell(row, asText(run.candidate_count, '0') + ' 个候选 × ' + asText(run.repeats, '1') + ' 次');
+            const responses = Array.isArray(run.responses) ? run.responses.length : asText(run.response_count, '0');
+            appendCell(row, responses);
+            const actions = appendCell(row, '');
+            const runId = idValue(run.id);
+            appendButton(actions, '查看报告', () => loadReport(runId), runId === null);
+            if (run.status === 'interrupted' || run.status === 'error') {
+                appendButton(actions, '恢复运行', () => resumeRun(runId), runId === null);
+            }
             tbody.appendChild(row);
         }
     }
 
     async function resumeRun(runId) {
         const statusEl = document.getElementById('run-status');
+        runId = idValue(runId);
+        if (runId === null) { setStatus(statusEl, '❌ 运行 ID 无效', 'error'); return; }
+        const maxCallsInput = document.getElementById('run-resume-max-calls');
+        const maxCallsText = maxCallsInput.value.trim();
+        const maxCalls = maxCallsText ? Number(maxCallsText) : null;
+        if (maxCallsText && (!Number.isInteger(maxCalls) || maxCalls <= 0)) {
+            setStatus(statusEl, '❌ 恢复预算必须是正整数', 'error');
+            return;
+        }
         setStatus(statusEl, '恢复运行中...', 'info');
         watchProgress('benchmark-resume-' + runId, statusEl);
         try {
-            const data = await api('/api/benchmark/runs/' + runId + '/resume?task_id=benchmark-resume-' + runId, {method: 'POST'});
+            const options = {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(maxCalls === null ? {} : {max_calls: maxCalls}),
+            };
+            const data = await api('/api/benchmark/runs/' + runId + '/resume?task_id=benchmark-resume-' + runId, options);
             setStatus(statusEl, '✅ ' + data.message, 'success');
             loadRuns();
         } catch (e) {
@@ -618,90 +787,136 @@
 
     async function loadReport(runId) {
         const area = document.getElementById('report-area');
-        area.innerHTML = '<p class="section-desc">加载报告...</p>';
+        runId = idValue(runId);
+        if (runId === null) {
+            clearNode(area);
+            area.appendChild(createElement('p', 'action-status error', '❌ 运行 ID 无效'));
+            return;
+        }
+        clearNode(area);
+        area.appendChild(createElement('p', 'section-desc', '加载报告...'));
         try {
             const data = await api('/api/benchmark/runs/' + runId + '/report');
             renderReport(data.report);
         } catch (e) {
-            area.innerHTML = '<p class="action-status error">❌ ' + e.message + '</p>';
+            clearNode(area);
+            area.appendChild(createElement('p', 'action-status error', '❌ ' + asText(e.message, e)));
         }
     }
 
     function renderReport(report) {
         const area = document.getElementById('report-area');
         window.__bmPerCase = {deep_reading: [], chat: []};
-        const warnings = (report.warnings || []).map(w => `<li>⚠️ ${w}</li>`).join('');
-        let html = `<h4>报告 #${report.run_id}（${report.suite.version_label}）</h4>`;
-        html += `<p class="section-desc">状态 ${report.status} · ${report.paper_count} 篇论文 · 重复 ${report.repeats} 次 · runner ${report.runner_version}</p>`;
-        html += `<ul class="benchmark-warnings">${warnings || '<li>无</li>'}</ul>`;
+        const reportData = report && typeof report === 'object' ? report : {};
+        const suite = reportData.suite || {};
+        const tracks = reportData.tracks || {};
+        clearNode(area);
+        area.appendChild(createElement(
+            'h4', '', '报告 #' + asText(reportData.run_id) + '（' + asText(suite.version_label) + '）',
+        ));
+        area.appendChild(createElement(
+            'p', 'section-desc',
+            '状态 ' + asText(reportData.status) + ' · ' + asText(reportData.paper_count, '0')
+            + ' 篇论文 · 重复 ' + asText(reportData.repeats, '1')
+            + ' 次 · runner ' + asText(reportData.runner_version),
+        ));
+
+        const warningList = createElement('ul', 'benchmark-warnings');
+        const warnings = Array.isArray(reportData.warnings) ? reportData.warnings : [];
+        if (!warnings.length) {
+            warningList.appendChild(createElement('li', '', '无'));
+        } else {
+            for (const warning of warnings) {
+                warningList.appendChild(createElement('li', '', '⚠️ ' + asText(warning)));
+            }
+        }
+        area.appendChild(warningList);
 
         for (const track of ['deep_reading', 'chat']) {
-            html += `<h4>${TRACK_LABELS[track]}榜</h4><table class="benchmark-table"><thead><tr>
-                <th>候选</th><th>得分</th><th>幻觉</th><th>缺题</th><th>tokens</th><th>延迟(ms)</th><th>调用</th></tr></thead><tbody>`;
-            for (const entry of report.tracks[track]) {
-                html += `<tr>
-                    <td>${entry.label}</td>
-                    <td>${entry.score === null ? '—' : entry.score.toFixed(1)}</td>
-                    <td>${entry.hallucination_critical}</td>
-                    <td>${entry.missing_qs}</td>
-                    <td>${entry.usage.total_tokens}</td>
-                    <td>${entry.usage.latency_ms}</td>
-                    <td>${entry.usage.calls}</td></tr>`;
+            const entries = Array.isArray(tracks[track]) ? tracks[track] : [];
+            area.appendChild(createElement('h4', '', TRACK_LABELS[track] + '榜'));
+            const rankingTable = createElement('table', 'benchmark-table');
+            appendTableHeader(rankingTable, ['候选', '得分', '幻觉', '缺题', 'tokens', '延迟(ms)', '调用']);
+            const rankingBody = createElement('tbody');
+            for (const entry of entries) {
+                const row = document.createElement('tr');
+                const usage = entry.usage || {};
+                appendCell(row, entry.label);
+                appendCell(row, scoreText(entry.score));
+                appendCell(row, entry.hallucination_critical);
+                appendCell(row, entry.missing_qs);
+                appendCell(row, usage.total_tokens);
+                appendCell(row, usage.latency_ms);
+                appendCell(row, usage.calls);
+                rankingBody.appendChild(row);
             }
-            html += '</tbody></table>';
+            rankingTable.appendChild(rankingBody);
+            area.appendChild(rankingTable);
 
-            html += `<h4>${TRACK_LABELS[track]}逐题明细</h4><table class="benchmark-table"><thead><tr>
-                <th>论文</th><th>题号</th><th>问题</th><th>得分</th><th>裁判</th><th>幻觉</th><th>人工覆盖</th></tr></thead><tbody>`;
-            for (const entry of report.tracks[track]) {
-                entry.per_case.forEach((item, index) => {
-                    window.__bmPerCase[track].push(item);
-                    html += `<tr>
-                        <td class="mono">${item.paper_key}</td>
-                        <td>${item.kind}</td>
-                        <td class="benchmark-cell-small">${item.question}</td>
-                        <td>${item.score === null ? '—' : item.score.toFixed(1)}</td>
-                        <td>${item.judge || '—'}</td>
-                        <td>${item.hallucination_critical ? '⚠️' : ''}</td>
-                        <td><button class="btn" onclick="humanOverridePrompt(${report.run_id}, '${track}', ${index})">覆盖</button></td></tr>`;
-                });
+            area.appendChild(createElement('h4', '', TRACK_LABELS[track] + '逐题明细'));
+            const detailTable = createElement('table', 'benchmark-table');
+            appendTableHeader(detailTable, ['论文', '题号', '问题', '得分', '裁判', '幻觉', '人工覆盖']);
+            const detailBody = createElement('tbody');
+            for (const entry of entries) {
+                const perCase = Array.isArray(entry.per_case) ? entry.per_case : [];
+                for (const item of perCase) {
+                    const index = window.__bmPerCase[track].push(item) - 1;
+                    const row = document.createElement('tr');
+                    appendCell(row, item.paper_key, 'mono');
+                    appendCell(row, item.kind);
+                    appendCell(row, item.question, 'benchmark-cell-small');
+                    const needsHuman = Boolean(item.needs_human_review);
+                    appendCell(row, needsHuman ? '待人工' : scoreText(item.score));
+                    appendCell(row, needsHuman ? '待人工' : (item.judge || '—'));
+                    appendCell(row, item.hallucination_critical ? '⚠️' : '');
+                    const actions = appendCell(row, '');
+                    const responseId = idValue(item.response_id);
+                    const caseId = idValue(item.case_id);
+                    appendButton(
+                        actions,
+                        needsHuman ? '人工覆盖（待人工）' : '人工覆盖',
+                        () => humanOverridePrompt(idValue(reportData.run_id), track, index),
+                        responseId === null || caseId === null,
+                    );
+                    detailBody.appendChild(row);
+                }
             }
-            html += '</tbody></table>';
+            detailTable.appendChild(detailBody);
+            area.appendChild(detailTable);
         }
 
-        html += `<h4>裁判校准</h4><p class="section-desc">人工对比 ${report.calibration.compared} 例 · 逐条件一致率 ${report.calibration.condition_agreement ?? '—'} · 分数误差 ${report.calibration.mean_score_error ?? '—'} · 已校准 ${report.calibration.calibrated}</p>`;
-        area.innerHTML = html;
+        const calibration = reportData.calibration || {};
+        area.appendChild(createElement('h4', '', '裁判校准'));
+        area.appendChild(createElement(
+            'p', 'section-desc',
+            '人工对比 ' + asText(calibration.compared, '0')
+            + ' 例 · 逐条件一致率 ' + asText(calibration.condition_agreement, '—')
+            + ' · 分数误差 ' + asText(calibration.mean_score_error, '—')
+            + ' · 已校准 ' + asText(calibration.calibrated, '—'),
+        ));
     }
 
     async function humanOverridePrompt(runId, track, index) {
+        runId = idValue(runId);
+        if (runId === null) { alert('运行 ID 无效'); return; }
         const item = window.__bmPerCase[track][index];
+        const responseId = idValue(item && item.response_id);
+        const caseId = idValue(item && item.case_id);
+        if (responseId === null || caseId === null) {
+            alert('该题没有可覆盖的响应或题目 ID');
+            return;
+        }
         const input = window.prompt('人工覆盖分数（0-100）与备注，格式：分数 备注');
         if (!input) return;
         const parts = input.split(' ');
         const score = parseFloat(parts[0]);
         const notes = parts.slice(1).join(' ');
         if (isNaN(score)) { alert('分数必须是数字'); return; }
-        const run = await api('/api/benchmark/runs/' + runId);
-        const responses = run.run.responses || [];
-        let target = null;
-        for (const resp of responses) {
-            if (resp.track === track && resp.parsed && Object.prototype.hasOwnProperty.call(resp.parsed, item.kind)) {
-                target = resp;
-                break;
-            }
-            const round = parseInt(item.kind.replace('chat_round', ''));
-            if (resp.track === track && resp.round_index === round) {
-                target = resp;
-                break;
-            }
-        }
-        if (!target) { alert('未找到对应响应'); return; }
-        const caseItem = (run.run.cases || []).find(c => c.kind === item.kind && c.paper_ref_id === item.paper_ref_id);
-        if (!caseItem) { alert('未找到对应题目'); return; }
         try {
             await api('/api/benchmark/judgments', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({run_id: runId, response_id: target.id, case_id: caseItem.id, score, notes}),
+                body: JSON.stringify({run_id: runId, response_id: responseId, case_id: caseId, score, notes}),
             });
             loadReport(runId);
         } catch (e) {
@@ -716,7 +931,12 @@
             await loadSuites();
             await loadPapers('');
         } catch (e) {
-            document.getElementById('suite-rows').innerHTML = '<tr><td colspan="6">❌ ' + e.message + '</td></tr>';
+            const tbody = document.getElementById('suite-rows');
+            clearNode(tbody);
+            const row = document.createElement('tr');
+            const cell = appendCell(row, '❌ ' + asText(e.message, e));
+            cell.colSpan = 6;
+            tbody.appendChild(row);
         }
     })();
     </script>

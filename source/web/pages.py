@@ -55,6 +55,12 @@ def vision_page():
     return render_template("vision.html")
 
 
+@bp.route("/benchmark")
+def benchmark_page():
+    """Benchmark 管理页（仅 admin 可访问，由统一路由策略保护）。"""
+    return render_template("benchmark.html")
+
+
 @bp.route("/")
 def index():
     """

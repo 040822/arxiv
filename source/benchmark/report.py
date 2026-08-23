@@ -8,12 +8,48 @@ PILOT_PAPER_LIMIT = 8
 
 
 def _resolve_case_score(judgments_by_case):
-    """人工 > 复核裁判 > 系统确定性判定 > 主裁判；均无时返回 None（不计入分数）。"""
+    """Resolve a case, withholding a primary/review condition conflict."""
+    from .judge import _merge_judgment_pair
+
+    primary = judgments_by_case.get("primary")
+    review = judgments_by_case.get("review")
+    human = judgments_by_case.get("human")
+    if human is not None:
+        return human
+    if primary is not None and review is not None:
+        merged = _merge_judgment_pair(primary, review)
+        if merged["needs_human_review"]:
+            return None
+        return review
     for role in ("human", "review", "system", "primary"):
         judgment = judgments_by_case.get(role)
         if judgment is not None:
             return judgment
     return None
+
+
+def _case_resolution(judgments_by_case):
+    """Return report fields for one response/case pair."""
+    from .judge import _merge_judgment_pair
+
+    primary = judgments_by_case.get("primary")
+    review = judgments_by_case.get("review")
+    human = judgments_by_case.get("human")
+    if primary is not None and review is not None:
+        merged = _merge_judgment_pair(primary, review)
+        needs_human_review = bool(merged["needs_human_review"] and human is None)
+    else:
+        needs_human_review = False
+    selected = human
+    if selected is None and not needs_human_review:
+        selected = review or judgments_by_case.get("system") or primary
+    return {
+        "judgment": selected,
+        "score": selected.get("score") if selected is not None else None,
+        "primary_score": primary.get("score") if primary is not None else None,
+        "review_score": review.get("score") if review is not None else None,
+        "needs_human_review": needs_human_review,
+    }
 
 
 def _collect(run):
@@ -77,6 +113,8 @@ def build_report(run):
         "calibration": calibration,
         "created_at": run.get("created_at"),
         "finished_at": run.get("finished_at"),
+        "candidate_calls_made": int(run.get("candidate_calls_made") or 0),
+        "max_calls": run.get("max_calls"),
     }
 
 
@@ -108,8 +146,9 @@ def _track_entry(candidate, track, run, case_by_id, paper_by_id, response_by_id,
         usage["completion_tokens"] += int(response_usage.get("completion_tokens", 0))
         usage["cached_tokens"] += int(response_usage.get("cached_tokens", 0))
         usage["latency_ms"] += float(response.get("latency_ms") or 0)
-        usage["calls"] += 1
-        usage["continuation_count"] += int(response.get("continuation_count") or 0)
+        continuation_count = int(response.get("continuation_count") or 0)
+        usage["calls"] += 1 + continuation_count
+        usage["continuation_count"] += continuation_count
         if response.get("status") == "retry_failed":
             usage["retry_failed"] += 1
         if response.get("status") == "empty":
@@ -135,27 +174,46 @@ def _track_entry(candidate, track, run, case_by_id, paper_by_id, response_by_id,
                 per_case.append({
                     "paper_key": paper.get("paper_key", ""),
                     "paper_ref_id": paper.get("id"),
+                    "response_id": None,
+                    "case_id": case.get("id"),
                     "kind": case.get("kind", ""),
                     "position": case.get("position", 0),
                     "question": case.get("question", ""),
                     "score": None,
+                    "primary_score": None,
+                    "review_score": None,
+                    "needs_human_review": False,
                     "judge": None,
                     "hallucination_critical": False,
                     "confidence": None,
                 })
                 continue
             for response_id in response_ids:
-                judgment = _resolve_case_score(judgments_by_key.get((response_id, case["id"]), {}))
-                score = judgment["score"] if judgment is not None else None
+                resolution = _case_resolution(
+                    judgments_by_key.get((response_id, case["id"]), {})
+                )
+                judgment = resolution["judgment"]
+                score = resolution["score"]
+                roles = judgments_by_key.get((response_id, case["id"]), {})
                 per_case.append({
                     "paper_key": paper.get("paper_key", ""),
                     "paper_ref_id": paper.get("id"),
+                    "response_id": response_id,
+                    "case_id": case.get("id"),
                     "kind": case.get("kind", ""),
                     "position": case.get("position", 0),
                     "question": case.get("question", ""),
                     "score": score,
+                    "primary_score": resolution["primary_score"],
+                    "review_score": resolution["review_score"],
+                    "needs_human_review": resolution["needs_human_review"],
                     "judge": judgment["judge_role"] if judgment else None,
-                    "hallucination_critical": bool(judgment and judgment["hallucination_critical"]),
+                    "hallucination_critical": bool(
+                        judgment and judgment["hallucination_critical"]
+                    ) or any(
+                        bool(item.get("hallucination_critical"))
+                        for item in roles.values()
+                    ),
                     "confidence": judgment["confidence"] if judgment else None,
                 })
                 if judgment:
@@ -163,7 +221,8 @@ def _track_entry(candidate, track, run, case_by_id, paper_by_id, response_by_id,
                         hallucination_critical += 1
                     if (judgment.get("raw_json") or {}).get("reason") == "missing_q":
                         missing_qs += 1
-                    paper_scores.append(score)
+                    if score is not None:
+                        paper_scores.append(score)
         per_paper[paper.get("paper_key", "")] = round(sum(paper_scores) / len(paper_scores), 1) if paper_scores else None
 
     scored_papers = [value for value in per_paper.values() if value is not None]
@@ -185,7 +244,8 @@ def _track_entry(candidate, track, run, case_by_id, paper_by_id, response_by_id,
 
 def _usage_totals(run, responses):
     totals = {"total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0,
-              "cached_tokens": 0, "latency_ms": 0.0, "calls": len(responses)}
+              "cached_tokens": 0, "latency_ms": 0.0,
+              "calls": sum(1 + int(r.get("continuation_count") or 0) for r in responses)}
     for response in responses:
         usage = response.get("usage_json") or {}
         totals["total_tokens"] += int(usage.get("total_tokens", 0))

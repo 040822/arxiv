@@ -101,6 +101,40 @@ print(json.dumps({url: [client.get(url).status_code, client.get(url).content_typ
         self.assertIn('title="{{ account_label }}"', template)
         self.assertIn('title="@{{ current_user.username }}"', template)
 
+    def test_business_navigation_exposes_benchmark_to_admin_only(self):
+        business_templates = (
+            "index.html", "browse.html", "search.html", "paper.html", "paper_chat.html",
+            "tasks.html", "reports.html", "report_detail.html", "reading_list.html",
+        )
+        for name in business_templates:
+            with self.subTest(template=name):
+                content = (TEMPLATES / name).read_text(encoding="utf-8")
+                nav = re.search(r"<nav\b[^>]*>([\s\S]*?)</nav>", content)
+                self.assertIsNotNone(nav)
+                nav_content = nav.group(1)
+                self.assertRegex(
+                    nav_content,
+                    r"\{%\s*if\s+is_admin\s*%\}[\s\S]*?href=\"/benchmark\"[\s\S]*?\{%\s*endif\s*%\}",
+                )
+                without_admin_blocks = re.sub(
+                    r"\{%\s*if\s+is_admin\s*%\}[\s\S]*?\{%\s*endif\s*%\}",
+                    "",
+                    nav_content,
+                )
+                self.assertNotIn('href="/benchmark"', without_admin_blocks)
+
+    def test_benchmark_css_has_usable_768px_layout(self):
+        content = (CSS_ROOT / "pages" / "benchmark.css").read_text(encoding="utf-8")
+        self.assertRegex(content, r"@media\s*\(max-width:\s*768px\)")
+        self.assertRegex(
+            content,
+            r"@media[\s\S]*?\.benchmark-table\s*\{[\s\S]*?overflow-x\s*:\s*auto",
+        )
+        self.assertRegex(
+            content,
+            r"@media[\s\S]*?\.benchmark-candidate-row\s*\{[\s\S]*?flex-direction\s*:\s*column",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -64,26 +64,74 @@ def _judge_messages(route_key, payload):
 
 def _score_for_case(case, score_entry):
     """由裁判逐条件结果计算单题分数；严重幻觉时最高 60 分。"""
-    conditions = score_entry.get("conditions") or []
+    returned_conditions = score_entry.get("conditions") or []
+    if isinstance(returned_conditions, dict):
+        returned_conditions = [returned_conditions]
+    rubric_conditions = ((case.get("rubric") or {}).get("conditions") or [])
+    if isinstance(rubric_conditions, dict):
+        rubric_conditions = [rubric_conditions]
+
+    # The frozen rubric is the denominator.  A missing/invalid judge entry is
+    # explicitly unmet rather than silently dropping the condition.
+    expected_conditions = rubric_conditions or returned_conditions
+    by_text = {}
+    for condition in returned_conditions:
+        key = str(condition.get("condition") or condition.get("text") or "").strip()
+        if key:
+            by_text.setdefault(key, condition)
+
+    def _weight(condition):
+        try:
+            value = float(condition.get("weight", 1.0))
+        except (TypeError, ValueError):
+            value = 1.0
+        return value if value > 0 else 0.0
+
+    def _value(condition):
+        met = condition.get("met") if condition is not None else None
+        if isinstance(met, bool):
+            return 1.0 if met else 0.0
+        if isinstance(met, (int, float)):
+            return {1: 1.0, 0.5: 0.5, 0: 0.0}.get(met)
+        return MET_VALUES.get(str(met).strip().lower())
+
     condition_scores = []
     total = 0.0
     weight_sum = 0.0
-    for condition in conditions:
-        met = condition.get("met")
-        if isinstance(met, (int, float)) and not isinstance(met, bool):
-            value = {1: 1.0, 0.5: 0.5, 0: 0.0}.get(met)
-        else:
-            value = MET_VALUES.get(str(met).lower())
+    for index, rubric_condition in enumerate(expected_conditions):
+        text = str(
+            rubric_condition.get("text")
+            or rubric_condition.get("condition")
+            or ""
+        ).strip()
+        returned = by_text.get(text)
+        if returned is None and not rubric_conditions and index < len(returned_conditions):
+            returned = returned_conditions[index]
+        value = _value(returned)
         if value is None:
-            continue
+            value = 0.0
+        weight = _weight(rubric_condition)
+        note = (returned or {}).get("note") or (
+            "缺少该条件判定" if returned is None else ""
+        )
         condition_scores.append({
-            "condition": str(condition.get("condition") or condition.get("text") or ""),
+            "condition": text or str(
+                (returned or {}).get("condition")
+                or (returned or {}).get("text")
+                or ""
+            ),
             "met": value,
-            "note": str(condition.get("note") or ""),
+            "weight": weight,
+            "critical": bool(rubric_condition.get("critical")),
+            "note": str(note),
         })
-        weight = 1.0 / len(conditions)
         total += value * weight
         weight_sum += weight
+    if weight_sum <= 0 and expected_conditions:
+        # A malformed all-zero rubric remains deterministic and does not
+        # create a divide-by-zero escape hatch; use equal weights as fallback.
+        weight_sum = float(len(expected_conditions))
+        total = sum(item["met"] for item in condition_scores)
     score = (total / weight_sum * 100.0) if weight_sum > 0 else 0.0
     hallucination = bool(score_entry.get("hallucination_critical"))
     if hallucination:
@@ -99,6 +147,36 @@ def _score_for_case(case, score_entry):
         "hallucination_critical": hallucination,
         "confidence": confidence,
         "note": str(score_entry.get("note") or ""),
+    }
+
+
+def _condition_map(judgment):
+    """Normalize a stored judgment's condition-level values for comparison."""
+    return {
+        str(item.get("condition") or item.get("text") or "").strip(): item.get("met")
+        for item in (judgment or {}).get("condition_scores", [])
+        if str(item.get("condition") or item.get("text") or "").strip()
+    }
+
+
+def _merge_judgment_pair(primary, review):
+    """Resolve primary/review output without ranking a condition conflict."""
+    primary_map = _condition_map(primary)
+    review_map = _condition_map(review)
+    disagreement = primary_map != review_map
+    if disagreement:
+        return {
+            "score": None,
+            "needs_human_review": True,
+            "primary_score": primary.get("score") if primary else None,
+            "review_score": review.get("score") if review else None,
+        }
+    chosen = review or primary
+    return {
+        "score": chosen.get("score") if chosen else None,
+        "needs_human_review": False,
+        "primary_score": primary.get("score") if primary else None,
+        "review_score": review.get("score") if review else None,
     }
 
 
@@ -154,6 +232,7 @@ def build_groups(run, responses):
     """把运行响应按 (候选, 论文, 轨道, 重复槽) 分组，附带该组题目与输出。"""
     from source.storage.benchmark import get_benchmark_case
 
+    candidate_by_id = {candidate["id"]: candidate for candidate in run.get("candidates", [])}
     groups = []
     by_key = {}
     for response in responses:
@@ -187,27 +266,48 @@ def build_groups(run, responses):
                     response_ids[case["kind"]] = response["id"]
         groups.append({
             "candidate_id": candidate_id,
+            "candidate_provider_key": (candidate_by_id.get(candidate_id) or {}).get("provider_key", ""),
             "paper_ref_id": paper_ref_id,
             "paper": paper,
             "paper_key": paper.get("paper_key", ""),
             "track": track,
             "repeat_index": repeat_index,
             "cases": cases,
+            "responses": response_list,
             "output_by_kind": output_by_kind,
             "response_ids": response_ids,
         })
     return groups
 
 
-def review_sampling(groups, judgments):
-    """抽样复核：每候选每轨道至少 10%（下限 1 组），并覆盖低置信度/严重幻觉。"""
+def review_sampling(groups, judgments, judge_provider_keys=None):
+    """Select review groups with complete anomaly coverage.
+
+    The 10% floor applies only to ordinary groups.  Every low-confidence,
+    critical-hallucination, format-anomalous, or same-provider group is
+    always included, even when that exceeds the nominal sample cap.
+    """
+    judge_provider_keys = {
+        str(key) for key in (judge_provider_keys or []) if str(key or "").strip()
+    }
     flagged_response_ids = {
         judgment["response_id"]
         for judgment in judgments
-        if judgment["judge_role"] == "primary"
+        if judgment.get("judge_role") == "primary"
         and (
-            (judgment["confidence"] is not None and judgment["confidence"] < LOW_CONFIDENCE_THRESHOLD)
-            or judgment["hallucination_critical"]
+            (judgment.get("confidence") is not None
+             and judgment.get("confidence") < LOW_CONFIDENCE_THRESHOLD)
+            or judgment.get("hallucination_critical")
+        )
+    }
+
+    anomalous_response_ids = {
+        response_id
+        for group in groups
+        for response_id in group.get("response_ids", {}).values()
+        if any(
+            response.get("id") == response_id and response.get("status") != "ok"
+            for response in group.get("responses", [])
         )
     }
 
@@ -219,10 +319,26 @@ def review_sampling(groups, judgments):
     for key, group_list in by_group.items():
         count = max(1, math.ceil(len(group_list) * 0.1))
         flagged = [g for g in group_list if any(
-            response_id in flagged_response_ids for response_id in g["response_ids"].values()
+            response_id in flagged_response_ids or response_id in anomalous_response_ids
+            for response_id in g["response_ids"].values()
+        ) or (
+            bool(judge_provider_keys)
+            and g.get("candidate_provider_key") in judge_provider_keys
         )]
+        # A format anomaly can exist even when the response was not represented
+        # in response_ids (for example an empty chat answer); include the group
+        # directly as a second safety net.
+        flagged.extend(
+            g for g in group_list
+            if g not in flagged and any(
+                response.get("status") != "ok" for response in g.get("responses", [])
+            )
+        )
+        # Preserve insertion order while de-duplicating flagged groups.
+        flagged = list(dict.fromkeys(id(g) for g in flagged))
+        flagged = [next(g for g in group_list if id(g) == group_id) for group_id in flagged]
         others = [g for g in group_list if g not in flagged]
-        sampled.extend((flagged + others)[:count])
+        sampled.extend(flagged + others[:max(0, count - len(flagged))])
     return sampled
 
 
@@ -244,7 +360,22 @@ def judge_run(run):
         )
 
     primary_judgments = get_run_judgments(run["id"])
-    sampled = review_sampling(groups, primary_judgments)
+    judge_provider_keys = set()
+    for route_key in ("benchmark_judge", "benchmark_judge_review"):
+        try:
+            route_cfg = resolve_model_config(get_route_config(route_key))
+            if route_cfg.get("provider_key"):
+                judge_provider_keys.add(route_cfg["provider_key"])
+        except Exception:
+            # A missing judge route is already represented by the per-group
+            # call failure above; sampling must remain a pure report decision
+            # and must not turn that recoverable condition into a run crash.
+            continue
+    sampled = review_sampling(
+        groups,
+        primary_judgments,
+        judge_provider_keys=judge_provider_keys,
+    )
     for group in sampled:
         paper_ref = {"paper_id": group["paper"].get("paper_id"), "arxiv_id": group["paper"].get("arxiv_id", "")}
         _judge_group(
@@ -261,10 +392,12 @@ def set_human_judgment(run_id, response_id, case_id, score, notes=""):
         score = max(0.0, min(100.0, float(score)))
     except (TypeError, ValueError):
         raise ValueError("人工评分必须是 0-100 的数字")
-    run = None
-    from source.storage.benchmark import get_benchmark_run
+    from source.storage.benchmark import get_benchmark_run, get_benchmark_suite
     run = get_benchmark_run(run_id)
-    scoring_revision = str((run.get("suite") or {}).get("scoring_revision") or "") or "pprb-r1"
+    if not run:
+        raise ValueError("运行不存在")
+    suite = get_benchmark_suite(run["suite_id"])
+    scoring_revision = str((suite or {}).get("scoring_revision") or "") or "pprb-r1"
     save_benchmark_judgment(
         run_id, response_id, "human", "human", scoring_revision, case_id,
         [], score, False, None, {"human": True}, str(notes or ""),

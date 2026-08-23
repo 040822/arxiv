@@ -45,16 +45,53 @@ def text_sha256(text):
     return hashlib.sha256((str(text or "")).encode("utf-8")).hexdigest()
 
 
-def config_hash(config):
-    """计算候选/路由配置的稳定哈希（只包含影响请求的参数）。"""
-    keys = (
-        "provider_key", "model", "is_thinking", "thinking_effort",
-        "temperature_enabled", "temperature", "max_tokens_enabled", "max_tokens",
-    )
-    canonical = json.dumps(
-        {key: config.get(key) for key in keys},
-        sort_keys=True, ensure_ascii=False, separators=(",", ":"),
-    )
+def _json_safe_request_params(params):
+    """Return a deterministic request snapshot without prompt/secrets.
+
+    The request builder currently only emits JSON-compatible values, but this
+    helper deliberately sanitizes recursively so a future provider extension
+    cannot persist ``messages`` or an API credential by accident.
+    """
+    if isinstance(params, dict):
+        return {
+            str(key): _json_safe_request_params(value)
+            for key, value in params.items()
+            if str(key).lower() not in {"messages", "api_key", "apikey", "authorization"}
+        }
+    if isinstance(params, (list, tuple)):
+        return [_json_safe_request_params(value) for value in params]
+    if isinstance(params, (str, int, float, bool)) or params is None:
+        return params
+    return str(params)
+
+
+def config_hash(config, actual_params=None):
+    """计算候选实际请求的稳定哈希。
+
+    Only parameters sent to the model are hashed.  Provider identity remains
+    part of the key so two different endpoints are not treated as the same
+    candidate even when their Chat Completions payloads happen to match.
+    """
+    config = dict(config or {})
+    if actual_params is None:
+        actual_params = config.get("actual_params")
+    if actual_params is None:
+        # Keep the public helper useful for callers that only have a normalized
+        # candidate config.  Import lazily to avoid a config/evidence cycle.
+        try:
+            from .config import build_actual_request_params
+            actual_params = build_actual_request_params(config)
+        except Exception:
+            keys = (
+                "model", "is_thinking", "thinking_effort",
+                "temperature_enabled", "temperature", "max_tokens_enabled", "max_tokens",
+            )
+            actual_params = {key: config.get(key) for key in keys}
+    payload = {
+        "provider_key": str(config.get("provider_key") or ""),
+        "actual_params": _json_safe_request_params(actual_params or {}),
+    }
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 

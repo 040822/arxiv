@@ -1,5 +1,12 @@
 # 更新日志
 
+## 未发布 — Benchmark v6 调用预算与公共边界（2026-08-20）
+
+- `benchmark_runs` 迁移至 v6：持久化 `candidate_calls_made`，每次候选 API 尝试原子计数，深度阅读续写计入，裁判调用不计入；启动前拒绝不足预算，耗尽后恢复的 `max_calls` 只能严格上调
+- 新建运行固定保存非空 `source.benchmark.RUNNER_VERSION`；历史空版本不伪造回填，报告保留明确 provenance warning
+- `source.benchmark` 新增 `list_suite_papers`、`list_runs`、`mark_interrupted_runs` 公共包装接口，调用方无需直连 benchmark 存储层
+- 报告逐题携带精确 `response_id`/`case_id`、`primary_score`/`review_score` 与 `needs_human_review`；主/复核条件级冲突等待人工，冲突题不计入对应轨道/榜单聚合（全题冲突时轨道分数为空）
+
 ## v0.7.1 — 论文阅读 Benchmark pilot（2026-08-13，分支 feature/paper-benchmark）
 
 - 新增私有论文阅读 Benchmark（v1 pilot）：从数据库选论文 → 冻结全文与生产 Prompt → 自动出题（证据必须精确匹配全文）→ 逐题人工审核 → 冻结题库 → 多候选模型运行 → LLM 裁判 + 复核抽样 + 人工覆盖 → 双轨分榜报告

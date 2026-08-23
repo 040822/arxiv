@@ -389,7 +389,7 @@ def add_benchmark_candidate(run_id, position, label, config, config_hash, actual
                 1 if config.get("max_tokens_enabled", True) else 0,
                 as_int(config.get("max_tokens"), 4000),
                 str(config_hash or ""),
-                json.dumps(actual_params or {}, ensure_ascii=False),
+                json.dumps(_sanitize_actual_params(actual_params), ensure_ascii=False),
             ),
         )
         return cursor.lastrowid
@@ -402,7 +402,7 @@ def list_run_candidates(run_id):
             "SELECT * FROM benchmark_candidates WHERE run_id = ? ORDER BY position, id",
             (as_int(run_id),),
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [_decode_candidate(row) for row in rows]
 
 
 def get_benchmark_run(run_id):
@@ -449,6 +449,52 @@ def set_run_status(run_id, status):
             "UPDATE benchmark_runs SET status = ?, finished_at = COALESCE(?, finished_at) WHERE id = ?",
             (status, finished_at, as_int(run_id)),
         )
+
+
+def update_run_max_calls(run_id, max_calls):
+    """Raise a run's candidate-call ceiling for an explicit resume.
+
+    The caller enforces the public strict-increase rule; this storage helper
+    keeps the update transactional and refuses accidental decreases.
+    """
+    max_calls = as_int(max_calls)
+    if max_calls <= 0:
+        raise ValueError("max_calls 必须是正整数")
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT max_calls FROM benchmark_runs WHERE id = ?", (as_int(run_id),)
+        ).fetchone()
+        if not row:
+            raise ValueError("运行不存在")
+        previous = row["max_calls"]
+        if previous is None or max_calls <= int(previous):
+            raise ValueError("新的 max_calls 必须严格高于当前上限")
+        conn.execute(
+            "UPDATE benchmark_runs SET max_calls = ? WHERE id = ?",
+            (max_calls, as_int(run_id)),
+        )
+
+
+def consume_candidate_call(run_id):
+    """Atomically charge one candidate API attempt.
+
+    Returns ``True`` when the attempt is within the persisted ceiling and
+    ``False`` when the finite budget is already exhausted.  Judges do not use
+    this function: ``candidate_calls_made`` is intentionally a candidate-only
+    budget counter.
+    """
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.execute(
+            """
+            UPDATE benchmark_runs
+            SET candidate_calls_made = candidate_calls_made + 1
+            WHERE id = ?
+              AND (max_calls IS NULL OR candidate_calls_made < max_calls)
+            """,
+            (as_int(run_id),),
+        )
+        return cursor.rowcount == 1
 
 
 def mark_interrupted_runs():
@@ -508,6 +554,26 @@ def save_benchmark_response(run_id, candidate_id, paper_ref_id, track, repeat_in
                 as_int(continuation_count, 0),
             ),
         )
+        # Direct storage callers (including legacy repair/import tooling) may
+        # insert a response without passing through the runner's pre-call
+        # charge. Never lower the persisted counter—failed API attempts are
+        # intentionally retained—but bring it up to the response-derived
+        # minimum so historical semantics remain truthful.
+        conn.execute(
+            """
+            UPDATE benchmark_runs
+            SET candidate_calls_made = MAX(
+                candidate_calls_made,
+                COALESCE(
+                    (SELECT SUM(1 + COALESCE(continuation_count, 0))
+                     FROM benchmark_responses WHERE run_id = ?),
+                    0
+                )
+            )
+            WHERE id = ?
+            """,
+            (as_int(run_id), as_int(run_id)),
+        )
         return cursor.lastrowid
 
 
@@ -549,8 +615,18 @@ def get_run_responses(run_id):
 def count_run_calls(run_id):
     """统计一次运行已产生的模型调用次数（用于预算检查）。"""
     with get_connection() as conn:
+        row = conn.execute(
+            "SELECT candidate_calls_made FROM benchmark_runs WHERE id = ?", (as_int(run_id),)
+        ).fetchone()
+        if row is not None:
+            return int(row["candidate_calls_made"] or 0)
+        # Keep this helper useful for an isolated legacy fixture that predates
+        # benchmark_runs v6; normal application databases always take the
+        # persisted counter path above.
         return conn.execute(
-            "SELECT COUNT(*) FROM benchmark_responses WHERE run_id = ?", (as_int(run_id),)
+            "SELECT COALESCE(SUM(1 + COALESCE(continuation_count, 0)), 0) "
+            "FROM benchmark_responses WHERE run_id = ?",
+            (as_int(run_id),),
         ).fetchone()[0]
 
 
@@ -632,11 +708,32 @@ def _loads(value, default):
         return default
 
 
+def _sanitize_actual_params(value):
+    """Keep candidate request snapshots free of prompts and credentials."""
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_actual_params(item)
+            for key, item in value.items()
+            if str(key).lower() not in {"messages", "api_key", "apikey", "authorization"}
+        }
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_actual_params(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
 def _decode_case(row):
     item = dict(row)
     item["evidence"] = _loads(item.get("evidence"), [])
     item["rubric"] = _loads(item.get("rubric"), {})
     item["author_raw"] = _loads(item.get("author_raw"), {})
+    return item
+
+
+def _decode_candidate(row):
+    item = dict(row)
+    item["actual_params"] = _loads(item.get("actual_params"), {})
     return item
 
 

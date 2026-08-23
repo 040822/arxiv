@@ -6,7 +6,7 @@ import re
 
 from ._ai import call_model
 from .config import resolve_model_config
-from .evidence import split_qa_sections
+from .evidence import parse_deep_reading_questions, split_qa_sections
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,12 @@ def _chat_messages(suite, paper, questions, history):
     return messages
 
 
-def _call(cfg, messages, task_key, paper_ref):
+def _call(cfg, messages, task_key, paper_ref, charge_callback=None):
+    # Charge immediately before *each* API attempt.  In particular, a deep
+    # reading continuation is a second candidate call and must survive a
+    # process restart even if the response cannot be persisted afterwards.
+    if charge_callback is not None:
+        charge_callback()
     content, usage = call_model(cfg, messages, task_key, paper_ref=paper_ref)
     return content, usage
 
@@ -86,10 +91,19 @@ def _qa_sections_from_content(content):
     return split_qa_sections(text)
 
 
-def run_deep_reading(suite, paper, cfg, paper_ref):
+def run_deep_reading(suite, paper, cfg, paper_ref, charge_callback=None):
     """深度阅读轨：一次冻结 Prompt 调用 + 最多一次续写；返回 (response, 调用次数)。"""
     messages = _deep_reading_messages(suite, paper)
-    content, usage = _call(cfg, messages, "benchmark_runner_deep_reading", paper_ref)
+    expected_numbers = {
+        "q{}".format(question["number"])
+        for question in parse_deep_reading_questions(
+            (_frozen_snapshot(suite, "deep_reading") or {}).get("instruction", "")
+        )
+    }
+    content, usage = _call(
+        cfg, messages, "benchmark_runner_deep_reading", paper_ref,
+        charge_callback=charge_callback,
+    )
     continuation_count = 0
     finish_reason = usage.get("finish_reason", "")
 
@@ -100,7 +114,14 @@ def run_deep_reading(suite, paper, cfg, paper_ref):
         return {}, "format_error"
 
     parsed, status = _parse_qa(content)
-    if finish_reason in {"length", "max_tokens"} or not parsed:
+    if (
+        finish_reason in {"length", "max_tokens"}
+        or not parsed
+        or (expected_numbers and not expected_numbers.issubset(parsed))
+    ):
+        # Mark the attempt before entering the call so an API failure still
+        # contributes to the persisted 1 + continuation_count accounting.
+        continuation_count = 1
         try:
             continuation, continuation_usage = _call(
                 cfg,
@@ -110,8 +131,8 @@ def run_deep_reading(suite, paper, cfg, paper_ref):
                 ],
                 "benchmark_runner_deep_reading",
                 paper_ref,
+                charge_callback=charge_callback,
             )
-            continuation_count = 1
             content = (content + "\n\n" + continuation).strip()
             finish_reason = continuation_usage.get("finish_reason", finish_reason)
             usage["completion_tokens"] = int(usage.get("completion_tokens", 0) or 0) + int(
@@ -121,11 +142,17 @@ def run_deep_reading(suite, paper, cfg, paper_ref):
                 continuation_usage.get("total_tokens", 0) or 0
             )
             parsed, status = _parse_qa(content)
+        except BudgetExceeded:
+            raise
         except Exception as exc:
             logger.warning(f"benchmark deep reading continuation failed: {exc}")
 
     if status == "ok" and not parsed:
         status = "empty"
+    if expected_numbers and not expected_numbers.issubset(parsed):
+        # Keep partial output for diagnosis/judging, but make the response an
+        # explicit format anomaly so the review sampler cannot cap it away.
+        status = "format_error"
     return {
         "prompt_snapshot": messages,
         "raw_output": content,
@@ -138,10 +165,13 @@ def run_deep_reading(suite, paper, cfg, paper_ref):
     }, 1 + continuation_count
 
 
-def run_chat_round(suite, paper, cfg, paper_ref, questions, history):
+def run_chat_round(suite, paper, cfg, paper_ref, questions, history, charge_callback=None):
     """交流轨单轮：用候选自身历史（可来自已保存响应）构造消息并调用一次。"""
     messages = _chat_messages(suite, paper, questions, history)
-    content, usage = _call(cfg, messages, "benchmark_runner_chat", paper_ref)
+    content, usage = _call(
+        cfg, messages, "benchmark_runner_chat", paper_ref,
+        charge_callback=charge_callback,
+    )
     return {
         "prompt_snapshot": messages,
         "raw_output": content,

@@ -1,4 +1,4 @@
-"""Schema migrations for private paper reading benchmark (v5)."""
+"""Schema migrations for private paper reading benchmark (v6)."""
 
 import logging
 
@@ -187,4 +187,35 @@ def migrate_benchmark_tables(conn):
     )
     conn.execute(
         "CREATE INDEX idx_benchmark_judgments_response ON benchmark_judgments(response_id)"
+    )
+
+
+def migrate_benchmark_candidate_call_budget(conn):
+    """Persist candidate API-attempt usage and backfill existing runs.
+
+    ``benchmark_responses`` stores one row per logical response, while a
+    deep-reading response can contain one continuation attempt.  The v6
+    counter therefore sums ``1 + continuation_count`` for every historical
+    response.  New failed attempts are charged by the runner before the API
+    call and remain counted even when no response row can be saved.
+    """
+    columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(benchmark_runs)").fetchall()
+    }
+    if "candidate_calls_made" not in columns:
+        conn.execute(
+            "ALTER TABLE benchmark_runs ADD COLUMN candidate_calls_made INTEGER NOT NULL DEFAULT 0"
+        )
+    conn.execute(
+        """
+        UPDATE benchmark_runs
+        SET candidate_calls_made = COALESCE(
+            (
+                SELECT SUM(1 + COALESCE(continuation_count, 0))
+                FROM benchmark_responses
+                WHERE benchmark_responses.run_id = benchmark_runs.id
+            ),
+            0
+        )
+        """
     )

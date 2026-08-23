@@ -3,7 +3,7 @@
 import json
 import logging
 
-from flask import Blueprint, Response, jsonify, render_template, request
+from flask import Blueprint, Response, jsonify, request
 
 from source.benchmark import (
     BenchmarkError,
@@ -16,7 +16,9 @@ from source.benchmark import (
     get_route_configs,
     get_suite,
     list_cases,
+    list_runs,
     list_selectable_papers,
+    list_suite_papers,
     list_suites,
     resume_run,
     review_all_cases,
@@ -42,12 +44,6 @@ def _progress_callback(task_id, phase_label):
     def callback(data):
         update_progress(task_id, {"phase": phase_label, **data})
     return callback
-
-
-@bp.route("/benchmark")
-def benchmark_page():
-    """Benchmark 管理页（仅 admin 可访问，路由策略默认 admin）。"""
-    return render_template("benchmark.html")
 
 
 @bp.route("/api/benchmark/suites")
@@ -93,25 +89,15 @@ def api_benchmark_suite(suite_id):
     """题库详情（元数据 + 论文 + 题目 + 运行记录）。"""
     try:
         suite = get_suite(suite_id)
-        suite["papers"] = _list_suite_papers(suite_id)
+        suite["papers"] = list_suite_papers(suite_id)
         suite["cases"] = list_cases(suite_id)
-        runs = _list_runs(suite_id)
+        runs = list_runs(suite_id)
         for run in runs:
             run["candidate_count"] = len(run.get("candidates") or [])
         suite["runs"] = runs
         return jsonify({"status": "ok", "suite": suite})
     except BenchmarkError as exc:
         return _error(exc, 404)
-
-
-def _list_suite_papers(suite_id):
-    from source.storage.benchmark import list_suite_papers
-    return list_suite_papers(suite_id)
-
-
-def _list_runs(suite_id):
-    from source.storage.benchmark import list_benchmark_runs
-    return list_benchmark_runs(suite_id)
 
 
 @bp.route("/api/benchmark/suites/<int:suite_id>/generate", methods=["POST"])
@@ -242,10 +228,17 @@ def api_benchmark_run(run_id):
 @bp.route("/api/benchmark/runs/<int:run_id>/resume", methods=["POST"])
 def api_benchmark_resume_run(run_id):
     """恢复中断/失败的运行。"""
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
     task_id = request.args.get("task_id", f"benchmark-resume-{run_id}")
     try:
         update_progress(task_id, {"status": "running", "message": "恢复运行...", "phase": "run"})
-        resume_run(run_id, progress_callback=_progress_callback(task_id, "run"))
+        resume_run(
+            run_id,
+            max_calls=data.get("max_calls"),
+            progress_callback=_progress_callback(task_id, "run"),
+        )
         update_progress(task_id, {"status": "completed", "message": "运行已恢复并完成"})
         return jsonify({"status": "ok", "run": get_run(run_id), "message": "运行已恢复并完成"})
     except (BenchmarkError, ValueError) as exc:

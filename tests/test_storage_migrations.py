@@ -15,6 +15,7 @@ from source.storage import (
     init_db, insert_analysis, insert_paper, update_analysis,
 )
 from source.storage.snapshot import copy_sqlite_snapshot
+from source.storage.benchmark_migrations import migrate_benchmark_tables
 from source.settings import store as settings_store
 from source.storage.user_migration import take_generated_admin_password
 
@@ -99,6 +100,55 @@ class SchemaMigrationTests(unittest.TestCase):
 
         self.assertEqual(version, LATEST_VERSION)
         self.assertEqual(admin, ("admin", password_hash, "admin", 1, 1))
+
+    def test_v6_backfills_candidate_calls_from_v5_response_continuations(self):
+        """A v5 benchmark fixture is upgraded with exact historical usage."""
+        conn = sqlite3.connect(":memory:")
+        try:
+            migrate_benchmark_tables(conn)
+            suite_id = conn.execute(
+                "INSERT INTO benchmark_suites (subset_name, version_label) VALUES ('pilot', 'v5')"
+            ).lastrowid
+            paper_ref_id = conn.execute(
+                "INSERT INTO benchmark_suite_papers (suite_id, paper_key) VALUES (?, 'p')",
+                (suite_id,),
+            ).lastrowid
+            run_id = conn.execute(
+                "INSERT INTO benchmark_runs (suite_id, status, max_calls) VALUES (?, 'interrupted', 10)",
+                (suite_id,),
+            ).lastrowid
+            candidate_id = conn.execute(
+                "INSERT INTO benchmark_candidates (run_id, position, label) VALUES (?, 1, 'c')",
+                (run_id,),
+            ).lastrowid
+            for continuation_count in (0, 2):
+                conn.execute(
+                    """
+                    INSERT INTO benchmark_responses (
+                        run_id, candidate_id, paper_ref_id, track, repeat_index,
+                        prompt_snapshot, raw_output, parsed, continuation_count
+                    ) VALUES (?, ?, ?, 'chat', ?, '[]', 'raw', '{}', ?)
+                    """,
+                    (run_id, candidate_id, paper_ref_id, continuation_count, continuation_count),
+                )
+            conn.commit()
+
+            # Invoke the registered v6 migration, not a test-only ALTER TABLE.
+            migration = migrations.MIGRATIONS[-1]
+            self.assertEqual(migration[0], 6)
+            migration[2](conn)
+            column = next(
+                row for row in conn.execute("PRAGMA table_info(benchmark_runs)").fetchall()
+                if row[1] == "candidate_calls_made"
+            )
+            calls = conn.execute(
+                "SELECT candidate_calls_made FROM benchmark_runs WHERE id = ?", (run_id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual((column[1], column[2], column[3], column[4]),
+                         ("candidate_calls_made", "INTEGER", 1, "0"))
+        self.assertEqual(calls, 4)
 
     def test_v4_preserves_all_legacy_private_records_under_admin(self):
         with open(settings_store.SETTINGS_PATH, "w", encoding="utf-8") as handle:

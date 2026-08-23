@@ -182,7 +182,7 @@ CREATE TABLE paper_quiz_attempts (
 
 删除论文时，以上学习记录会随 papers 外键级联删除；删除用户时，其私有学习记录随 users 外键级联删除。
 
-### 论文阅读 Benchmark 表（v5）
+### 论文阅读 Benchmark 表（v6）
 
 ```sql
 -- 自管理任务路由（不进入共享 ai_tasks 设置）
@@ -242,7 +242,8 @@ CREATE TABLE benchmark_cases (
 CREATE TABLE benchmark_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     suite_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'running',
-    repeats INTEGER DEFAULT 1, max_calls INTEGER,            -- 硬预算，NULL 不限
+    repeats INTEGER DEFAULT 1, max_calls INTEGER,            -- 候选调用硬预算，NULL 不限
+    candidate_calls_made INTEGER NOT NULL DEFAULT 0,         -- 已预留的候选 API 尝试（含续写，不含裁判）
     runner_version TEXT NOT NULL DEFAULT '',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP, finished_at TEXT,
     FOREIGN KEY (suite_id) REFERENCES benchmark_suites(id) ON DELETE CASCADE
@@ -377,7 +378,7 @@ POST /api/paper/<arxiv_id>/socratic/sessions/<session_id>/reply
   → paper_quiz 任务模型根据历史连续追问
 ```
 
-### 4.5 论文阅读 Benchmark 流程（v1，pilot）
+### 4.5 论文阅读 Benchmark 流程（v6，pilot 规则兼容）
 ```
 GET /benchmark（admin）→ 选论文 → POST /api/benchmark/drafts 创建草稿
   → create_draft()：get_paper_by_key + _extract_full_text（失败阻止冻结，不回退摘要）
@@ -389,13 +390,18 @@ GET /benchmark（admin）→ 选论文 → POST /api/benchmark/drafts 创建草�
   → 逐题 review_case / 批量 review_all_cases（accept/reject）
   → freeze_suite()：校验全文、证据、rubric、题量覆盖后置为 frozen 并写入校验和
   → start_run(suite, candidates, repeats, max_calls)：每候选每论文 1 次深度阅读 + 3 轮交流
+      → v6 在创建运行前拒绝放不下完整候选工作的预算；每次候选 API 尝试（含深读续写）原子递增
+        `candidate_calls_made`，裁判调用不占用该预算；预算耗尽后 resume 只能严格上调 `max_calls`
       → 交流轨每轮用候选自身历史（可复用已保存响应，恢复运行只补缺）
       → 深度阅读输出按文本级 `### Qn:` 解析（兼容转义/原始换行、重复 JSON 包络）
   → judge_run()：主裁判按（候选, 论文, 轨道）批量评分，缺题计零（system 判定）
       → 复核裁判抽样（每候选每轨道 ≥10% 下限 1 组，覆盖低置信度/幻觉）
       → 裁判 kind 重命名时按位置对齐兜底
-  → get_report()：双轨分榜、逐题明细、幻觉/缺题计数、token/延迟/续写、
-      pilot 未校准警告、同家族偏置提示、人工校准统计
+  → get_report()：双轨分榜、逐题明细（精确 `response_id`/`case_id`、主裁判/复核分）、
+      幻觉/缺题计数、token/延迟/续写、pilot 未校准警告、同家族偏置提示、人工校准统计
+      → 主/复核条件级冲突标记 `needs_human_review=true`，该题分数为 null 且不进入轨道/榜单聚合
+        （若该轨道所有题均冲突，轨道分数为 null），直到人工覆盖；历史 `runner_version=''`
+        原样保留并在报告 warning 中提示
 ```
 
 ### 4.6 配置说明（benchmark 自管理路由）
@@ -738,9 +744,11 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 - `completed` / `error` 终态保留 600 秒供 SSE 消费和短暂重连，后续读写时懒清理；`running` 等非终态不使用该 TTL，避免误删长任务
 - SSE 读取必须从当前 principal 注入 `user_id`，不得接受客户端 user id；`update_progress()` / `get_progress()` 的接口和事件 JSON 不暴露内部复合键
 
-### 7.10 Benchmark 深模块约定（v1）
+### 7.10 Benchmark 深模块约定（v6）
 - 外部只允许通过 `source/benchmark` 公共接口操作（create_draft/generate_cases/review_case/
-  freeze_suite/start_run/resume_run/get_report/set_human_judgment/路由配置）；Web 层不得
+  freeze_suite/start_run/resume_run/get_report/set_human_judgment/路由配置）；读取题库论文与运行状态
+  使用 `list_suite_papers(suite_id)`、`list_runs(suite_id=None)`，启动时遗留运行由
+  `mark_interrupted_runs()` 统一处理；Web 层不得
   直接拼接裁判 Prompt 或操作 benchmark SQL
 - 题库冻结后不可原地修改（review/generate 抛 BenchmarkError）；变更必须克隆新版本
   （create_draft 自动递增 `pprb-<subset>-YYYY.MM.DD-rN`）
@@ -751,9 +759,12 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
   `### Qn:` 标题），不依赖 JSON 完整性；模型输出可用 `json_support._clean_json_content`
   与 `_extract_first_json_object` 兜底修复
 - 运行按（候选, 论文, 轨道, 重复槽, 轮次）唯一键保存响应，`get_existing_response` 跳过
-  已保存项实现恢复/重跑输出复用；`max_calls` 硬预算在每次被测调用前检查
+  已保存项实现恢复/重跑输出复用；v6 `max_calls` 仅限制候选 API 尝试（含续写），启动前校验完整
+  候选工作量，且每次尝试通过持久化原子预留计数；耗尽后恢复只允许严格提高上限
 - 裁判判定优先序：human > review > system（缺题计零）> primary；严重幻觉该题封顶 60 分；
-  同家族偏置与非等预算比较必须出现在报告 warnings
+  主/复核条件级分歧等待人工且不计入榜单；报告逐题保留 `response_id`、`case_id`、
+  `primary_score`、`review_score`、`needs_human_review`；同家族偏置与非等预算比较必须出现在报告 warnings
+- 新建运行固定保存非空 `source.benchmark.RUNNER_VERSION`；历史空版本不回填，只在报告中提示 provenance warning
 
 ---
 

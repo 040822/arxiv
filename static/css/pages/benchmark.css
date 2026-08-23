@@ -149,3 +149,35 @@
     background: #e8eaed;
     color: #5f6368;
 }
+
+@media (max-width: 768px) {
+    .benchmark-table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+
+    .benchmark-candidate-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .benchmark-candidate-row label {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .candidate-label,
+    .candidate-provider,
+    .candidate-model,
+    .candidate-effort,
+    .candidate-max-tokens {
+        max-width: 100%;
+        min-width: 0;
+    }
+
+    .inline-label {
+        margin-left: 0;
+    }
+}

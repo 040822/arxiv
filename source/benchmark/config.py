@@ -166,3 +166,33 @@ def resolve_model_config(config):
 def build_route_kwargs(cfg, messages):
     """统一构建 Chat Completions 参数（复用共享逻辑，保持可选参数省略语义）。"""
     return build_chat_completion_kwargs(cfg, messages)
+
+
+def build_actual_request_params(cfg):
+    """Build the exact non-prompt request payload used for a candidate.
+
+    A harmless sentinel message is supplied only because the shared request
+    builder requires the ``messages`` argument; it is removed before the
+    snapshot is returned.  This keeps ``extra_body``, ``reasoning_effort`` and
+    ``max_completion_tokens`` visible while guaranteeing credentials/prompts
+    never enter the persisted candidate record.
+    """
+    kwargs = build_route_kwargs(
+        cfg,
+        [{"role": "user", "content": "__benchmark_request_snapshot__"}],
+    )
+
+    def sanitize(value):
+        if isinstance(value, dict):
+            return {
+                str(key): sanitize(item)
+                for key, item in value.items()
+                if str(key).lower() not in {"messages", "api_key", "apikey", "authorization"}
+            }
+        if isinstance(value, (list, tuple)):
+            return [sanitize(item) for item in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    return sanitize({key: value for key, value in kwargs.items() if key != "messages"})

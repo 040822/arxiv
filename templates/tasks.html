@@ -26,6 +26,9 @@
             <a href="/" class="nav-link">📅 每日论文</a>
             <a href="/browse" class="nav-link">📂 分类浏览</a>
             <a href="/search" class="nav-link">🔍 搜索</a>
+            {% if is_admin %}
+            <a href="/benchmark" class="nav-link">📏 Benchmark</a>
+            {% endif %}
             <a href="/tasks" class="nav-link active">📋 论文处理</a>
             <a href="/reports" class="nav-link">📊 每日报告</a>
             <a href="/reading-list" class="nav-link">📌 阅读清单</a>

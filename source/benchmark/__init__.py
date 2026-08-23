@@ -20,7 +20,10 @@ from . import author as _author
 from . import judge as _judge
 from . import report as _report
 from . import runner as _runner
-from .config import get_route_configs, save_route_config, resolve_model_config
+from .config import (
+    build_actual_request_params, get_route_configs, resolve_model_config,
+    save_route_config,
+)
 from .evidence import (
     config_hash,
     parse_deep_reading_questions,
@@ -31,6 +34,10 @@ from .evidence import (
 logger = logging.getLogger(__name__)
 
 EXTRACTOR_VERSION = "pymupdf-benchmark-v1"
+# Persisted on every run created through this public module.  Keep this value
+# stable for the lifetime of the benchmark runner; an empty value is reserved
+# for historical runs created before runner-version snapshots existed.
+RUNNER_VERSION = "pprb-runner-v6"
 CHAT_ROUNDS = _author.CHAT_ROUNDS
 MAX_SELECT_PAPERS = 500
 
@@ -93,6 +100,24 @@ def _next_version_label(subset_name):
 def list_suites():
     from source.storage.benchmark import list_benchmark_suites
     return list_benchmark_suites()
+
+
+def list_suite_papers(suite_id):
+    """列出题库冻结的论文快照，供外部调用方读取。"""
+    from source.storage.benchmark import list_suite_papers as _list_suite_papers
+    return _list_suite_papers(suite_id)
+
+
+def list_runs(suite_id=None):
+    """列出 Benchmark 运行记录，可按题库筛选。"""
+    from source.storage.benchmark import list_benchmark_runs
+    return list_benchmark_runs(suite_id)
+
+
+def mark_interrupted_runs():
+    """将进程遗留的 running 运行标记为 interrupted。"""
+    from source.storage.benchmark import mark_interrupted_runs as _mark_interrupted_runs
+    return _mark_interrupted_runs()
 
 
 def get_suite(suite_id):
@@ -335,23 +360,61 @@ def start_run(suite_id, candidates, repeats=1, max_calls=None, progress_callback
         raise BenchmarkError("请至少选择 1 个候选模型")
     repeats = max(1, min(5, int(repeats or 1)))
 
+    if max_calls is not None:
+        try:
+            max_calls = int(max_calls)
+        except (TypeError, ValueError) as exc:
+            raise BenchmarkError("max_calls 必须是正整数") from exc
+        if max_calls <= 0:
+            raise BenchmarkError("max_calls 必须是正整数")
+
+    # Resolve and freeze the actual request payload before creating a run.  A
+    # candidate's UI-only fields may differ while the provider receives exactly
+    # the same request; such candidates are ambiguous and must be rejected at
+    # startup rather than after partial work has been persisted.
+    candidate_snapshots = []
+    seen_hashes = {}
+    for position, candidate in enumerate(candidates, start=1):
+        cfg = resolve_model_config(candidate.get("config") or {})
+        actual_params = build_actual_request_params(cfg)
+        candidate_hash = config_hash(cfg, actual_params)
+        duplicate = seen_hashes.get(candidate_hash)
+        if duplicate is not None:
+            raise BenchmarkError(
+                f"候选启动参数重复：第 {duplicate} 个与第 {position} 个候选的实际请求参数相同"
+            )
+        seen_hashes[candidate_hash] = position
+        candidate_snapshots.append((candidate, cfg, actual_params, candidate_hash))
+
+    required_candidate_calls = (
+        int(suite.get("paper_count") or 0)
+        * len(candidate_snapshots)
+        * repeats
+        * (1 + CHAT_ROUNDS)
+    )
+    if max_calls is not None and max_calls < required_candidate_calls:
+        raise BenchmarkError(
+            f"候选调用预算不足：至少需要 {required_candidate_calls} 次，当前仅 {max_calls} 次"
+        )
+
     from source.storage.benchmark import (
         add_benchmark_candidate,
         create_benchmark_run,
         set_run_status,
     )
-    run_id = create_benchmark_run(suite_id, repeats=repeats, max_calls=max_calls)
-    run = _load_run(run_id)
-    for position, candidate in enumerate(candidates, start=1):
-        cfg = resolve_model_config(candidate.get("config") or {})
-        from source.settings import build_chat_completion_kwargs
-        kwargs = build_chat_completion_kwargs(cfg, [{"role": "user", "content": "ping"}])
-        actual_params = {key: kwargs.get(key) for key in
-                         ("temperature", "max_tokens", "thinking_effort", "reasoning_effort")}
+    run_id = create_benchmark_run(
+        suite_id,
+        repeats=repeats,
+        max_calls=max_calls,
+        runner_version=RUNNER_VERSION,
+    )
+    for position, (candidate, cfg, actual_params, candidate_hash) in enumerate(
+        candidate_snapshots, start=1
+    ):
         add_benchmark_candidate(
             run_id, position,
             str(candidate.get("label") or cfg.get("model", "")),
-            cfg, config_hash(cfg), {key: value for key, value in actual_params.items() if value is not None},
+            cfg, candidate_hash, actual_params,
         )
     try:
         _execute_run(run_id, progress_callback=progress_callback)
@@ -364,12 +427,26 @@ def start_run(suite_id, candidates, repeats=1, max_calls=None, progress_callback
     return run_id
 
 
-def resume_run(run_id, progress_callback=None):
+def resume_run(run_id, max_calls=None, progress_callback=None):
     """恢复一次中断/失败的运行：跳过已保存的响应，继续未完成部分。"""
     run = _load_run(run_id)
     if run.get("status") not in ("interrupted", "error", "running"):
         raise BenchmarkError(f"运行状态为 {run.get('status')}，不可恢复")
-    from source.storage.benchmark import set_run_status
+    current_max_calls = run.get("max_calls")
+    calls_made = int(run.get("candidate_calls_made") or 0)
+    from source.storage.benchmark import set_run_status, update_run_max_calls
+    if max_calls is not None:
+        try:
+            requested_max_calls = int(max_calls)
+        except (TypeError, ValueError) as exc:
+            raise BenchmarkError("max_calls 必须是正整数") from exc
+        if requested_max_calls <= 0:
+            raise BenchmarkError("max_calls 必须是正整数")
+        if current_max_calls is None or requested_max_calls <= int(current_max_calls):
+            raise BenchmarkError("恢复时 max_calls 只能严格上调")
+        update_run_max_calls(run_id, requested_max_calls)
+    elif current_max_calls is not None and calls_made >= int(current_max_calls):
+        raise BenchmarkError("候选调用预算已耗尽；恢复前必须严格上调 max_calls")
     set_run_status(run_id, "running")
     try:
         _execute_run(run_id, progress_callback=progress_callback)
@@ -385,6 +462,7 @@ def resume_run(run_id, progress_callback=None):
 def _execute_run(run_id, progress_callback=None):
     """执行被测调用（深度阅读 + 三轮交流），跳过已保存响应（输出复用）。"""
     from source.storage.benchmark import (
+        consume_candidate_call,
         get_existing_response,
         list_run_candidates,
         list_suite_cases,
@@ -396,8 +474,6 @@ def _execute_run(run_id, progress_callback=None):
     papers = list_suite_papers(run["suite_id"])
     accepted_cases = [c for c in list_suite_cases(run["suite_id"]) if c["status"] == "accepted"]
     candidates = list_run_candidates(run_id)
-    max_calls = run.get("max_calls")
-    calls_made = 0
     total_expected = len(papers) * len(candidates) * run["repeats"] * (1 + CHAT_ROUNDS)
 
     def _progress(phase, message, done):
@@ -407,27 +483,26 @@ def _execute_run(run_id, progress_callback=None):
             })
 
     def _charge_budget():
-        nonlocal calls_made
-        if max_calls and calls_made >= max_calls:
+        if not consume_candidate_call(run_id):
+            max_calls = run.get("max_calls")
             raise _runner.BudgetExceeded(f"调用数达到硬预算 {max_calls}")
 
     def _maybe_run(key, runner_fn):
-        nonlocal calls_made
         candidate_id, paper_id, track, repeat_index, round_index = key
         existing = get_existing_response(
             candidate_id, paper_id, track, repeat_index, round_index
         )
         if existing is not None:
             return existing
-        _charge_budget()
         response, calls = runner_fn()
-        calls_made += calls
         response_id = save_benchmark_response(
             run_id, candidate_id, paper_id, track, repeat_index, round_index,
             response["prompt_snapshot"], response["raw_output"], response["parsed"],
             response["status"], response["finish_reason"], response["usage_json"],
             response["latency_ms"], response["continuation_count"],
         )
+        from source.storage.benchmark import get_benchmark_run
+        calls_made = int((get_benchmark_run(run_id) or {}).get("candidate_calls_made") or 0)
         _progress(track, f"已保存 {track} 响应", calls_made)
         return response_id
 
@@ -441,7 +516,10 @@ def _execute_run(run_id, progress_callback=None):
                 prior_response = get_response(prior)
                 if prior_response:
                     history.append((prior_response.get("parsed") or {}).get("answer", ""))
-        return _runner.run_chat_round(suite, paper, cfg, paper_ref, chat_cases, history)
+        return _runner.run_chat_round(
+            suite, paper, cfg, paper_ref, chat_cases, history,
+            charge_callback=_charge_budget,
+        )
 
     chat_cases_by_paper = {}
     for case in accepted_cases:
@@ -465,7 +543,9 @@ def _execute_run(run_id, progress_callback=None):
             for repeat_index in range(run["repeats"]):
                 _maybe_run(
                     (candidate["id"], paper["id"], "deep_reading", repeat_index, None),
-                    lambda: _runner.run_deep_reading(suite, paper, cfg, paper_ref),
+                    lambda: _runner.run_deep_reading(
+                        suite, paper, cfg, paper_ref, charge_callback=_charge_budget,
+                    ),
                 )
                 for round_index in range(1, CHAT_ROUNDS + 1):
                     _maybe_run(
@@ -495,7 +575,12 @@ def get_run(run_id):
 def get_report(run_id):
     """生成运行报告；报告随运行的响应/判定变化重算，不覆盖历史裁判记录。"""
     run = _load_run(run_id)
-    return _report.build_report(run)
+    report = _report.build_report(run)
+    if not str(run.get("runner_version") or "").strip():
+        report.setdefault("warnings", []).append(
+            "历史运行缺少 runner_version，无法确认执行器版本"
+        )
+    return report
 
 
 def set_human_judgment(run_id, response_id, case_id, score, notes=""):
@@ -512,6 +597,9 @@ __all__ = [
     "review_all_cases",
     "freeze_suite",
     "list_suites",
+    "list_suite_papers",
+    "list_runs",
+    "mark_interrupted_runs",
     "get_suite",
     "list_selectable_papers",
     "estimate_calls",
@@ -524,4 +612,5 @@ __all__ = [
     "save_route_config",
     "resolve_model_config",
     "EXTRACTOR_VERSION",
+    "RUNNER_VERSION",
 ]
