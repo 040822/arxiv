@@ -391,6 +391,12 @@ APScheduler cron(day_of_week, hour, minute)
 
 > **配置合并：** `source/settings/store.py` 使用递归 deep merge；新增普通顶层字段无需维护白名单。需要归一化、迁移或秘密保留语义的字段，仍应在 normalize/store 中显式处理并补回归测试。
 
+### 5.3 静态文件缓存（source/web/application.py）
+
+- `build_app()` 中 `SEND_FILE_MAX_AGE_DEFAULT=86400` 控制 `/static/*` 的 `Cache-Control: max-age=86400`（Flask 默认 `no-cache`），配合 Cloudflare 隧道/CDN 的边缘缓存
+- 全项目无 `send_file/send_from_directory` 调用，该配置只影响静态路由；动态页面响应带 `Set-Cookie`，Cloudflare 不会缓存
+- 静态文件文件名不带 hash，改动 CSS/JS 后需在 Cloudflare 后台 Purge 对应 URL 或等待缓存过期
+
 ---
 
 ## 6. API 端点清单
@@ -519,6 +525,10 @@ DDL/数据整理放入独立迁移函数。每个版本由迁移器在单独事�
 调用模型时必须通过 `build_chat_completion_kwargs()` 构建参数，不要在业务代码中直接固定传 `temperature` 或 `max_tokens`；保持可选参数的省略语义，让模型在未配置采样控制时使用自身默认值。
 
 `users` 是凭据唯一真源，系统只有固定用户名 `admin` 的唯一管理员。v4 迁移复制旧 settings 管理哈希，提交后备份配置并逐字段移除旧凭据；没有旧凭据时临时密码仅由实际创建 admin 的进程输出一次。session 保存 `user_id/session_version`、30 天滑动有效，逐请求校验用户存在/启用/版本；改密、重置、停用或删除立即撤销旧会话。路由必须明确归为 public/member/admin，所有 cookie 非安全方法校验 CSRF。私有查询只接受当前 principal 注入的 user_id。`GET /api/providers` 只能返回 `api_key_masked`。
+
+主页保持公开浏览；访客显示登录入口，已登录用户显示显示名和明确的 `@username`，并提供普通账号改密和退出入口。新密码策略由 `source.storage.users.PASSWORD_MIN_LENGTH` 统一提供，当前最低 8 个字符，模板通过认证上下文使用 `password_min_length`；现有密码和一次性临时密码不迁移、不缩短。`static/auth.js` 的 `window.AuthUI` 负责密码显隐和退出辅助，必须保留全局 fetch 的 CSRF 包装。
+
+登录限流按来源 IP 和规范化用户名分别计数：滚动 15 分钟内 5 次失败后第 6 次返回 429，并提供 JSON `retry_after` 与 `Retry-After`；成功登录清理当前 IP/用户名失败桶。计数是单 Flask 进程内存状态，重启清空，多 worker 不共享，默认不信任客户端 `X-Forwarded-For`；登录页用 `retry_after` 显示等待倒计时。
 
 ### 7.4 修改 Prompt
 - 新版 prompt 主要存储在 `data/settings.json` 的 `prompt_profiles` 字段，按 `paper_import`、`basic_analysis`、`deep_reading`、`report_summary`、`recommendation`、`paper_chat`、`paper_quiz` 拆分

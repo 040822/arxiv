@@ -35,6 +35,7 @@ def build_app():
         SESSION_REFRESH_EACH_REQUEST=True,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
+        SEND_FILE_MAX_AGE_DEFAULT=86400,  # 静态文件缓存 1 天（配合 Cloudflare CDN 边缘缓存）
     )
     for blueprint in (
         auth_bp, pages_bp, papers_bp, import_bp, learning_bp,
