@@ -28,3 +28,4 @@ data/.admin-credentials.lock
 
 # Editor/merge leftover files
 *.orig
+data/papers.db.pre-restore.bak
