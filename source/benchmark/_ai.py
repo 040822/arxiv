@@ -4,7 +4,7 @@ import logging
 import re
 import time
 
-from source.analysis.client import get_openai_client
+from source.analysis.client import conversation_session_id, get_openai_client
 from source.analysis.usage import _extract_usage, get_usage_user_id
 from source.storage import record_ai_usage
 
@@ -153,7 +153,7 @@ def _first_choice(response):
 
 def call_model(cfg, messages, task_key, paper_ref=None):
     """调用模型并返回 (content, usage)；usage 含 finish_reason 与 latency_ms。"""
-    client = get_openai_client(cfg)
+    client = get_openai_client(cfg, session_id=conversation_session_id(task_key, paper_ref))
     kwargs = build_route_kwargs(cfg, messages)
     started = time.monotonic()
     response = client.chat.completions.create(**kwargs)

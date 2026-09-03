@@ -7,7 +7,7 @@ from source.documents import download_pdf, extract_text_from_pdf, get_cached_pdf
 from source.settings import build_chat_completion_kwargs, get_ai_task_config, get_prompt_profile
 from source.storage import record_ai_usage
 
-from .client import get_openai_client
+from .client import conversation_session_id, get_openai_client
 from .json_support import _clean_json_content
 from .messages import _authors_text
 from .usage import _extract_usage, _value, get_usage_user_id
@@ -172,7 +172,7 @@ def _call_ai(messages, paper_data, task_key):
             - error (str | None): 失败时返回错误信息字符串
     """
     cfg = get_ai_task_config(task_key)
-    client = get_openai_client(cfg)
+    client = get_openai_client(cfg, session_id=conversation_session_id(task_key, paper_data))
 
     try:
         content, usage = _call_ai_raw(messages, paper_data, task_key, cfg=cfg, client=client)
@@ -197,7 +197,7 @@ def _call_ai(messages, paper_data, task_key):
 def _call_ai_raw(messages, paper_data, task_key, cfg=None, client=None):
     """调用模型并返回原始文本和 usage；同时记录用量。"""
     cfg = cfg or get_ai_task_config(task_key)
-    client = client or get_openai_client(cfg)
+    client = client or get_openai_client(cfg, session_id=conversation_session_id(task_key, paper_data))
     kwargs = build_chat_completion_kwargs(cfg, messages)
     response = client.chat.completions.create(**kwargs)
     usage = _extract_usage(response)

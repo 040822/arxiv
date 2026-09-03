@@ -560,7 +560,7 @@ APScheduler cron(day_of_week, hour, minute)
 - `resolve_ai_task_config(task_key, task_config)` — 将已保存或未保存的功能路由草稿与供应商连接凭据合并并校验
 - `get_ai_tasks()` / `save_ai_tasks()` — 获取/保存 PDF 元数据提取、基础分析、深度阅读、报告导读、个性化推荐、论文对话、论文问答练习的模型路由
 - `build_chat_completion_kwargs()` — 统一构建 Chat Completions 参数；功能路由只支持可选 Temperature 和输出长度，未启用 Temperature 或使用思考模型时不发送 Temperature，其他采样参数不发送并交给模型采用默认行为
-- LLM 客户端必须通过 `source.analysis.get_openai_client()` 创建，以复用全局代理配置并禁用环境变量代理
+- LLM 客户端必须通过 `source.analysis.get_openai_client()` 创建，以复用全局代理配置并禁用环境变量代理；对 opencode 官方网关（base_url 含 `opencode.ai`）自动携带 `x-opencode-session` 头，值由 `conversation_session_id(task_key, paper_data)` 派生（`arxiv-{task_key}-{user_id or system}-{paper_key}`，同一对话跨轮复用），非网关端点不加该头
 - `normalize_provider_connection()` — 归一化供应商连接字段；`normalize_provider_config()` 仅用于合并后的实际调用配置
 - `get_prompt_profile()` / `get_prompt_profiles()` — 获取任务级 Prompt Profile；`get_prompts()` 保留旧接口兼容
 - `get_concurrency()` — 获取并发数

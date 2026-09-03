@@ -241,6 +241,69 @@ class ProviderApiTests(unittest.TestCase):
         self.assertNotIn("proxy", DummyHttpxClient.last_kwargs)
         self.assertFalse(DummyHttpxClient.last_kwargs["trust_env"])
 
+    def test_opencode_gateway_client_sends_session_header(self):
+        import source.analysis as analyzer
+        import source.analysis.client as analysis_client
+
+        with patch.object(analysis_client, "get_proxy_config", return_value={"enabled": False}):
+            analyzer.get_openai_client({
+                "api_key": "sk-test",
+                "base_url": "https://opencode.ai/zen/go/v1",
+            })
+
+        headers = DummyOpenAI.last_init_kwargs.get("default_headers")
+        self.assertIsInstance(headers, dict)
+        session = headers.get("x-opencode-session")
+        self.assertTrue(isinstance(session, str) and session)
+
+    def test_opencode_gateway_client_honors_explicit_session_id(self):
+        import source.analysis as analyzer
+        import source.analysis.client as analysis_client
+
+        with patch.object(analysis_client, "get_proxy_config", return_value={"enabled": False}):
+            analyzer.get_openai_client(
+                {"api_key": "sk-test", "base_url": "https://api.opencode.ai/v1"},
+                session_id="arxiv-paper_chat-1-somepaper",
+            )
+
+        headers = DummyOpenAI.last_init_kwargs.get("default_headers")
+        self.assertEqual(headers.get("x-opencode-session"), "arxiv-paper_chat-1-somepaper")
+
+    def test_non_opencode_client_has_no_session_header(self):
+        import source.analysis as analyzer
+        import source.analysis.client as analysis_client
+
+        with patch.object(analysis_client, "get_proxy_config", return_value={"enabled": False}):
+            analyzer.get_openai_client({
+                "api_key": "sk-test",
+                "base_url": "https://api.deepseek.com",
+            })
+
+        self.assertIsNone(DummyOpenAI.last_init_kwargs.get("default_headers"))
+
+    def test_conversation_session_id_is_stable_per_conversation(self):
+        import source.analysis.client as analysis_client
+        from source.analysis.usage import set_usage_user_id
+
+        set_usage_user_id(3)
+        try:
+            paper_a = {"paper_key": "k1", "arxiv_id": "2401.00001", "id": 1}
+            paper_b = {"paper_key": "k2", "arxiv_id": "2401.00002", "id": 2}
+            self.assertEqual(
+                analysis_client.conversation_session_id("paper_chat", paper_a),
+                analysis_client.conversation_session_id("paper_chat", paper_a),
+            )
+            self.assertNotEqual(
+                analysis_client.conversation_session_id("paper_chat", paper_a),
+                analysis_client.conversation_session_id("paper_chat", paper_b),
+            )
+            self.assertEqual(
+                analysis_client.conversation_session_id("paper_chat", paper_a),
+                "arxiv-paper_chat-3-k1",
+            )
+        finally:
+            set_usage_user_id(None)
+
     def test_provider_list_does_not_return_plain_api_key(self):
         web_providers_api = self.web_providers_api
         with patch.object(web_providers_api, "load_settings", return_value={
