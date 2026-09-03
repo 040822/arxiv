@@ -1,5 +1,11 @@
 # 更新日志
 
+## 未发布 — opencode 网关会话头（2026-09-03）
+
+- LLM 请求发往 opencode 官方网关（base_url 含 `opencode.ai`，如 `opencode.ai/zen/go/v1`）时自动携带 `x-opencode-session` 会话头，满足官方 09/06 起对该头的要求，避免请求报错
+- `get_openai_client(cfg, session_id=None)` 新增会话头注入：未传 `session_id` 时随机 UUID，非网关端点不加该头
+- 新增 `conversation_session_id(task_key, paper_data)` 派生稳定会话 id（`arxiv-{task_key}-{user_id or system}-{paper_key}`）；`paper_chat`/`paper_quiz`/socratic 同用户同论文多轮复用同一 id，利于网关跨轮优化
+
 ## 未发布 — Benchmark v7 异步运行与可追溯评分（2026-08-24）
 
 - schema 迁移至 v7：运行支持 `queued`、`active_scoring_revision`；响应保存 `retry_count`、`error_json` 与 `reused_from_response_id`；新增 `benchmark_scoring_revisions` 和 `benchmark_case_revisions`

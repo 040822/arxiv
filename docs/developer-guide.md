@@ -249,7 +249,7 @@ CREATE TABLE paper_quiz_attempts (
 
 > `source/settings/store.py` 通过递归 deep merge 保留新增顶层字段，不再需要顶层白名单；需要归一化、迁移或密码保留语义的字段仍须显式处理并补测试。
 
-AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成；测试未保存的路由草稿使用 `resolve_ai_task_config()`。OpenAI 兼容客户端统一通过 `source.analysis.get_openai_client()` 创建以复用全局代理并禁用环境变量代理。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要把模型或推理参数写回供应商连接。路由只保留可选 Temperature 控制和输出长度；未启用 Temperature 或使用思考模型时省略该参数，其他采样参数不发送并采用模型默认行为。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
+AI 调用参数统一由 `settings.get_ai_task_config(task_key)` 和 `settings.build_chat_completion_kwargs()` 生成；测试未保存的路由草稿使用 `resolve_ai_task_config()`。OpenAI 兼容客户端统一通过 `source.analysis.get_openai_client()` 创建以复用全局代理并禁用环境变量代理；对 opencode 官方网关（base_url 含 `opencode.ai`）会自动携带 `x-opencode-session` 会话头，值由 `conversation_session_id(task_key, paper_data)` 派生（`arxiv-{task_key}-{user_id or system}-{paper_key}`，同一对话跨轮复用），非网关端点不加该头。新增模型调用逻辑时不要直接固定传 `temperature`、`max_tokens` 或 `enable_thinking`，也不要把模型或推理参数写回供应商连接。路由只保留可选 Temperature 控制和输出长度；未启用 Temperature 或使用思考模型时省略该参数，其他采样参数不发送并采用模型默认行为。基础分析会生成 AI 初评 `rating`，用户仍可在详情页手动修正；个性化推荐必须使用独立的 `recommendation` 任务路由，推荐分只在 `recommendation_interest_hash` 匹配当前研究兴趣时参与排序。论文学习功能使用 `paper_chat` 和 `paper_quiz` 任务路由，并通过 `build_paper_learning_messages()` 保持稳定 PDF 上下文前缀。
 
 账号凭据只保存在 `users` 表。`source.web.auth` 提供 principal、30 天 session 版本校验、三级策略和全站 CSRF；私有存储接口必须显式接收当前 principal 的 `user_id`。供应商列表接口只能返回脱敏后的 `api_key_masked`。
 
